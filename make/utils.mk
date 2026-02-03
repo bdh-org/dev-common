@@ -2,8 +2,8 @@
 
 .PHONY: list ls claude-install common-update
 
-list ls: ## list all Makefile targets
-	@grep '^[^#[:space:]].*:' Makefile
+list ls: ## list all Makefile targets (including shared targets)
+	@grep '^[^#[:space:]].*:' Makefile common/make/*.mk 2>/dev/null | sed 's/^common\/make\/[^:]*://' | grep -v '^\.PHONY' | sort -u
 
 claude-install: ## install Claude Code CLI
 	curl -fsSL https://claude.ai/install.sh | bash
