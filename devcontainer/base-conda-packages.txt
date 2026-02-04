@@ -1,0 +1,9 @@
+# Base conda packages for development environments
+# These are installed by setup-python-dev.sh before project-specific packages
+python=3.13
+pip
+loguru
+pandas
+numpy
+requests
+pyyaml

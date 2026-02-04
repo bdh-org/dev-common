@@ -34,6 +34,7 @@ Shared Makefile targets. Requires `VERSION` variable in your Makefile.
 |------|---------|-------------|
 | `version.mk` | `bump-patch`, `bump-minor`, `bump-major`, `tag` | Semantic version management |
 | `utils.mk` | `list`, `ls`, `claude-install` | Common utilities |
+| `python.mk` | `list-imports`, `lint`, `lint-fix`, `format` | Python dev tools (ruff, pipreqs) |
 
 ### github/workflows/
 
@@ -45,7 +46,14 @@ Copy to your repo's `.github/workflows/` directory.
 
 ### devcontainer/
 
-*(Coming soon)* Shared devcontainer configurations.
+Composable scripts for setting up development containers. See [devcontainer/README.md](devcontainer/README.md) for details.
+
+| File | Description |
+|------|-------------|
+| `setup-base.sh` | Core setup: tmux, Miniforge, shell aliases |
+| `setup-node.sh` | Claude Code CLI via npm |
+| `setup-python-dev.sh` | Python dev tools: ruff, pytest, jupyter, pipreqs |
+| `base-conda-packages.txt` | Minimal common packages |
 
 ### claude/
 
