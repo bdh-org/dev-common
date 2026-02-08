@@ -1,11 +1,50 @@
 # Shared Python development targets
-# Requires CONDA_PREFIX and PACKAGE_DIR to be defined (or uses defaults)
+# Manages conda base environment and Python dev tooling
+#
+# Requires: Miniforge installed (via devcontainer/setup-base.sh)
+# Variables:
+#   CONDA_PREFIX           - path to conda installation (default: ~/miniforge3)
+#   COMMON_DIR             - path to dev-common (default: common)
+#   PACKAGE_DIR            - source directory to scan for imports (default: PROJECT_NAME)
+#   PROJECT_CONDA_PACKAGES - path to project-specific conda packages file (optional)
+#   REQUIREMENTS_FILE      - output file for production requirements (default: requirements-prod.txt)
 
 CONDA_PREFIX ?= $(HOME)/miniforge3
+COMMON_DIR ?= common
 PACKAGE_DIR ?= $(PROJECT_NAME)
+PROJECT_CONDA_PACKAGES ?=
 REQUIREMENTS_FILE ?= requirements-prod.txt
 
-.PHONY: list-imports requirements lint lint-fix format
+CONDA := $(CONDA_PREFIX)/bin/conda
+BASE_PACKAGES := $(COMMON_DIR)/devcontainer/base-conda-packages.txt
+DEV_TOOLS := ruff pytest pytest-cov ipykernel jupyterlab pipreqs
+
+.PHONY: env env-info list-imports requirements lint lint-fix format
+
+# -----------------------------------------------------------------------------
+# Conda environment
+# -----------------------------------------------------------------------------
+
+env: ## install/refresh conda base dev environment
+	@echo "==> Installing base conda packages..."
+	$(CONDA) install -y --file $(BASE_PACKAGES)
+	@if [ -n "$(PROJECT_CONDA_PACKAGES)" ] && [ -f "$(PROJECT_CONDA_PACKAGES)" ]; then \
+		echo "==> Installing project conda packages from $(PROJECT_CONDA_PACKAGES)..."; \
+		$(CONDA) install -y --file $(PROJECT_CONDA_PACKAGES); \
+	fi
+	@echo "==> Installing dev tools..."
+	$(CONDA) install -y $(DEV_TOOLS)
+	@echo "==> Dev environment ready"
+
+env-info: ## show conda environment info
+	$(CONDA) info
+	@echo ""
+	@echo "==> Installed packages:"
+	$(CONDA) list
+
+# -----------------------------------------------------------------------------
+# Production requirements
+# -----------------------------------------------------------------------------
 
 list-imports: ## list imports for production requirements
 	@$(CONDA_PREFIX)/bin/pipreqs $(PACKAGE_DIR) --print --mode no-pin 2>/dev/null | sort -u
@@ -35,6 +74,10 @@ requirements: ## generate pinned production requirements file
 	done; \
 	echo "==> Written $(REQUIREMENTS_FILE):"; \
 	cat $(REQUIREMENTS_FILE)
+
+# -----------------------------------------------------------------------------
+# Linting and formatting
+# -----------------------------------------------------------------------------
 
 lint: ## lint with ruff
 	$(CONDA_PREFIX)/bin/ruff check .

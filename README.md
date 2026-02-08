@@ -34,8 +34,7 @@ Shared Makefile targets. Requires `VERSION` variable in your Makefile.
 |------|---------|-------------|
 | `version.mk` | `bump-patch`, `bump-minor`, `bump-major`, `tag` | Semantic version management |
 | `utils.mk` | `list`, `ls`, `claude-install` | Common utilities |
-| `python.mk` | `list-imports`, `requirements`, `lint`, `lint-fix`, `format` | Python dev tools (ruff, pipreqs) |
-| `conda.mk` | `env`, `env-info` | Conda base environment management |
+| `python.mk` | `env`, `env-info`, `list-imports`, `requirements`, `lint`, `lint-fix`, `format` | Python dev tools, conda env, production requirements |
 
 ### github/workflows/
 

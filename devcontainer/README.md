@@ -106,29 +106,29 @@ Each project maintains its own `conda-packages.txt` with project-specific depend
 
 ## Make Targets
 
-The setup scripts handle initial container creation. For ongoing environment management, use the Make targets from `make/conda.mk` and `make/python.mk`:
+The setup scripts handle initial container creation. For ongoing environment management, use the Make targets from `make/python.mk`:
 
-### Environment Management (`conda.mk`)
+### Environment Management
 
 | Target | Description |
 |--------|-------------|
 | `make env` | Install/refresh base conda packages, project packages, and dev tools |
 | `make env-info` | Show conda environment info and installed packages |
 
-Configure in your Makefile:
-```makefile
-COMMON_DIR = common                          # path to dev-common submodule
-PROJECT_CONDA_PACKAGES = conda-packages.txt  # project-specific packages (optional)
-
-include common/make/conda.mk
-```
-
-### Production Requirements (`python.mk`)
+### Production Requirements
 
 | Target | Description |
 |--------|-------------|
 | `make requirements` | Generate pinned `requirements-prod.txt` for production pip install |
 | `make list-imports` | List imports (unpinned, stdout only) |
+
+Configure in your Makefile:
+```makefile
+COMMON_DIR = common                          # path to dev-common submodule
+PROJECT_CONDA_PACKAGES = conda-packages.txt  # project-specific packages (optional)
+
+include common/make/python.mk
+```
 
 `make requirements` scans your code with pipreqs to find actual imports (excluding dev tools like ruff, pytest), then pins each package to the version installed in the conda env. The output file is ready for `pip install -r requirements-prod.txt` in a production Dockerfile.
 
