@@ -7,6 +7,9 @@ on:
     paths:
       - 'Makefile'
 
+permissions:
+  contents: write
+
 jobs:
   tag:
     runs-on: ubuntu-latest
