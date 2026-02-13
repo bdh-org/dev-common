@@ -83,15 +83,19 @@ Each project maintains its own `conda-packages.txt` with project-specific depend
 {
   "name": "My Project",
   "image": "mcr.microsoft.com/devcontainers/python:3.12",
+  "updateRemoteUserUID": true,
   "features": {
     "ghcr.io/devcontainers/features/node:1": {},
     "ghcr.io/devcontainers/features/github-cli:1": {}
   },
+  "initializeCommand": "mkdir -p ${HOME}/.config/gh ${HOME}/.claude ${HOME}/data",
   "mounts": [
+    "source=${localEnv:HOME}/.config/gh,target=/home/vscode/.config/gh,type=bind,consistency=cached",
     "source=${localEnv:HOME}/.claude,target=/home/vscode/.claude,type=bind,consistency=cached"
   ],
   "remoteEnv": {
-    "ANTHROPIC_API_KEY": "${localEnv:ANTHROPIC_API_KEY}"
+    "ANTHROPIC_API_KEY": "${localEnv:ANTHROPIC_API_KEY}",
+    "GITHUB_TOKEN": "${localEnv:GITHUB_TOKEN}"
   },
   "postCreateCommand": "bash .devcontainer/setup.sh",
   "customizations": {
