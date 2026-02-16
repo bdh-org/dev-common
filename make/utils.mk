@@ -3,10 +3,24 @@
 .PHONY: help list ls claude-install common-update
 
 help: ## Show available targets with descriptions
-	@grep -hE '^[a-zA-Z_-]+:.*##' $(MAKEFILE_LIST) | awk -F ':.*## ' '{printf "  %-20s %s\n", $$1, $$2}'
+	@for f in $(MAKEFILE_LIST); do \
+		targets=$$(grep -E '^[a-zA-Z_-]+:.*##' "$$f" 2>/dev/null); \
+		if [ -n "$$targets" ]; then \
+			echo ""; \
+			echo "$$f:"; \
+			echo "$$targets" | awk -F ':.*## ' '{printf "  %-20s %s\n", $$1, $$2}'; \
+		fi; \
+	done
 
-list ls: ## list all Makefile targets (including shared targets)
-	@grep -h '^[^#[:space:]].*:' Makefile common/make/*.mk make/*.mk 2>/dev/null | grep -v '^\.PHONY' | sort -u
+list ls: ## List all targets
+	@for f in $(MAKEFILE_LIST); do \
+		targets=$$(grep -E '^[a-zA-Z_-]+[a-zA-Z_ -]*:' "$$f" 2>/dev/null | grep -v ':=' | grep -v '\.PHONY'); \
+		if [ -n "$$targets" ]; then \
+			echo ""; \
+			echo "$$f:"; \
+			echo "$$targets" | awk -F ':' '{printf "  %s\n", $$1}'; \
+		fi; \
+	done
 
 claude-install: ## install Claude Code CLI
 	curl -fsSL https://claude.ai/install.sh | bash
