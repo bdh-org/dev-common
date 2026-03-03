@@ -35,6 +35,11 @@ Shared Makefile targets. Requires `VERSION` variable in your Makefile.
 | `version.mk` | `bump-patch`, `bump-minor`, `bump-major`, `tag` | Semantic version management |
 | `utils.mk` | `list`, `ls`, `claude-install` | Common utilities |
 | `python.mk` | `env`, `env-info`, `list-imports`, `requirements`, `lint`, `lint-fix`, `format` | Python dev tools, conda env, production requirements |
+| `devcontainer.mk` | `dc-install`, `dc-up`, `dc-shell`, `dc-exec`, `dc-stop`, `dc-rm`, `dc-nuke` | Devcontainer lifecycle management via CLI |
+
+### github/ vs .github/
+
+The `github/` directory contains workflow templates for consumer repos — copy these to your repo's `.github/workflows/` directory. The `.github/` directory contains workflows that run on this repo itself.
 
 ### github/workflows/
 
