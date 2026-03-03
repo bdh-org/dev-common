@@ -60,14 +60,6 @@ Composable scripts for setting up development containers. See [devcontainer/READ
 | `setup-python-dev.sh` | Python dev tools: ruff, pytest, jupyter, pipreqs |
 | `base-conda-packages.txt` | Minimal common packages |
 
-### claude/
-
-*(Coming soon)* Shared Claude Code settings and permissions.
-
-### python/
-
-*(Coming soon)* Shared Python environment configurations.
-
 ## Updating
 
 To update the submodule to the latest version:
