@@ -73,9 +73,12 @@ Composable scripts for setting up development containers. See [devcontainer/READ
 To update the submodule to the latest version:
 
 ```bash
-cd common
-git pull origin main
-cd ..
-git add common
-git commit -m "[CC] chore: update dev-common"
+make common-update
+```
+
+Or manually:
+
+```bash
+cd common && git pull origin main && cd ..
+git add common && git commit -m "[CC] chore: update dev-common"
 ```
