@@ -33,8 +33,13 @@ Shared Makefile targets. Requires `VERSION` variable in your Makefile.
 | File | Targets | Description |
 |------|---------|-------------|
 | `version.mk` | `bump-patch`, `bump-minor`, `bump-major`, `tag` | Semantic version management |
-| `utils.mk` | `list`, `ls`, `claude-install` | Common utilities |
+| `utils.mk` | `show`, `list`, `ls`, `claude-install` | Common utilities |
 | `python.mk` | `env`, `env-info`, `list-imports`, `requirements`, `lint`, `lint-fix`, `format` | Python dev tools, conda env, production requirements |
+| `devcontainer.mk` | `dc-install`, `dc-up`, `dc-shell`, `dc-exec`, `dc-stop`, `dc-rm`, `dc-nuke` | Devcontainer lifecycle management via CLI |
+
+### github/ vs .github/
+
+The `github/` directory contains workflow templates for consumer repos — copy these to your repo's `.github/workflows/` directory. The `.github/` directory contains workflows that run on this repo itself.
 
 ### github/workflows/
 
@@ -55,22 +60,17 @@ Composable scripts for setting up development containers. See [devcontainer/READ
 | `setup-python-dev.sh` | Python dev tools: ruff, pytest, jupyter, pipreqs |
 | `base-conda-packages.txt` | Minimal common packages |
 
-### claude/
-
-*(Coming soon)* Shared Claude Code settings and permissions.
-
-### python/
-
-*(Coming soon)* Shared Python environment configurations.
-
 ## Updating
 
 To update the submodule to the latest version:
 
 ```bash
-cd common
-git pull origin main
-cd ..
-git add common
-git commit -m "[CC] chore: update dev-common"
+make common-update
+```
+
+Or manually:
+
+```bash
+cd common && git pull origin main && cd ..
+git add common && git commit -m "[CC] chore: update dev-common"
 ```

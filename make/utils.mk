@@ -1,6 +1,18 @@
 # Shared utility targets
 
-.PHONY: help list ls claude-install common-update
+# --- show: dry-run mode for inspecting targets ---
+_SHOW_TARGETS := $(filter-out show,$(MAKECMDGOALS))
+
+ifneq ($(filter show,$(MAKECMDGOALS)),)
+ifneq ($(_SHOW_TARGETS),)
+MAKEFLAGS += --just-print
+endif
+endif
+
+show: ## Show the commands a target would run (usage: make show <target>)
+	+@$(if $(_SHOW_TARGETS),true,echo "Usage: make show <target>")
+
+.PHONY: help list ls show claude-install common-update
 
 help: ## Show available targets with descriptions
 	@for f in $(MAKEFILE_LIST); do \

@@ -1,5 +1,6 @@
-VERSION=0.3.1
+VERSION=0.5.2
 
-# Use our own shared targets
+# Include our own shared targets
 include make/version.mk
 include make/utils.mk
+include make/devcontainer.mk
