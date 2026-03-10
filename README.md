@@ -33,7 +33,7 @@ Shared Makefile targets. Requires `VERSION` variable in your Makefile.
 | File | Targets | Description |
 |------|---------|-------------|
 | `version.mk` | `bump-patch`, `bump-minor`, `bump-major`, `tag` | Semantic version management |
-| `utils.mk` | `list`, `ls`, `claude-install` | Common utilities |
+| `utils.mk` | `show`, `list`, `ls`, `claude-install` | Common utilities |
 | `python.mk` | `env`, `env-info`, `list-imports`, `requirements`, `lint`, `lint-fix`, `format` | Python dev tools, conda env, production requirements |
 | `devcontainer.mk` | `dc-install`, `dc-up`, `dc-shell`, `dc-exec`, `dc-stop`, `dc-rm`, `dc-nuke` | Devcontainer lifecycle management via CLI |
 
