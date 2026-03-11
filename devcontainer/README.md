@@ -19,8 +19,8 @@ source "$COMMON/setup-base.sh"
 # Python dev tools + project packages
 source "$COMMON/setup-python-dev.sh" "conda-packages.txt"
 
-# Claude Code CLI (requires Node.js feature in devcontainer.json)
-[ -x "$(command -v npm)" ] && source "$COMMON/setup-node.sh"
+# Claude Code CLI (native installer)
+source "$COMMON/setup-node.sh"
 ```
 
 ## Scripts
@@ -52,18 +52,9 @@ source "$COMMON/setup-python-dev.sh" "conda-packages.txt" # with project package
 
 ### setup-node.sh
 
-Optional Node.js setup:
+Claude Code CLI setup:
 
-- Installs Claude Code CLI via npm
-
-Requires Node.js feature in `devcontainer.json`:
-```json
-{
-  "features": {
-    "ghcr.io/devcontainers/features/node:1": {}
-  }
-}
-```
+- Installs Claude Code CLI via native installer (curl)
 
 ## Package Files
 
@@ -85,13 +76,11 @@ Each project maintains its own `conda-packages.txt` with project-specific depend
   "image": "mcr.microsoft.com/devcontainers/python:3.12",
   "updateRemoteUserUID": true,
   "features": {
-    "ghcr.io/devcontainers/features/node:1": {},
     "ghcr.io/devcontainers/features/github-cli:1": {}
   },
-  "initializeCommand": "mkdir -p ${HOME}/.config/gh ${HOME}/.claude ${HOME}/data",
+  "initializeCommand": "bash .devcontainer/init-host.sh",
   "runArgs": [
     "--name=dc-my-project",
-    "--hostname=${localEnv:HOSTNAME}-my-project",
     "--network=host"
   ],
   "mounts": [

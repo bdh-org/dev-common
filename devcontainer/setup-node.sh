@@ -1,18 +1,17 @@
 #!/usr/bin/env bash
-# setup-node.sh - Node.js and Claude Code CLI setup
+# setup-node.sh - Claude Code CLI setup (native installer)
 # Source this script from your project's .devcontainer/setup.sh
 #
 # Usage:
-#   [ -x "$(command -v npm)" ] && source "$COMMON/setup-node.sh"
+#   source "$COMMON/setup-node.sh"
 #
-# Requires: Node.js/npm (use devcontainer feature ghcr.io/devcontainers/features/node:1)
-# Installs: Claude Code CLI
+# Installs: Claude Code CLI via native installer
 
 set -euo pipefail
 
 echo "==> Setting up Claude Code CLI..."
 if ! command -v claude >/dev/null 2>&1; then
-  npm install -g @anthropic-ai/claude-code
+  curl -fsSL https://claude.ai/install.sh | bash
   echo "    Claude Code CLI installed"
 else
   echo "    Claude Code CLI already installed"
