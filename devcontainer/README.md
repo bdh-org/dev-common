@@ -89,6 +89,11 @@ Each project maintains its own `conda-packages.txt` with project-specific depend
     "ghcr.io/devcontainers/features/github-cli:1": {}
   },
   "initializeCommand": "mkdir -p ${HOME}/.config/gh ${HOME}/.claude ${HOME}/data",
+  "runArgs": [
+    "--name=dc-my-project",
+    "--hostname=${localEnv:HOSTNAME}-my-project",
+    "--network=host"
+  ],
   "mounts": [
     "source=${localEnv:HOME}/.config/gh,target=/home/vscode/.config/gh,type=bind,consistency=cached",
     "source=${localEnv:HOME}/.claude,target=/home/vscode/.claude,type=bind,consistency=cached"
