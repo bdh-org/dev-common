@@ -17,7 +17,7 @@ bump-patch: ## bump patch version (x.y.Z) and commit
 		$(SED_I) "s/__version__ = \"$(VERSION)\"/__version__ = \"$$NEW_VERSION\"/" $(PACKAGE_DIR)/__init__.py && \
 		git add $(PACKAGE_DIR)/__init__.py || true && \
 	git add Makefile && \
-	git commit -m "[CC] chore: bump version to $$NEW_VERSION" && \
+	git commit -m "chore: bump version to $$NEW_VERSION" && \
 	echo "Bumped to $$NEW_VERSION"
 
 bump-minor: ## bump minor version (x.Y.0) and commit
@@ -27,7 +27,7 @@ bump-minor: ## bump minor version (x.Y.0) and commit
 		$(SED_I) "s/__version__ = \"$(VERSION)\"/__version__ = \"$$NEW_VERSION\"/" $(PACKAGE_DIR)/__init__.py && \
 		git add $(PACKAGE_DIR)/__init__.py || true && \
 	git add Makefile && \
-	git commit -m "[CC] chore: bump version to $$NEW_VERSION" && \
+	git commit -m "chore: bump version to $$NEW_VERSION" && \
 	echo "Bumped to $$NEW_VERSION"
 
 bump-major: ## bump major version (X.0.0) and commit
@@ -37,5 +37,5 @@ bump-major: ## bump major version (X.0.0) and commit
 		$(SED_I) "s/__version__ = \"$(VERSION)\"/__version__ = \"$$NEW_VERSION\"/" $(PACKAGE_DIR)/__init__.py && \
 		git add $(PACKAGE_DIR)/__init__.py || true && \
 	git add Makefile && \
-	git commit -m "[CC] chore: bump version to $$NEW_VERSION" && \
+	git commit -m "chore: bump version to $$NEW_VERSION" && \
 	echo "Bumped to $$NEW_VERSION"
