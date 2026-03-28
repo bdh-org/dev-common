@@ -5,7 +5,7 @@
 # Usage:
 #   source "$COMMON/setup-node.sh"
 #
-# Installs: Claude Code CLI via native installer
+# Installs: Claude Code CLI via native installer, waterbrother
 
 set -euo pipefail
 
@@ -15,4 +15,12 @@ if ! command -v claude >/dev/null 2>&1; then
   echo "    Claude Code CLI installed"
 else
   echo "    Claude Code CLI already installed"
+fi
+
+echo "==> Setting up waterbrother..."
+if ! command -v waterbrother >/dev/null 2>&1; then
+  npm install -g @tritard/waterbrother
+  echo "    waterbrother installed"
+else
+  echo "    waterbrother already installed"
 fi
