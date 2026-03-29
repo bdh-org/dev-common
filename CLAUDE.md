@@ -14,3 +14,8 @@ Example: `fix: resolve null pointer in data loader`
 Use a concise, descriptive title.
 
 Example: `feat: add user authentication`
+
+## Package Management
+- Install packages with `conda` (conda-forge) into the dev environment when possible.
+- Use `pip` only as a fallback when a package is not available on conda-forge.
+- Flag potential conflicts when mixing pip and conda in the same environment.
