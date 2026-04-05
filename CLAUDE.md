@@ -93,3 +93,9 @@ Services that don't need Python (e.g. home-site) skip step 3.
 `prod-deploy-all` deploys the full stack from the primary repo via SSH.
 All git operations use `git_retry` (make define/call macro) — 5 attempts with
 10s backoff to handle transient DNS failures (Tailscale MagicDNS).
+
+### P11: Project scaffolding (devtemplate)
+New repos are created by cloning `devtemplate`, which embeds the standard
+patterns: dev-common submodule, conda-packages.txt, ruff.toml, devcontainer
+setup chain, Makefile includes. Run `make init` after renaming the directory
+to finalize the scaffold.
