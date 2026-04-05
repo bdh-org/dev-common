@@ -1,0 +1,25 @@
+# Shared ruff configuration
+# https://docs.astral.sh/ruff/configuration/
+# Repos can override with a local ruff.toml
+
+line-length = 100
+
+[lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # pyflakes
+    "I",      # isort
+    "B",      # flake8-bugbear
+    "UP",     # pyupgrade
+]
+ignore = [
+    "E501",   # line too long (handled by formatter)
+]
+
+[lint.per-file-ignores]
+"tests/*" = ["B", "S101"]  # allow asserts in tests
+
+[format]
+quote-style = "double"
+indent-style = "space"
