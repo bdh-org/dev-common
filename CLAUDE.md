@@ -27,14 +27,13 @@ Every stack has one primary repo that orchestrates the others. It owns the
 `docker-compose.yml`, deploys all services, and serves as the entry point for
 `prod-deploy-all`. In the home-site stack, `home-site` is the primary repo.
 
-### P2: Service types
-Services fall into two categories:
-- **Full services** — long-running containers (API, dashboard) with their own
-  Dockerfile, served via Apache vhost proxy. Examples: panoptikon, freddyb, canary.
-- **DAG-only services** — provide Airflow DAGs and a container for the DAG to
-  call into, but don't run a persistent server. Examples: heller, hog.
-- **Static sites** — built frontend assets served directly by Apache with no
-  container. Example: oleo.
+### P2a: Full service
+Long-running container (API, dashboard) with its own Dockerfile, served via
+Apache vhost proxy. Examples: panoptikon, freddyb, canary, hog.
+
+### P2b: Static site
+Built frontend assets served directly by Apache with no container.
+Example: oleo.
 
 ### P3: Submodule hierarchy
 Two-tier shared infrastructure via git submodules:
@@ -69,7 +68,8 @@ Services find each other by container name on the minerva Docker network
 DAGs live in each service's `dags/` directory. `make dags-install` (airflow.mk)
 copies them to the central Airflow DAGs directory. `make dags-reserialize`
 triggers Airflow to reload. `prod-deploy-all` runs both for every service that
-has a `dags/` directory.
+has a `dags/` directory. Services with DAGs typically also have a Dockerfile
+for the container that DAG tasks call into.
 
 ### P8: Version propagation
 Each repo has `VERSION=x.y.z` in its Makefile. The primary repo extracts
