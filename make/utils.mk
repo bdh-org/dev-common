@@ -12,7 +12,7 @@ endif
 show: ## Show the commands a target would run (usage: make show <target>)
 	+@$(if $(_SHOW_TARGETS),true,echo "Usage: make show <target>")
 
-.PHONY: help list ls show claude-install common-update
+.PHONY: help list ls show claude-install common-update prod-clean
 
 help: ## Show available targets with descriptions
 	@for f in $(MAKEFILE_LIST); do \
@@ -42,3 +42,13 @@ common-update: ## update dev-common submodule to latest
 	git add common && \
 	(git diff --cached --quiet common || git commit -m "[CC] chore: update dev-common") && \
 	echo "dev-common is up to date"
+
+PROD_SERVER ?= min
+IMAGE_NAME ?= $(PROJECT_NAME)
+
+prod-clean: ## Remove old Docker images and stopped containers on production
+	ssh $(PROD_SERVER) "\
+		docker ps -a --filter ancestor=$(IMAGE_NAME) --filter status=exited -q | xargs -r docker rm && \
+		docker images $(IMAGE_NAME) --format '{{.Repository}}:{{.Tag}}' | \
+		grep -vE ':(latest|$(VERSION)(-full)?)\$$' | \
+		xargs -r docker rmi"
