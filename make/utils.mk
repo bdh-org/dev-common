@@ -49,8 +49,9 @@ IMAGE_NAME ?= $(PROJECT_NAME)
 prod-clean: ## Remove old Docker images and stopped containers on production
 	ssh $(PROD_SERVER) ' \
 		docker ps -a --filter ancestor=$(IMAGE_NAME) --filter status=exited -q | xargs -r docker rm; \
-		USED=$$(docker ps --format "{{.Image}}" | sort -u); \
+		USED_IDS=$$(docker ps --format "{{.Image}}" | xargs -r -n1 docker inspect --format "{{.Id}}" 2>/dev/null | sort -u); \
 		for TAG in $$(docker images $(IMAGE_NAME) --format "{{.Repository}}:{{.Tag}}" | grep -v ":latest"); do \
-			echo "$$USED" | grep -qF "$$TAG" && echo "keep $$TAG" || \
+			TAG_ID=$$(docker inspect --format "{{.Id}}" "$$TAG" 2>/dev/null); \
+			echo "$$USED_IDS" | grep -qF "$$TAG_ID" && echo "keep $$TAG" || \
 			{ echo "remove $$TAG" && docker rmi "$$TAG"; }; \
 		done'
