@@ -47,10 +47,10 @@ PROD_SERVER ?= min
 IMAGE_NAME ?= $(PROJECT_NAME)
 
 prod-clean: ## Remove old Docker images and stopped containers on production
-	ssh $(PROD_SERVER) "\
-		docker ps -a --filter ancestor=$(IMAGE_NAME) --filter status=exited -q | xargs -r docker rm && \
-		IN_USE=\$$(docker ps --filter name=$(IMAGE_NAME) --format '{{.Image}}' | sort -u | paste -sd'|') && \
-		docker images $(IMAGE_NAME) --format '{{.Repository}}:{{.Tag}}' | \
-		grep -v ':latest' | \
-		{ if [ -n \"\$$IN_USE\" ]; then grep -vE \"\$$IN_USE\"; else cat; fi; } | \
-		xargs -r docker rmi"
+	ssh $(PROD_SERVER) ' \
+		docker ps -a --filter ancestor=$(IMAGE_NAME) --filter status=exited -q | xargs -r docker rm; \
+		USED=$$(docker ps --format "{{.Image}}" | sort -u); \
+		for TAG in $$(docker images $(IMAGE_NAME) --format "{{.Repository}}:{{.Tag}}" | grep -v ":latest"); do \
+			echo "$$USED" | grep -qF "$$TAG" && echo "keep $$TAG" || \
+			{ echo "remove $$TAG" && docker rmi "$$TAG"; }; \
+		done'
