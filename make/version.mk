@@ -14,7 +14,7 @@ bump-patch: ## bump patch version (x.y.Z) and commit
 	@NEW_VERSION=$$(echo $(VERSION) | awk -F. '{print $$1"."$$2"."$$3+1}') && \
 	$(SED_I) "s/VERSION=$(VERSION)/VERSION=$$NEW_VERSION/" Makefile && \
 	[ -f $(PACKAGE_DIR)/__init__.py ] && grep -q '__version__' $(PACKAGE_DIR)/__init__.py && \
-		$(SED_I) "s/__version__ = \"$(VERSION)\"/__version__ = \"$$NEW_VERSION\"/" $(PACKAGE_DIR)/__init__.py && \
+		$(SED_I) 's/__version__ = ".*"/__version__ = "'"$$NEW_VERSION"'"/' $(PACKAGE_DIR)/__init__.py && \
 		git add $(PACKAGE_DIR)/__init__.py || true && \
 	git add Makefile && \
 	git commit -m "chore: bump version to $$NEW_VERSION" && \
@@ -24,7 +24,7 @@ bump-minor: ## bump minor version (x.Y.0) and commit
 	@NEW_VERSION=$$(echo $(VERSION) | awk -F. '{print $$1"."$$2+1".0"}') && \
 	$(SED_I) "s/VERSION=$(VERSION)/VERSION=$$NEW_VERSION/" Makefile && \
 	[ -f $(PACKAGE_DIR)/__init__.py ] && grep -q '__version__' $(PACKAGE_DIR)/__init__.py && \
-		$(SED_I) "s/__version__ = \"$(VERSION)\"/__version__ = \"$$NEW_VERSION\"/" $(PACKAGE_DIR)/__init__.py && \
+		$(SED_I) 's/__version__ = ".*"/__version__ = "'"$$NEW_VERSION"'"/' $(PACKAGE_DIR)/__init__.py && \
 		git add $(PACKAGE_DIR)/__init__.py || true && \
 	git add Makefile && \
 	git commit -m "chore: bump version to $$NEW_VERSION" && \
@@ -34,7 +34,7 @@ bump-major: ## bump major version (X.0.0) and commit
 	@NEW_VERSION=$$(echo $(VERSION) | awk -F. '{print $$1+1".0.0"}') && \
 	$(SED_I) "s/VERSION=$(VERSION)/VERSION=$$NEW_VERSION/" Makefile && \
 	[ -f $(PACKAGE_DIR)/__init__.py ] && grep -q '__version__' $(PACKAGE_DIR)/__init__.py && \
-		$(SED_I) "s/__version__ = \"$(VERSION)\"/__version__ = \"$$NEW_VERSION\"/" $(PACKAGE_DIR)/__init__.py && \
+		$(SED_I) 's/__version__ = ".*"/__version__ = "'"$$NEW_VERSION"'"/' $(PACKAGE_DIR)/__init__.py && \
 		git add $(PACKAGE_DIR)/__init__.py || true && \
 	git add Makefile && \
 	git commit -m "chore: bump version to $$NEW_VERSION" && \
