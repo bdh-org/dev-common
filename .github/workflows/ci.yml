@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  workflow_call:
+    inputs:
+      python-version:
+        type: string
+        default: "3.13"
+      requirements-file:
+        type: string
+        default: "requirements-prod.txt"
+      test-path:
+        type: string
+        default: "tests/"
+      run-tests:
+        type: boolean
+        default: true
+      run-lint:
+        type: boolean
+        default: true
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Clone dev-common submodule
+        run: git submodule update --init common
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python-version }}
+
+      - name: Install dependencies
+        run: |
+          pip install -r ${{ inputs.requirements-file }}
+          pip install ruff pytest pytest-cov
+
+      - name: Lint
+        if: inputs.run-lint
+        run: ruff check .
+
+      - name: Test
+        if: inputs.run-tests
+        run: python -m pytest -vv ${{ inputs.test-path }}
