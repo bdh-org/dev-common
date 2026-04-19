@@ -23,17 +23,52 @@ Example: `feat: add user authentication`
 ## Stack Architecture Patterns
 
 ### P1: Primary repo
-Every stack has one primary repo that orchestrates the others. It owns the
-`docker-compose.yml`, deploys all services, and serves as the entry point for
-`prod-deploy-all`. In the home-site stack, `home-site` is the primary repo.
+Primary/edge repo for a stack. Two hats:
+- **Orchestrator**: owns `docker-compose.yml`, is the entry point for
+  `prod-deploy-all`, and aggregates service versions at build time (P8).
+- **Web edge**: ships an Apache container (its own `Dockerfile`) that
+  serves static HTML, mounts P2b static sites into its docroot, and
+  reverse-proxies P2a services via vhost config.
+
+Has no Python application code of its own, so it does NOT use the shared
+Python CI workflow (`common/.github/workflows/ci.yml`) — ruff + pytest
+don't apply. A P1-shaped CI (compose config validation, vhost syntax
+checks, hadolint) is optional and bespoke.
+
+Example: `home-site` — Apache container on port 80, serves `html/`,
+mounts `oleo/dist` into `/usr/local/apache2/oleo`, proxies panoptikon /
+freddyb / canary / hog.
 
 ### P2a: Full service
 Long-running container (API, dashboard) with its own Dockerfile, served via
 Apache vhost proxy. Examples: panoptikon, freddyb, canary, hog.
 
 ### P2b: Static site
-Built frontend assets served directly by Apache with no container.
+Built frontend assets (no container of its own). The primary repo's
+Apache container mounts the build output into its docroot via
+`docker-compose.yml` (e.g. `../oleo/dist:/usr/local/apache2/oleo:ro`).
 Example: oleo.
+
+### P2c: Data service
+Postgres (or similar DB) container whose primary deliverable is
+**schema + seed data**, not application code. Shape:
+- Base image is a DB image (e.g. `postgres:16-alpine`), not Python.
+- `schema/*.sql` and `seed/` copied into `docker-entrypoint-initdb.d/`.
+- Makefile targets are operational (`build/up/down/reset/psql/logs/
+  backup/restore`), not `run/test`.
+- CI is bespoke: build the image, wait for seed, run shell tests
+  against the running container — the shared Python CI workflow
+  doesn't apply.
+- No `conda-packages.txt`, `ruff.toml`, `requirements-prod.txt`, or
+  `src/` tree. Devcontainer uses a non-Python base image with
+  `docker-outside-of-docker` so the dev can build and run the service.
+
+Example: `entities` (reference data for the finzeug stack).
+
+P2c repos are not currently scaffolded from `devtemplate` cleanly — see
+`brianholland/devtemplate#15` for the `devtemplate-db` sibling template
+that will. Until that exists, P2c repos don't track
+`DEVTEMPLATE_VERSION`.
 
 ### P3: Submodule hierarchy
 Two-tier shared infrastructure via git submodules:
@@ -89,7 +124,9 @@ Four sequential steps initialize the development environment:
 5. `setup-waterbrother.sh` — waterbrother CLI (optional; projects that
    don't need it simply don't source this script).
 
-Services that don't need Python (e.g. home-site) skip step 3.
+Repos without a Python environment skip step 3:
+- P1 (e.g. `home-site`) — orchestrator + Apache, no Python app code.
+- P2c (e.g. `entities`) — DB service, no Python env in the container.
 
 ### P10: Production deployment with retry
 `prod-deploy-all` deploys the full stack from the primary repo via SSH.
@@ -101,3 +138,6 @@ New repos are created by cloning `devtemplate`, which embeds the standard
 patterns: dev-common submodule, conda-packages.txt, ruff.toml, devcontainer
 setup chain, Makefile includes. Run `make init` after renaming the directory
 to finalize the scaffold.
+
+For Postgres-backed data services (P2c), use the future `devtemplate-db`
+sibling template instead — see `brianholland/devtemplate#15`.
