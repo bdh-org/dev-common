@@ -85,7 +85,9 @@ Four sequential steps initialize the development environment:
 2. `setup-base.sh` — installs Miniforge, tmux, shell config, git aliases.
 3. `setup-python-dev.sh` — conda dev tools (ruff, pytest, jupyter) + project
    packages from `conda-packages.txt`.
-4. `setup-node.sh` — Claude Code CLI, waterbrother.
+4. `setup-claude.sh` — Claude Code CLI.
+5. `setup-waterbrother.sh` — waterbrother CLI (optional; projects that
+   don't need it simply don't source this script).
 
 Services that don't need Python (e.g. home-site) skip step 3.
 

@@ -20,7 +20,10 @@ source "$COMMON/setup-base.sh"
 source "$COMMON/setup-python-dev.sh" "conda-packages.txt"
 
 # Claude Code CLI (native installer)
-source "$COMMON/setup-node.sh"
+source "$COMMON/setup-claude.sh"
+
+# waterbrother CLI (optional — omit this line to skip)
+source "$COMMON/setup-waterbrother.sh"
 ```
 
 ## Scripts
@@ -50,11 +53,18 @@ source "$COMMON/setup-python-dev.sh"                      # base packages only
 source "$COMMON/setup-python-dev.sh" "conda-packages.txt" # with project packages
 ```
 
-### setup-node.sh
+### setup-claude.sh
 
 Claude Code CLI setup:
 
 - Installs Claude Code CLI via native installer (curl)
+
+### setup-waterbrother.sh
+
+waterbrother CLI setup:
+
+- Installs `@tritard/waterbrother` globally via npm
+- Optional — projects that don't want it simply don't source this script
 
 ## Package Files
 
