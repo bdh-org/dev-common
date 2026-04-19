@@ -18,6 +18,9 @@ on:
       run-lint:
         type: boolean
         default: true
+      install-requirements:
+        type: boolean
+        default: true
 
 jobs:
   ci:
@@ -34,10 +37,12 @@ jobs:
         with:
           python-version: ${{ inputs.python-version }}
 
-      - name: Install dependencies
-        run: |
-          pip install -r ${{ inputs.requirements-file }}
-          pip install ruff pytest pytest-cov
+      - name: Install project requirements
+        if: inputs.install-requirements
+        run: pip install -r ${{ inputs.requirements-file }}
+
+      - name: Install dev tools
+        run: pip install ruff pytest pytest-cov
 
       - name: Lint
         if: inputs.run-lint
