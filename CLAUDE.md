@@ -73,9 +73,12 @@ that will. Until that exists, P2c repos don't track
 ### P3: Submodule hierarchy
 Two-tier shared infrastructure via git submodules:
 - `common/` (dev-common) — dev tooling used by all projects: version.mk,
-  python.mk, utils.mk, devcontainer.mk, devcontainer setup scripts.
-- `stack-common/` (home-site-common) — stack-specific: deploy.mk, airflow.mk.
-  Has dev-common as a nested submodule.
+  python.mk, utils.mk, devcontainer.mk, devcontainer setup scripts (incl.
+  generic `claude-prod` / `claude-dev` shims that read host config from env).
+- `stack-common/` (home-site-common) — stack-specific: deploy.mk, airflow.mk,
+  `devcontainer/setup-stack-hosts.sh` (writes a `/etc/profile.d` entry setting
+  CLAUDE_PROD_HOST / CLAUDE_DEV_HOST and any other stack-specific env). Has
+  dev-common as a nested submodule.
 
 All repos include both with `-include` (tolerates missing submodules on fresh clone).
 
@@ -133,6 +136,8 @@ Repos without a Python environment skip step 3:
 All git operations use `git_retry` (make define/call macro) — 5 attempts with
 10s backoff to handle transient DNS failures (Tailscale MagicDNS).
 
+`dev-deploy-all` is the parallel for the dev tier; see P12.
+
 ### P11: Project scaffolding (devtemplate)
 New repos are created by cloning `devtemplate`, which embeds the standard
 patterns: dev-common submodule, conda-packages.txt, ruff.toml, devcontainer
@@ -140,4 +145,47 @@ setup chain, Makefile includes. Run `make init` after renaming the directory
 to finalize the scaffold.
 
 For Postgres-backed data services (P2c), use the future `devtemplate-db`
-sibling template instead — see `brianholland/devtemplate#15`.
+sibling template instead — see `brianholland/devtemplate#15`. Future
+`devtemplate-primary` (P1) and `devtemplate-stack-common` siblings are
+tracked at `brianholland/devtemplate#24` and `#25`.
+
+### P12: Dev tier on a parallel host
+A pre-prod environment that mirrors prod's service set on a separate
+host (typically the host that runs the developer's devcontainer, e.g.
+`twix`). Validates cross-service wiring before promoting to prod.
+
+Shape, parallel to P10:
+- `dev-deploy-all` SSHes to `$(DEV_SERVER)` (default `twix`, overridable),
+  runs `dev-bootstrap && dev-up` on that host.
+- `dev-bootstrap` is idempotent: copies missing per-service `.env` from
+  `.env.example`, seeds host-local data files (e.g. hog's tensor.duckdb)
+  for things that can't ride the live NFS mount because of file locks.
+- `dev-up` runs `docker compose up -d --build` *without* `--profile airflow`,
+  so airflow services are skipped at parse time. (Prod's `up` passes
+  `--profile airflow` to bring them up.)
+- DAG installation is omitted on dev (no Airflow). Cross-service writes
+  driven by DAGs propagate from prod into dev "for free" through the
+  shared NFS mount of prod data.
+
+Apache vhost on the dev host accepts both `*.minerva` (prod) and `*.twix`
+(dev) ServerAlias entries — same image runs on both hosts; only the
+hostname differs.
+
+### P13: Scoped Claude Code identities
+Each tier has a constrained `claude` SSH user — `claude-prod` on prod,
+`claude-dev` on dev — with:
+- Verb-allowlisted SSH wrapper (`/usr/local/bin/claude-prod` /
+  `claude-dev`), forced via `command="..."` in `authorized_keys`.
+- POSIX ACL grant for read-only access to a data path (or, on NFS clients
+  reading server-side ACLs, group membership with the matching numeric GID).
+- Sudoers entry for a specific docker-helper script that runs as root and
+  re-validates inputs.
+
+Devcontainer shims at `/usr/local/bin/claude-{prod,dev}` (installed by
+`setup-claude.sh`) are host-portable: they SSH to whatever host the env
+vars `CLAUDE_PROD_HOST` / `CLAUDE_DEV_HOST` name. stack-common's
+`setup-stack-hosts.sh` writes those env vars at `/etc/profile.d` so they
+survive devcontainer rebuilds.
+
+Source for the wrappers + install docs lives in the primary repo at
+`claude-access/` (e.g. `home-site/claude-access/`).
