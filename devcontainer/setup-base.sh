@@ -63,6 +63,13 @@ if ! grep -q "$MARKER" "$BASHRC"; then
   cat >> "$BASHRC" <<EOF
 
 # --- devcontainer setup ---
+# UTF-8 locale so tmux + other tools render Unicode correctly. C.UTF-8 is
+# available in glibc without locale-gen; works on every dev image we use.
+# Without this, tmux mangles non-ASCII bytes on output (em-dash -> "_" etc).
+# See brianholland/dev-common#48.
+export LANG=C.UTF-8
+export LC_ALL=C.UTF-8
+
 # Conda takes priority over ~/.local/bin to avoid pip packages shadowing conda
 export PATH="\$HOME/miniforge3/bin:\$HOME/.local/bin:\$PATH"
 
