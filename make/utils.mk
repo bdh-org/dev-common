@@ -12,7 +12,7 @@ endif
 show: ## Show the commands a target would run (usage: make show <target>)
 	+@$(if $(_SHOW_TARGETS),true,echo "Usage: make show <target>")
 
-.PHONY: help list ls show claude-install common-update prod-clean
+.PHONY: help list ls show claude-install common-update prod-clean dev-clean recreate
 
 help: ## Show available targets with descriptions
 	@for f in $(MAKEFILE_LIST); do \
@@ -44,10 +44,14 @@ common-update: ## update dev-common submodule to latest
 	echo "dev-common is up to date"
 
 PROD_SERVER ?= min
+DEV_SERVER ?= twix
 IMAGE_NAME ?= $(PROJECT_NAME)
 
-prod-clean: ## Remove old Docker images and stopped containers on production
-	ssh $(PROD_SERVER) ' \
+# Body shared by prod-clean and dev-clean: remove stopped containers built
+# from $(IMAGE_NAME) and old non-:latest image tags that no running container
+# is using. $(1) is the SSH target.
+define _docker_clean
+	ssh $(1) ' \
 		docker ps -a --filter ancestor=$(IMAGE_NAME) --filter status=exited -q | xargs -r docker rm; \
 		USED_IDS=$$(docker ps --format "{{.Image}}" | xargs -r -n1 docker inspect --format "{{.Id}}" 2>/dev/null | sort -u); \
 		for TAG in $$(docker images $(IMAGE_NAME) --format "{{.Repository}}:{{.Tag}}" | grep -v ":latest"); do \
@@ -55,3 +59,16 @@ prod-clean: ## Remove old Docker images and stopped containers on production
 			echo "$$USED_IDS" | grep -qF "$$TAG_ID" && echo "keep $$TAG" || \
 			{ echo "remove $$TAG" && docker rmi "$$TAG"; }; \
 		done'
+endef
+
+prod-clean: ## Remove old Docker images and stopped containers on production
+	$(call _docker_clean,$(PROD_SERVER))
+
+dev-clean: ## Remove old Docker images and stopped containers on dev
+	$(call _docker_clean,$(DEV_SERVER))
+
+recreate: ## Force-recreate a service container so it picks up env_file changes
+ifndef SERVICE
+	$(error SERVICE is required. Usage: make recreate SERVICE=<service-name>)
+endif
+	docker compose up -d --force-recreate $(SERVICE)
