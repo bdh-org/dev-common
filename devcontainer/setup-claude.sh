@@ -18,8 +18,8 @@ fi
 # Install the claude-prod shim that proxies to the prod wrapper over SSH.
 # The corresponding server-side scripts and one-time setup live in
 # brianholland/home-site:claude-access/.  The private key is expected at
-# ~/.claude/credentials/claude-prod-readonly (the host ~/.claude is bind-
-# mounted into every devcontainer per devtemplate's devcontainer.json).
+# ~/.config/ai/claude/credentials/prod-readonly (host bind-mounted into every
+# devcontainer per the bind mount in devtemplate's devcontainer.json).
 echo "==> Installing claude-prod shim..."
 sudo tee /usr/local/bin/claude-prod >/dev/null <<'CLAUDE_PROD_EOF'
 #!/usr/bin/env bash
@@ -29,7 +29,7 @@ sudo tee /usr/local/bin/claude-prod >/dev/null <<'CLAUDE_PROD_EOF'
 # server-side claude-prod wrapper, which validates against an allowlist.
 set -euo pipefail
 
-KEY="${HOME}/.claude/credentials/claude-prod-readonly"
+KEY="${HOME}/.config/ai/claude/credentials/prod-readonly"
 HOST="${CLAUDE_PROD_HOST:-prod}"
 
 if [[ ! -r "$KEY" ]]; then
@@ -67,7 +67,7 @@ sudo tee /usr/local/bin/claude-dev >/dev/null <<'CLAUDE_DEV_EOF'
 # against an allowlist.
 set -euo pipefail
 
-KEY="${HOME}/.claude/credentials/claude-dev-readonly"
+KEY="${HOME}/.config/ai/claude/credentials/dev-readonly"
 HOST="${CLAUDE_DEV_HOST:-twix}"
 
 if [[ ! -r "$KEY" ]]; then
