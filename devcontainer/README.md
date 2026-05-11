@@ -93,8 +93,10 @@ Each project maintains its own `conda-packages.txt` with project-specific depend
     "--name=dc-my-project"
   ],
   "mounts": [
-    "source=${localEnv:HOME}/.config/gh,target=/home/vscode/.config/gh,type=bind,consistency=cached",
-    "source=${localEnv:HOME}/.claude,target=/home/vscode/.claude,type=bind,consistency=cached"
+    "source=${localEnv:HOME}/.claude,target=/home/vscode/.claude,type=bind,consistency=cached",
+    "source=${localEnv:HOME}/.claude.json,target=/home/vscode/.claude.json,type=bind,consistency=cached",
+    "source=${localEnv:HOME}/.config/ai/claude,target=/home/vscode/.config/ai/claude,type=bind,consistency=cached",
+    "source=${localEnv:HOME}/.config/ai/xai,target=/home/vscode/.config/ai/xai,type=bind,consistency=cached"
   ],
   "remoteEnv": {
     "ANTHROPIC_API_KEY": "${localEnv:ANTHROPIC_API_KEY}",

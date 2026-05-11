@@ -5,18 +5,15 @@
 # that macOS stores in the Keychain rather than on disk.
 set -euo pipefail
 
-mkdir -p "${HOME}/.config/gh" "${HOME}/.claude" "${HOME}/data"
+mkdir -p "${HOME}/.claude" "${HOME}/.config/ai/claude/identity/gh" "${HOME}/.config/ai/claude/credentials" "${HOME}/data"
 
 # Save host hostname for the container to use
 hostname > "$(dirname "$0")/.hostname"
 
-# Ensure ~/.gitconfig exists so the bind mount doesn't fail.
-[ -f "${HOME}/.gitconfig" ] || touch "${HOME}/.gitconfig"
-
-# Ensure these files exist so the bind mount doesn't fail.
+# Ensure these files exist so bind mounts don't fail.
 # Docker requires the source file to exist for file-level bind mounts.
 [ -f "${HOME}/.claude.json" ] || touch "${HOME}/.claude.json"
-mkdir -p "${HOME}/.config/xai"
+mkdir -p "${HOME}/.config/ai/xai"
 
 # macOS: Claude Code stores OAuth tokens in the system Keychain,
 # not in ~/.claude/.credentials.json. Extract them so the bind
