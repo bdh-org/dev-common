@@ -8,22 +8,33 @@
 set -euo pipefail
 
 echo "==> Setting up Claude Code CLI..."
+
+# Seed ~/.claude.json so per-container Claude Code skips first-run onboarding.
+# The host ~/.claude.json is no longer bind-mounted (sharing one file across
+# containers caused concurrent-write corruption); each container now owns its
+# own copy. Prefer the seed file that init-host.sh extracts from the host's
+# ~/.claude.json into the mounted ~/.claude dir: the logged-in check needs the
+# identity fields (oauthAccount, userID) in ~/.claude.json, not just tokens in
+# ~/.claude/.credentials.json — without them Claude Code runs the full welcome
+# flow (theme + login) despite hasCompletedOnboarding. Only seed when absent/
+# empty so real state is never clobbered, and do it before the CLI install so
+# no first run can beat the seed.
+if [ ! -s "${HOME}/.claude.json" ]; then
+  if [ -s "${HOME}/.claude/.claude.json.seed" ]; then
+    cp "${HOME}/.claude/.claude.json.seed" "${HOME}/.claude.json"
+    echo "    seeded ${HOME}/.claude.json from ~/.claude/.claude.json.seed"
+  else
+    echo '{"hasCompletedOnboarding":true,"installMethod":"native"}' > "${HOME}/.claude.json"
+    echo "    seeded ${HOME}/.claude.json minimal stub (no seed file; login will be prompted)"
+  fi
+  chmod 600 "${HOME}/.claude.json"
+fi
+
 if ! command -v claude >/dev/null 2>&1; then
   curl -fsSL https://claude.ai/install.sh | bash
   echo "    Claude Code CLI installed"
 else
   echo "    Claude Code CLI already installed"
-fi
-
-# Seed a minimal ~/.claude.json so per-container Claude Code skips first-run
-# onboarding. The host ~/.claude.json is no longer bind-mounted (sharing one
-# file across containers caused concurrent-write corruption); each container
-# now owns its own copy. Only seed when absent/empty so real state is never
-# clobbered (e.g. if a repo still mounts the host file).
-if [ ! -s "${HOME}/.claude.json" ]; then
-  echo '{"hasCompletedOnboarding":true,"installMethod":"native"}' > "${HOME}/.claude.json"
-  chmod 600 "${HOME}/.claude.json"
-  echo "    seeded ${HOME}/.claude.json onboarding stub"
 fi
 
 # Install the claude-prod shim that proxies to the prod wrapper over SSH.

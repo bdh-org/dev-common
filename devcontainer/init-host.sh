@@ -15,6 +15,30 @@ hostname > "$(dirname "$0")/.hostname"
 # — each container seeds its own copy in setup-claude.sh.
 mkdir -p "${HOME}/.config/ai/xai"
 
+# Extract the stable identity/onboarding keys from the host ~/.claude.json
+# into a seed file inside the mounted ~/.claude dir. setup-claude.sh copies it
+# to the container-private ~/.claude.json so fresh containers skip the welcome
+# flow: Claude Code's logged-in check needs oauthAccount/userID in
+# ~/.claude.json, not just the tokens in ~/.claude/.credentials.json.
+if [ -s "${HOME}/.claude.json" ]; then
+  if python3 - "${HOME}/.claude.json" "${HOME}/.claude/.claude.json.seed" <<'PYEOF'
+import json, sys
+keep = ("hasCompletedOnboarding", "installMethod", "theme",
+        "oauthAccount", "userID", "lastOnboardingVersion")
+with open(sys.argv[1]) as f:
+    data = json.load(f)
+seed = {k: data[k] for k in keep if k in data}
+seed["hasCompletedOnboarding"] = True
+with open(sys.argv[2], "w") as f:
+    json.dump(seed, f)
+PYEOF
+  then
+    chmod 600 "${HOME}/.claude/.claude.json.seed"
+  else
+    echo "WARN: could not extract ~/.claude/.claude.json.seed; fresh containers will prompt for login" >&2
+  fi
+fi
+
 # macOS: Claude Code stores OAuth tokens in the system Keychain,
 # not in ~/.claude/.credentials.json. Extract them so the bind
 # mount makes them available inside the container.
