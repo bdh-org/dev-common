@@ -15,6 +15,17 @@ else
   echo "    Claude Code CLI already installed"
 fi
 
+# Seed a minimal ~/.claude.json so per-container Claude Code skips first-run
+# onboarding. The host ~/.claude.json is no longer bind-mounted (sharing one
+# file across containers caused concurrent-write corruption); each container
+# now owns its own copy. Only seed when absent/empty so real state is never
+# clobbered (e.g. if a repo still mounts the host file).
+if [ ! -s "${HOME}/.claude.json" ]; then
+  echo '{"hasCompletedOnboarding":true,"installMethod":"native"}' > "${HOME}/.claude.json"
+  chmod 600 "${HOME}/.claude.json"
+  echo "    seeded ${HOME}/.claude.json onboarding stub"
+fi
+
 # Install the claude-prod shim that proxies to the prod wrapper over SSH.
 # The corresponding server-side scripts and one-time setup live in
 # brianholland/home-site:claude-access/.  The private key is expected at
