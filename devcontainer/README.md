@@ -58,6 +58,8 @@ source "$COMMON/setup-python-dev.sh" "conda-packages.txt" # with project package
 Claude Code CLI setup:
 
 - Installs Claude Code CLI via native installer (curl)
+- Seeds a private `~/.claude.json` (onboarding stub) if absent, so each
+  container keeps its own Claude Code state instead of sharing the host file
 
 ### setup-waterbrother.sh
 
@@ -94,7 +96,6 @@ Each project maintains its own `conda-packages.txt` with project-specific depend
   ],
   "mounts": [
     "source=${localEnv:HOME}/.claude,target=/home/vscode/.claude,type=bind,consistency=cached",
-    "source=${localEnv:HOME}/.claude.json,target=/home/vscode/.claude.json,type=bind,consistency=cached",
     "source=${localEnv:HOME}/.config/ai/claude,target=/home/vscode/.config/ai/claude,type=bind,consistency=cached",
     "source=${localEnv:HOME}/.config/ai/xai,target=/home/vscode/.config/ai/xai,type=bind,consistency=cached"
   ],

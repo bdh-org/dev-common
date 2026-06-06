@@ -10,9 +10,9 @@ mkdir -p "${HOME}/.claude" "${HOME}/.config/ai/claude/identity/gh" "${HOME}/.con
 # Save host hostname for the container to use
 hostname > "$(dirname "$0")/.hostname"
 
-# Ensure these files exist so bind mounts don't fail.
-# Docker requires the source file to exist for file-level bind mounts.
-[ -f "${HOME}/.claude.json" ] || touch "${HOME}/.claude.json"
+# Ensure bind-mount source dirs exist (Docker fails if a mount source is
+# missing). Note: ~/.claude.json is intentionally NOT created/mounted anymore
+# — each container seeds its own copy in setup-claude.sh.
 mkdir -p "${HOME}/.config/ai/xai"
 
 # macOS: Claude Code stores OAuth tokens in the system Keychain,
