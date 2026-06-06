@@ -4,11 +4,29 @@
 # Portable sed in-place: macOS requires -i '', GNU requires -i
 SED_I := $(shell if sed --version 2>/dev/null | grep -q GNU; then echo 'sed -i'; else echo 'sed -i ""'; fi)
 
-.PHONY: tag bump-patch bump-minor bump-major
+.PHONY: tag bump-patch bump-minor bump-major version-check
 
 tag: ## create git tag for current VERSION
 	git tag $(VERSION)
 	git push origin $(VERSION)
+
+# Fail if the Makefile VERSION disagrees with any other version string in the
+# repo (Python __version__, package.json). The bump-* targets keep these in
+# sync, but a manual sed/edit (or a partial bump) can drift them -- this
+# target, run in CI, makes that drift a red build instead of a silent bug.
+# No-op for repos that have neither file.
+version-check: ## fail if VERSION disagrees with __version__ / package.json
+	@fail=0; \
+	if [ -n "$(PACKAGE_DIR)" ] && [ -f "$(PACKAGE_DIR)/__init__.py" ] && grep -q '__version__' "$(PACKAGE_DIR)/__init__.py"; then \
+		pv=`grep -m1 '__version__' "$(PACKAGE_DIR)/__init__.py" | sed -E 's/.*=[[:space:]]*"([^"]*)".*/\1/'`; \
+		if [ "$$pv" != "$(VERSION)" ]; then echo "version drift: Makefile VERSION=$(VERSION) but $(PACKAGE_DIR)/__init__.py __version__=$$pv" >&2; fail=1; fi; \
+	fi; \
+	if [ -f package.json ] && grep -q '"version"' package.json; then \
+		jv=`grep -m1 '"version"' package.json | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/'`; \
+		if [ "$$jv" != "$(VERSION)" ]; then echo "version drift: Makefile VERSION=$(VERSION) but package.json version=$$jv" >&2; fail=1; fi; \
+	fi; \
+	if [ "$$fail" = 0 ]; then echo "version-check OK ($(VERSION))"; \
+	else echo "Fix so all version strings match (re-run 'make bump-patch', or edit by hand)." >&2; exit 1; fi
 
 # Implementation note: the bump-* targets all do the same rewrite work
 # for the same set of files; only NEW_VERSION differs. We compute it,
