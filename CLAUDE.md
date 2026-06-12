@@ -15,6 +15,34 @@ Use a concise, descriptive title.
 
 Example: `feat: add user authentication`
 
+## GitHub Authentication
+The devcontainer has **no ambient `gh` auth** — this is deliberate, not a
+misconfiguration. `GITHUB_TOKEN` is intentionally empty and `gh`'s
+`config.yml` carries no auth state, so a bare `gh ...` or `gh auth status`
+fails. Do NOT run `gh auth login` to "fix" this.
+
+Instead, authenticate **per command** with the org-scoped fine-grained PAT
+that matches the repo's GitHub org. Tokens live at
+`~/.config/ai/claude/credentials/`:
+
+| Token file | GitHub org | Used by |
+| --- | --- | --- |
+| `gh-bdh-org.token` | `bdh-org` | home-site, dev-common, devtemplate, ci-runner |
+| `gh-finzeug.token` | `finzeug` | hog, oleo, canary, heller, panoptikon, refdims, ratecraft |
+| `gh-finriskanalytics.token` | `finriskanalytics` | freddyb |
+
+Pick the token from the repo's origin org
+(`git remote get-url origin`), then prefix the command:
+
+```bash
+GH_TOKEN="$(cat ~/.config/ai/claude/credentials/gh-bdh-org.token)" gh pr create ...
+```
+
+The same applies to `git push` over HTTPS and any other `gh`/API call that
+writes. These PATs authenticate as the `bdh-ai` service account; the
+ambient git identity (a personal token) must not be used for automated
+writes.
+
 ## Package Management
 - Install packages with `conda` (conda-forge) into the dev environment when possible.
 - Use `pip` only as a fallback when a package is not available on conda-forge.
