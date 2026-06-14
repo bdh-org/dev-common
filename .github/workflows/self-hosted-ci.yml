@@ -72,9 +72,13 @@ jobs:
           if [ ! -d "$envpath" ] || [ "$key" != "$have" ]; then
             if [ "${{ inputs.full-env }}" = "true" ]; then
               echo "Building/updating full env $CI_ENV via make env"
-              conda create -y -n "$CI_ENV" python || true
+              conda create -y -n "$CI_ENV" || true
               conda activate "$CI_ENV"
-              make env
+              # `conda activate` exports CONDA_PREFIX = the active env, but
+              # python.mk uses CONDA_PREFIX to locate the conda *binary* (which
+              # lives in the base install). Override it to the base root for the
+              # make call; the active env still receives the packages.
+              make env CONDA_PREFIX="$CONDA_ROOT"
             else
               echo "Building/updating minimal env $CI_ENV from ${{ inputs.ci-env-file }}"
               conda env update -n "$CI_ENV" -f "${{ inputs.ci-env-file }}" --prune
