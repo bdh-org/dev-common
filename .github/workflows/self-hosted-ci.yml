@@ -63,22 +63,29 @@ jobs:
         run: |
           source "$CONDA_ROOT/etc/profile.d/conda.sh"
           envpath="$CONDA_ROOT/envs/$CI_ENV"
+          # Bump CACHE_VERSION to force a rebuild of every CI env on disk.
+          CACHE_VERSION=v3
           if [ "${{ inputs.full-env }}" = "true" ]; then
-            key=$(cat conda-packages.txt common/devcontainer/base-conda-packages.txt 2>/dev/null | sha256sum | cut -d' ' -f1)
+            key=$( { echo "$CACHE_VERSION"; cat conda-packages.txt common/devcontainer/base-conda-packages.txt 2>/dev/null; } | sha256sum | cut -d' ' -f1)
           else
-            key=$(sha256sum "${{ inputs.ci-env-file }}" | cut -d' ' -f1)
+            key=$( { echo "$CACHE_VERSION"; cat "${{ inputs.ci-env-file }}"; } | sha256sum | cut -d' ' -f1)
           fi
           have=$(cat "$envpath/.envhash" 2>/dev/null || true)
           if [ ! -d "$envpath" ] || [ "$key" != "$have" ]; then
             if [ "${{ inputs.full-env }}" = "true" ]; then
-              echo "Building/updating full env $CI_ENV via make env"
+              # Build the named env directly with `-n` (base conda binary, no
+              # activation). We do NOT call `make env`: it's written for the
+              # devcontainer where everything installs into base, and its
+              # CONDA_PREFIX usage fights a per-repo named env. This mirrors
+              # make env's inputs: shared base list + the repo's conda-packages
+              # + the CI-relevant dev tools.
+              echo "Building/updating full env $CI_ENV"
               conda create -y -n "$CI_ENV" || true
-              conda activate "$CI_ENV"
-              # `conda activate` exports CONDA_PREFIX = the active env, but
-              # python.mk uses CONDA_PREFIX to locate the conda *binary* (which
-              # lives in the base install). Override it to the base root for the
-              # make call; the active env still receives the packages.
-              make env CONDA_PREFIX="$CONDA_ROOT"
+              conda install -y -n "$CI_ENV" --file common/devcontainer/base-conda-packages.txt
+              if [ -f conda-packages.txt ]; then
+                conda install -y -n "$CI_ENV" --file conda-packages.txt
+              fi
+              conda install -y -n "$CI_ENV" ruff pytest pytest-cov
             else
               echo "Building/updating minimal env $CI_ENV from ${{ inputs.ci-env-file }}"
               conda env update -n "$CI_ENV" -f "${{ inputs.ci-env-file }}" --prune
