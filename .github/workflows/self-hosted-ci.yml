@@ -1,0 +1,101 @@
+name: Self-hosted CI
+
+# Reusable CI workflow that runs on the alfie self-hosted runner.
+# Consumers add a thin wrapper:
+#
+#   jobs:
+#     ci:
+#       uses: bdh-org/dev-common/.github/workflows/self-hosted-ci.yml@main
+#       with:
+#         conda-env-name: <repo>-ci
+#         run-tests: true            # false for repos with no tests/
+#         full-env: true             # false -> minimal ruff-only env via .github/ci-environment.yml
+#
+# Per-repo differences live in the repo (its conda-packages.txt / ci-environment.yml
+# and the wrapper inputs), never as branches inside this file.
+on:
+  workflow_call:
+    inputs:
+      conda-env-name:
+        description: Per-repo conda env name (avoids collisions under the shared github-runner user)
+        type: string
+        required: true
+      full-env:
+        description: true -> `make env` (full deps, needed when tests import the package); false -> minimal ruff-only env from ci-env-file
+        type: boolean
+        default: true
+      run-tests:
+        description: Run pytest after lint
+        type: boolean
+        default: true
+      test-path:
+        type: string
+        default: tests/
+      ci-env-file:
+        description: Minimal conda env file, used only when full-env is false
+        type: string
+        default: .github/ci-environment.yml
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    runs-on: [self-hosted, alfie]
+    env:
+      CONDA_ROOT: /home/github-runner/miniforge3
+      CI_ENV: ${{ inputs.conda-env-name }}
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+        with:
+          submodules: false      # nested cross-org submodules need explicit auth
+          clean: true            # default: git reset --hard && git clean -ffdx
+
+      - name: Fetch dev-common submodule
+        run: git submodule update --init common
+
+      # The conda env persists on the runner's disk between runs -- that IS the
+      # cache. Rebuild only when its inputs change, keyed on a hash stored in
+      # the env dir. full-env hashes conda-packages.txt + the shared base list;
+      # minimal mode hashes the ci-env-file.
+      - name: Set up conda env (cached on disk)
+        run: |
+          source "$CONDA_ROOT/etc/profile.d/conda.sh"
+          envpath="$CONDA_ROOT/envs/$CI_ENV"
+          if [ "${{ inputs.full-env }}" = "true" ]; then
+            key=$(cat conda-packages.txt common/devcontainer/base-conda-packages.txt 2>/dev/null | sha256sum | cut -d' ' -f1)
+          else
+            key=$(sha256sum "${{ inputs.ci-env-file }}" | cut -d' ' -f1)
+          fi
+          have=$(cat "$envpath/.envhash" 2>/dev/null || true)
+          if [ ! -d "$envpath" ] || [ "$key" != "$have" ]; then
+            if [ "${{ inputs.full-env }}" = "true" ]; then
+              echo "Building/updating full env $CI_ENV via make env"
+              conda create -y -n "$CI_ENV" python || true
+              conda activate "$CI_ENV"
+              make env
+            else
+              echo "Building/updating minimal env $CI_ENV from ${{ inputs.ci-env-file }}"
+              conda env update -n "$CI_ENV" -f "${{ inputs.ci-env-file }}" --prune
+            fi
+            echo "$key" > "$envpath/.envhash"
+          else
+            echo "conda env $CI_ENV up to date (cache hit: $key)"
+          fi
+
+      - name: Version consistency
+        run: make version-check
+
+      - name: Lint
+        run: |
+          source "$CONDA_ROOT/etc/profile.d/conda.sh"
+          conda activate "$CI_ENV"
+          make lint
+
+      - name: Test
+        if: ${{ inputs.run-tests }}
+        run: |
+          source "$CONDA_ROOT/etc/profile.d/conda.sh"
+          conda activate "$CI_ENV"
+          python -m pytest -vv "${{ inputs.test-path }}"
