@@ -111,7 +111,9 @@ Two-tier shared infrastructure via git submodules:
 
 All repos include both with `-include` (tolerates missing submodules on fresh
 clone). A repo's `CLAUDE.md` likewise includes `@common/CLAUDE.md` and, when
-present, `@stack-common/CLAUDE.md`.
+present, `@stack-common/CLAUDE.md`. By convention the stack-common repo is
+named `<stack>-stack-common` (e.g. `fra-stack-common`); the mount path is
+always `stack-common/`, so member wiring never depends on the repo name.
 
 ### P4: Conda-dev / pip-prod dependency split
 Development and production use different package managers:
