@@ -64,9 +64,9 @@ jobs:
           source "$CONDA_ROOT/etc/profile.d/conda.sh"
           envpath="$CONDA_ROOT/envs/$CI_ENV"
           # Bump CACHE_VERSION to force a rebuild of every CI env on disk.
-          CACHE_VERSION=v3
+          CACHE_VERSION=v4
           if [ "${{ inputs.full-env }}" = "true" ]; then
-            key=$( { echo "$CACHE_VERSION"; cat conda-packages.txt common/devcontainer/base-conda-packages.txt 2>/dev/null; } | sha256sum | cut -d' ' -f1)
+            key=$( { echo "$CACHE_VERSION"; cat conda-packages.txt requirements-prod.txt common/devcontainer/base-conda-packages.txt 2>/dev/null; } | sha256sum | cut -d' ' -f1)
           else
             key=$( { echo "$CACHE_VERSION"; cat "${{ inputs.ci-env-file }}"; } | sha256sum | cut -d' ' -f1)
           fi
@@ -86,6 +86,14 @@ jobs:
                 conda install -y -n "$CI_ENV" --file conda-packages.txt
               fi
               conda install -y -n "$CI_ENV" ruff pytest pytest-cov
+              # Also pip-install prod requirements: conda-packages.txt is the dev
+              # convenience list and can miss pip-only deps (e.g. fred-py-api,
+              # not on conda-forge). requirements-prod.txt is the authoritative
+              # runtime set and its pins match the conda versions, so this is
+              # mostly a no-op except for the genuinely pip-only packages.
+              if [ -f requirements-prod.txt ]; then
+                conda run -n "$CI_ENV" pip install -r requirements-prod.txt
+              fi
             else
               echo "Building/updating minimal env $CI_ENV from ${{ inputs.ci-env-file }}"
               conda env update -n "$CI_ENV" -f "${{ inputs.ci-env-file }}" --prune
