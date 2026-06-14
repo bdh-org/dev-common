@@ -37,6 +37,26 @@ else
   echo "    Claude Code CLI already installed"
 fi
 
+# Install shared Claude Code skills from dev-common/skills/ into ~/.claude/skills/
+# (P14). They are version-controlled here (one source of truth) and symlinked, so
+# a `make common-update` is immediately reflected in every repo's Claude Code
+# session and the skills survive devcontainer rebuilds. The symlink replaces any
+# stale real copy left over from when these lived only in ~/.claude/skills/.
+echo "==> Installing shared Claude Code skills..."
+SKILLS_SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/skills"
+if [ -d "$SKILLS_SRC" ]; then
+  mkdir -p "${HOME}/.claude/skills"
+  for d in "$SKILLS_SRC"/*/; do
+    [ -d "$d" ] || continue
+    name="$(basename "$d")"
+    rm -rf "${HOME}/.claude/skills/${name}"
+    ln -s "${SKILLS_SRC}/${name}" "${HOME}/.claude/skills/${name}"
+    echo "    linked skill: ${name}"
+  done
+else
+  echo "    no skills/ dir at $SKILLS_SRC (skipping)"
+fi
+
 # Install the claude-prod shim that proxies to the prod wrapper over SSH.
 # The corresponding server-side scripts and one-time setup live in
 # brianholland/home-site:claude-access/.  The private key is expected at

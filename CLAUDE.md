@@ -50,6 +50,11 @@ writes.
 
 ## Stack Architecture Patterns
 
+These are generic pattern *definitions* — the shared vocabulary for how a stack
+built on this tooling is wired. Each stack's concrete instances (primary repo,
+service names, shared network, hosts) live in that stack's
+`stack-common/CLAUDE.md`, included alongside this file.
+
 ### P1: Primary repo
 Primary/edge repo for a stack. Two hats:
 - **Orchestrator**: owns `docker-compose.yml`, is the entry point for
@@ -61,21 +66,18 @@ Primary/edge repo for a stack. Two hats:
 Has no Python application code of its own, so it does NOT use the shared
 Python CI workflow (`common/.github/workflows/ci.yml`) — ruff + pytest
 don't apply. A P1-shaped CI (compose config validation, vhost syntax
-checks, hadolint) is optional and bespoke.
-
-Example: `home-site` — Apache container on port 80, serves `html/`,
-mounts `oleo/dist` into `/usr/local/apache2/oleo`, proxies panoptikon /
-freddyb / canary / hog.
+checks, hadolint) is optional and bespoke. See stack-common for this
+stack's primary repo.
 
 ### P2a: Full service
 Long-running container (API, dashboard) with its own Dockerfile, served via
-Apache vhost proxy. Examples: panoptikon, freddyb, canary, hog.
+Apache vhost proxy. See stack-common for this stack's services.
 
 ### P2b: Static site
 Built frontend assets (no container of its own). The primary repo's
 Apache container mounts the build output into its docroot via
-`docker-compose.yml` (e.g. `../oleo/dist:/usr/local/apache2/oleo:ro`).
-Example: oleo.
+`docker-compose.yml` (e.g. `../<site>/dist:/usr/local/apache2/<site>:ro`).
+See stack-common for this stack's static sites.
 
 ### P2c: Data service
 Postgres (or similar DB) container whose primary deliverable is
@@ -91,24 +93,25 @@ Postgres (or similar DB) container whose primary deliverable is
   `src/` tree. Devcontainer uses a non-Python base image with
   `docker-outside-of-docker` so the dev can build and run the service.
 
-Example: `entities` (reference data for the finzeug stack).
-
 P2c repos are not currently scaffolded from `devtemplate` cleanly — see
 `brianholland/devtemplate#15` for the `devtemplate-db` sibling template
 that will. Until that exists, P2c repos don't track
-`DEVTEMPLATE_VERSION`.
+`DEVTEMPLATE_VERSION`. See stack-common for this stack's data services.
 
 ### P3: Submodule hierarchy
 Two-tier shared infrastructure via git submodules:
-- `common/` (dev-common) — dev tooling used by all projects: version.mk,
-  python.mk, utils.mk, devcontainer.mk, devcontainer setup scripts (incl.
-  generic `claude-prod` / `claude-dev` shims that read host config from env).
-- `stack-common/` (home-site-common) — stack-specific: deploy.mk, airflow.mk,
+- `common/` (dev-common) — dev tooling used by all projects across every
+  stack: version.mk, python.mk, utils.mk, devcontainer.mk, devcontainer
+  setup scripts (incl. generic `claude-prod` / `claude-dev` shims that read
+  host config from env), and shared Claude Code skills (P14).
+- `stack-common/` — stack-specific: deploy.mk, airflow.mk,
   `devcontainer/setup-stack-hosts.sh` (writes a `/etc/profile.d` entry setting
-  CLAUDE_PROD_HOST / CLAUDE_DEV_HOST and any other stack-specific env). Has
-  dev-common as a nested submodule.
+  CLAUDE_PROD_HOST / CLAUDE_DEV_HOST and any other stack-specific env), and the
+  stack's `CLAUDE.md`. Has dev-common as a nested submodule.
 
-All repos include both with `-include` (tolerates missing submodules on fresh clone).
+All repos include both with `-include` (tolerates missing submodules on fresh
+clone). A repo's `CLAUDE.md` likewise includes `@common/CLAUDE.md` and, when
+present, `@stack-common/CLAUDE.md`.
 
 ### P4: Conda-dev / pip-prod dependency split
 Development and production use different package managers:
@@ -122,13 +125,14 @@ Never delete one thinking it duplicates the other — they serve different purpo
 ### P5: Service composition via extends
 The primary repo's `docker-compose.yml` uses `extends` to pull service
 definitions from stub files in each service's directory
-(e.g. `./panoptikon/docker-compose.stub.yml`). All services join the shared
-`minerva` bridge network.
+(e.g. `./<svc>/docker-compose.stub.yml`). All services join the stack's
+shared bridge network (named in stack-common).
 
 ### P6: Service discovery
-Services find each other by container name on the minerva Docker network
-(e.g. `http://freddyb:8000`, `http://hog:8000`). Environment variables like
-`FBENDPOINT` and `HOG_ENDPOINT` pass these URLs to services that need them.
+Services find each other by container name on the stack's shared Docker
+network. Environment variables pass these URLs to services that need them
+(one endpoint var per upstream). See stack-common for the network name and
+concrete service endpoints.
 
 ### P7: DAG management
 DAGs live in each service's `dags/` directory. `make dags-install` (airflow.mk)
@@ -151,13 +155,13 @@ Four sequential steps initialize the development environment:
 2. `setup-base.sh` — installs Miniforge, tmux, shell config, git aliases.
 3. `setup-python-dev.sh` — conda dev tools (ruff, pytest, jupyter) + project
    packages from `conda-packages.txt`.
-4. `setup-claude.sh` — Claude Code CLI.
+4. `setup-claude.sh` — Claude Code CLI + shared skills (P14).
 5. `setup-waterbrother.sh` — waterbrother CLI (optional; projects that
    don't need it simply don't source this script).
 
 Repos without a Python environment skip step 3:
-- P1 (e.g. `home-site`) — orchestrator + Apache, no Python app code.
-- P2c (e.g. `entities`) — DB service, no Python env in the container.
+- P1 — orchestrator + Apache, no Python app code.
+- P2c — DB service, no Python env in the container.
 
 ### P10: Production deployment with retry
 `prod-deploy-all` deploys the full stack from the primary repo via SSH.
@@ -179,11 +183,11 @@ tracked at `brianholland/devtemplate#24` and `#25`.
 
 ### P12: Dev tier on a parallel host
 A pre-prod environment that mirrors prod's service set on a separate
-host (typically the host that runs the developer's devcontainer, e.g.
-`twix`). Validates cross-service wiring before promoting to prod.
+host (typically the host that runs the developer's devcontainer).
+Validates cross-service wiring before promoting to prod.
 
 Shape, parallel to P10:
-- `dev-deploy-all` SSHes to `$(DEV_SERVER)` (default `twix`, overridable),
+- `dev-deploy-all` SSHes to `$(DEV_SERVER)` (default set by the stack, overridable),
   runs `dev-bootstrap && dev-up` on that host.
 - `dev-bootstrap` is idempotent: copies missing per-service `.env` from
   `.env.example`, seeds host-local data files (e.g. hog's tensor.duckdb)
@@ -195,9 +199,9 @@ Shape, parallel to P10:
   driven by DAGs propagate from prod into dev "for free" through the
   shared NFS mount of prod data.
 
-Apache vhost on the dev host accepts both `*.minerva` (prod) and `*.twix`
-(dev) ServerAlias entries — same image runs on both hosts; only the
-hostname differs.
+Apache vhost on the dev host accepts both prod and dev ServerAlias entries —
+same image runs on both hosts; only the hostname differs. See stack-common
+for the concrete host names and DNS suffixes.
 
 ### P13: Scoped Claude Code identities
 Each tier has a constrained `claude` SSH user — `claude-prod` on prod,
@@ -215,5 +219,16 @@ vars `CLAUDE_PROD_HOST` / `CLAUDE_DEV_HOST` name. stack-common's
 `setup-stack-hosts.sh` writes those env vars at `/etc/profile.d` so they
 survive devcontainer rebuilds.
 
-Source for the wrappers + install docs lives in the primary repo at
-`claude-access/` (e.g. `home-site/claude-access/`).
+Source for the wrappers + install docs lives in the stack's primary repo at
+`claude-access/`.
+
+### P14: Shared Claude Code skills
+Reusable Claude Code skills live in `dev-common/skills/<name>/SKILL.md`
+(version-controlled, one source of truth). `setup-claude.sh` symlinks each
+into `~/.claude/skills/` so they are available in every repo's Claude Code
+session and survive devcontainer rebuilds. Current skills: `ship` (end-to-end
+issue -> PR -> squash-merge -> cleanup), `update-common` (bump the dev-common
+submodule across repos), `incorporate-devtemplate` (diff repos against
+devtemplate, file issues). `make incorporate-devtemplate` is a signpost that
+points at the skill — the work needs human judgment, so there is no
+fully-automated target.

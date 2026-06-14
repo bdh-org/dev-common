@@ -12,7 +12,7 @@ endif
 show: ## Show the commands a target would run (usage: make show <target>)
 	+@$(if $(_SHOW_TARGETS),true,echo "Usage: make show <target>")
 
-.PHONY: help list ls show claude-install common-update prod-clean dev-clean recreate
+.PHONY: help list ls show claude-install common-update incorporate-devtemplate prod-clean dev-clean recreate
 
 help: ## Show available targets with descriptions
 	@for f in $(MAKEFILE_LIST); do \
@@ -42,6 +42,17 @@ common-update: ## update dev-common submodule to latest
 	git add common && \
 	(git diff --cached --quiet common || git commit -m "[CC] chore: update dev-common") && \
 	echo "dev-common is up to date"
+
+# Signpost only: incorporating devtemplate improvements needs human judgment
+# (each repo has bespoke customizations), so there is no automated target. This
+# points at the Claude Code skill that does the diff + files issues (P14).
+incorporate-devtemplate: ## (signpost) run the /incorporate-devtemplate Claude Code skill
+	@echo "Incorporating devtemplate improvements needs human judgment, so there"
+	@echo "is no automated make target. In Claude Code, run:"
+	@echo ""
+	@echo "    /incorporate-devtemplate"
+	@echo ""
+	@echo "It diffs each repo against devtemplate and files issues for missing changes."
 
 PROD_SERVER ?= min
 DEV_SERVER ?= twix
