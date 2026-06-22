@@ -27,7 +27,7 @@ that matches the repo's GitHub org. Tokens live at
 
 | Token file | GitHub org | Used by |
 | --- | --- | --- |
-| `gh-bdh-org.token` | `bdh-org` | home-site, dev-common, devtemplate, ci-runner |
+| `gh-bdh-org.token` | `bdh-org` | home-site, dev-common, devtemplate, actions-runner, brief, roy |
 | `gh-finzeug.token` | `finzeug` | hog, oleo, canary, heller, panoptikon, refdims, ratecraft |
 | `gh-finriskanalytics.token` | `finriskanalytics` | freddyb |
 
