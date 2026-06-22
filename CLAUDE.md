@@ -226,9 +226,15 @@ Source for the wrappers + install docs lives in the stack's primary repo at
 
 ### P14: Shared Claude Code skills
 Reusable Claude Code skills live in `dev-common/skills/<name>/SKILL.md`
-(version-controlled, one source of truth). `setup-claude.sh` symlinks each
-into `~/.claude/skills/` so they are available in every repo's Claude Code
-session and survive devcontainer rebuilds. Current skills: `ship` (end-to-end
+(version-controlled, one source of truth). `setup-claude.sh` exposes each as a
+**project-level** skill via a per-repo *relative* symlink
+(`<repo>/.claude/skills/<name>` -> `../../common/skills/<name>`), so they are
+available in every repo's Claude Code session, live-update through
+`update-common` (the submodule bump — no copy, no rebuild), and never collide
+across containers that share one host `~/.claude`. (They are deliberately NOT
+symlinked into `~/.claude/skills/`: that dir is bind-mounted from the host into
+every container, so workspace-absolute links there are last-writer-wins and
+dangle in all but the most-recently-set-up container.) Current skills: `ship` (end-to-end
 issue -> PR -> squash-merge -> cleanup), `update-common` (bump the dev-common
 submodule across repos), `incorporate-devtemplate` (diff repos against
 devtemplate, file issues). `make incorporate-devtemplate` is a signpost that
