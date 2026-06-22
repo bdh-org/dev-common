@@ -12,7 +12,7 @@ endif
 show: ## Show the commands a target would run (usage: make show <target>)
 	+@$(if $(_SHOW_TARGETS),true,echo "Usage: make show <target>")
 
-.PHONY: help list ls show claude-install common-update incorporate-devtemplate prod-clean dev-clean recreate
+.PHONY: help list ls show claude-install common-update incorporate-devtemplate prod-clean dev-clean recreate common-consumers
 
 help: ## Show available targets with descriptions
 	@for f in $(MAKEFILE_LIST); do \
@@ -83,3 +83,14 @@ ifndef SERVICE
 	$(error SERVICE is required. Usage: make recreate SERVICE=<service-name>)
 endif
 	docker compose up -d --force-recreate $(SERVICE)
+
+common-consumers: ## list repos using dev-common (submodule) across orgs you hold tokens for
+	@cred=$$HOME/.config/ai/claude/credentials; \
+	for tok in $$cred/gh-*.token; do \
+	  [ -e "$$tok" ] || continue; \
+	  o=$$(basename "$$tok" .token | sed 's/^gh-//'); \
+	  GH_TOKEN=$$(cat "$$tok") gh repo list "$$o" --no-archived --limit 200 --json nameWithOwner --jq '.[].nameWithOwner' 2>/dev/null \
+	  | while read -r r; do \
+	      GH_TOKEN=$$(cat "$$tok") gh api "repos/$$r/contents/.gitmodules" -H "Accept: application/vnd.github.raw" 2>/dev/null | grep -q 'dev-common' && echo "$$r"; \
+	    done; \
+	done | sort -u
