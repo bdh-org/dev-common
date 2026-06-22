@@ -62,7 +62,7 @@ if [ -d "$SKILLS_SRC" ]; then
   for d in "$SKILLS_SRC"/*/; do
     [ -d "$d" ] || continue
     name="$(basename "$d")"
-    rm -rf "${PROJ_SKILLS}/${name}"
+    rm -rf "${PROJ_SKILLS:?}/${name}"
     ln -s "../../common/skills/${name}" "${PROJ_SKILLS}/${name}"
     echo "    linked project skill: ${name}"
     # Retire the legacy host-level link (workspace-absolute, shared across
