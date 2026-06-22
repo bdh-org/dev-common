@@ -37,21 +37,37 @@ else
   echo "    Claude Code CLI already installed"
 fi
 
-# Install shared Claude Code skills from dev-common/skills/ into ~/.claude/skills/
-# (P14). They are version-controlled here (one source of truth) and symlinked, so
-# a `make common-update` is immediately reflected in every repo's Claude Code
-# session and the skills survive devcontainer rebuilds. The symlink replaces any
-# stale real copy left over from when these lived only in ~/.claude/skills/.
-echo "==> Installing shared Claude Code skills..."
-SKILLS_SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/skills"
+# Install shared Claude Code skills from dev-common/skills/ (P14). They are
+# version-controlled here (one source of truth) and exposed to Claude Code as
+# PROJECT-level skills via per-repo RELATIVE symlinks:
+#     <repo>/.claude/skills/<name> -> ../../common/skills/<name>
+# This is deliberate. We previously symlinked into ~/.claude/skills/ with the
+# skill's workspace-ABSOLUTE path, but ~/.claude is bind-mounted from the host
+# into every devcontainer, so those links were last-writer-wins: whichever
+# container ran setup most recently repointed the shared links at its own
+# workspace, dangling them in all others (skills silently vanished). A
+# relative, in-workspace link instead:
+#   - resolves regardless of the absolute workspace path, so it never collides
+#     across containers that share one host ~/.claude;
+#   - points at this repo's own common/skills, so `make update-common` (which
+#     bumps the dev-common submodule) live-updates the skills with no copy and
+#     no devcontainer rebuild.
+echo "==> Installing shared Claude Code skills (project-level)..."
+COMMON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO_ROOT="$(cd "${COMMON_DIR}/.." && pwd)"
+SKILLS_SRC="${COMMON_DIR}/skills"
+PROJ_SKILLS="${REPO_ROOT}/.claude/skills"
 if [ -d "$SKILLS_SRC" ]; then
-  mkdir -p "${HOME}/.claude/skills"
+  mkdir -p "$PROJ_SKILLS"
   for d in "$SKILLS_SRC"/*/; do
     [ -d "$d" ] || continue
     name="$(basename "$d")"
-    rm -rf "${HOME}/.claude/skills/${name}"
-    ln -s "${SKILLS_SRC}/${name}" "${HOME}/.claude/skills/${name}"
-    echo "    linked skill: ${name}"
+    rm -rf "${PROJ_SKILLS:?}/${name}"
+    ln -s "../../common/skills/${name}" "${PROJ_SKILLS}/${name}"
+    echo "    linked project skill: ${name}"
+    # Retire the legacy host-level link (workspace-absolute, shared across
+    # containers) so it can't shadow the project-level skill or dangle.
+    [ -L "${HOME}/.claude/skills/${name}" ] && rm -f "${HOME}/.claude/skills/${name}"
   done
 else
   echo "    no skills/ dir at $SKILLS_SRC (skipping)"
