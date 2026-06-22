@@ -84,7 +84,7 @@ ifndef SERVICE
 endif
 	docker compose up -d --force-recreate $(SERVICE)
 
-common-consumers: ## list repos using dev-common (submodule) across orgs you hold tokens for
+common-consumers: ## list repos that use the bdh-org/dev-common submodule across orgs you hold tokens for
 	@cred=$$HOME/.config/ai/claude/credentials; \
 	for tok in $$cred/gh-*.token; do \
 	  [ -e "$$tok" ] || continue; \
