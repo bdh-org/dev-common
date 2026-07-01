@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(make bump-minor:*)",
+      "Bash(git push:*)",
+      "Bash(gh pr:*)",
+      "Bash(git checkout:*)",
+      "Bash(gh run:*)",
+      "Bash(gh workflow:*)",
+      "Bash(git add:*)",
+      "Bash(git fetch:*)",
+      "Bash(gh issue:*)",
+      "Bash(git:*)",
+      "Bash(make:*)"
+    ]
+  }
+}
