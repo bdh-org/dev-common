@@ -41,7 +41,7 @@ permissions:
 
 jobs:
   ci:
-    runs-on: [self-hosted, alfie]
+    runs-on: [self-hosted, forge]
     env:
       CONDA_ROOT: /home/github-runner/miniforge3
       CI_ENV: ${{ inputs.conda-env-name }}
