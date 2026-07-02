@@ -43,7 +43,6 @@ jobs:
   ci:
     runs-on: [self-hosted, forge]
     env:
-      CONDA_ROOT: /home/github-runner/miniforge3
       CI_ENV: ${{ inputs.conda-env-name }}
     steps:
       - name: Check out code
@@ -54,6 +53,13 @@ jobs:
 
       - name: Fetch dev-common submodule
         run: git submodule update --init common
+
+      # Point CONDA_ROOT at the runner's REAL home rather than a hardcoded path:
+      # github-runner homes differently across CI hosts (alfie: /home/github-runner,
+      # forge: /srv/github-runner), and hardcoding forces a phantom dir. $HOME is the
+      # runner user's home, so conda lives at <home>/miniforge3 -- portable across hosts.
+      - name: Resolve CONDA_ROOT from the runner's home
+        run: echo "CONDA_ROOT=$HOME/miniforge3" >> "$GITHUB_ENV"
 
       # The conda env persists on the runner's disk between runs -- that IS the
       # cache. Rebuild only when its inputs change, keyed on a hash stored in
