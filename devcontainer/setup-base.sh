@@ -88,4 +88,10 @@ alias ll='ls -alFT'
 EOF
 fi
 
+# Git hygiene (idempotent): auto-prune deleted remote branches on fetch/pull, and a
+# `git gone` alias to drop local branches whose upstream was merged+deleted -- keeps
+# checkouts from piling up stale branches after PRs merge on GitHub.
+git config --global fetch.prune true
+git config --global alias.gone '!git fetch -p && git branch -vv | awk "/: gone]/{print \$1}" | xargs -r git branch -D'
+
 echo "==> Base setup complete"

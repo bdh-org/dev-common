@@ -10,6 +10,13 @@ mkdir -p "${HOME}/.claude" "${HOME}/.config/ai/claude/identity/gh" "${HOME}/.con
 # Save host hostname for the container to use
 hostname > "$(dirname "$0")/.hostname"
 
+# Git hygiene on the HOST (idempotent), mirroring the container config: keep merged+
+# deleted branches from lingering locally. Guarded so a git hiccup can't abort init.
+if command -v git >/dev/null 2>&1; then
+  git config --global fetch.prune true
+  git config --global alias.gone '!git fetch -p && git branch -vv | awk "/: gone]/{print \$1}" | xargs -r git branch -D'
+fi
+
 # Ensure bind-mount source dirs exist (Docker fails if a mount source is
 # missing). Note: ~/.claude.json is intentionally NOT created/mounted anymore
 # — each container seeds its own copy in setup-claude.sh.
