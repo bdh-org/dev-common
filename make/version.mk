@@ -1,5 +1,8 @@
 # Shared version management targets
-# Requires VERSION to be defined in the including Makefile
+# Requires VERSION to be defined in the including Makefile.
+# Optional: set VERSION_TXT=<path> to a plain served version file (e.g.
+# html/version.txt) -- the bump-* targets rewrite it and version-check
+# enforces it, so the file can be checked in and delivered via git.
 
 # Portable sed in-place: macOS requires -i '', GNU requires -i
 SED_I := $(shell if sed --version 2>/dev/null | grep -q GNU; then echo 'sed -i'; else echo 'sed -i ""'; fi)
@@ -25,6 +28,10 @@ version-check: ## fail if VERSION disagrees with __version__ / package.json
 		jv=`grep -m1 '"version"' package.json | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/'`; \
 		if [ "$$jv" != "$(VERSION)" ]; then echo "version drift: Makefile VERSION=$(VERSION) but package.json version=$$jv" >&2; fail=1; fi; \
 	fi; \
+	if [ -n "$(VERSION_TXT)" ] && [ -f "$(VERSION_TXT)" ]; then \
+		tv=`cat "$(VERSION_TXT)"`; \
+		if [ "$$tv" != "$(VERSION)" ]; then echo "version drift: Makefile VERSION=$(VERSION) but $(VERSION_TXT)=$$tv" >&2; fail=1; fi; \
+	fi; \
 	if [ "$$fail" = 0 ]; then echo "version-check OK ($(VERSION))"; \
 	else echo "Fix so all version strings match (re-run 'make bump-patch', or edit by hand)." >&2; exit 1; fi
 
@@ -37,6 +44,7 @@ version-check: ## fail if VERSION disagrees with __version__ / package.json
 #   - $(PACKAGE_DIR)/__init__.py (__version__ = "...") -- Python projects
 #   - package.json ("version": "...") -- Node/Vite projects
 #   - package-lock.json (top-level + packages[""] "version") -- if present
+#   - $(VERSION_TXT) plain version file -- if VERSION_TXT is set + file exists
 
 define _bump_apply
 	$(SED_I) "s/VERSION=$(VERSION)/VERSION=$$NEW_VERSION/" Makefile && \
@@ -52,6 +60,10 @@ define _bump_apply
 	if [ -f package-lock.json ] && grep -q '"version"' package-lock.json; then \
 		$(SED_I) '1,12 s/"version": *"[^"]*"/"version": "'"$$NEW_VERSION"'"/' package-lock.json && \
 		git add package-lock.json; \
+	fi && \
+	if [ -n "$(VERSION_TXT)" ] && [ -f "$(VERSION_TXT)" ]; then \
+		echo "$$NEW_VERSION" > "$(VERSION_TXT)" && \
+		git add "$(VERSION_TXT)"; \
 	fi && \
 	git commit -m "chore: bump version to $$NEW_VERSION" && \
 	echo "Bumped to $$NEW_VERSION"
