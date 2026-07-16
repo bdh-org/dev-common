@@ -1,0 +1,158 @@
+name: agent-pr-revise (reusable)
+# Reusable (workflow_call) implementation of the agent PR-revision pipeline
+# (home-infra#88/#123). A thin per-repo wrapper (.github/workflows/agent-pr-revise.yml)
+# owns the `issue_comment` trigger + the `/revise` filter and CALLS this, so the
+# logic lives here once instead of copied into every repo (matches tag-version).
+#
+# Turns a `/revise ...` comment on an OPEN agent PR (head branch agent/issue-*)
+# into more commits on the SAME branch: checks out that branch, makes the
+# requested changes, optionally self-gates on svc-dev, and pushes -- updating the
+# PR in place. Does NOT open a new PR and does NOT auto-merge (a human asked for
+# changes, so they re-review). Identity: pushes ride a per-run bdh-org-coder App
+# installation token (home-infra#91); the Claude OAuth token comes from Vault
+# (coder-ai). Runs on the shared forge self-hosted runner.
+on:
+  workflow_call:
+    inputs:
+      gate_cmd:
+        description: >
+          The repo's authoritative post-step gate command, WITHOUT the trailing
+          branch argument (the workflow appends the PR head ref). Copy it from the
+          repo's agent-issue-to-pr.yml gate step -- e.g.
+          "/srv/github-runner/bin/svcdev-gate.sh hog" for a deployable service, or
+          "/srv/github-runner/bin/dag-parse-gate.sh heller" for an airflow-only one.
+          Leave EMPTY to skip the gate entirely (repos with no dev-tier gate, e.g.
+          home-infra).
+        type: string
+        required: false
+        default: ""
+
+jobs:
+  revise:
+    runs-on: [self-hosted, forge]
+    steps:
+      # issue_comment carries the PR number (github.event.issue.number) but NOT its
+      # head branch -- resolve it from the API (curl+python3; gh is not on every org
+      # runner's PATH). Guard that it is an agent PR; ignore anything else.
+      - name: Resolve + validate PR head branch
+        id: pr
+        run: |
+          pr="$(curl -sS -H "Authorization: Bearer ${{ github.token }}" -H "Accept: application/vnd.github+json" \
+                 "https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.issue.number }}")"
+          ref="$(printf '%s' "$pr" | python3 -c 'import sys,json;print(json.load(sys.stdin)["head"]["ref"])')"
+          echo "PR #${{ github.event.issue.number }} head branch = $ref"
+          case "$ref" in
+            agent/issue-*) echo "ref=$ref" >> "$GITHUB_OUTPUT" ;;
+            *) echo "::notice::$ref is not an agent PR -- ignoring /revise"; echo "skip=true" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: Acknowledge
+        if: steps.pr.outputs.skip != 'true'
+        run: |
+          curl -sS -X POST -H "Authorization: Bearer ${{ github.token }}" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments" \
+            -d '{"body":"On it -- revising `${{ steps.pr.outputs.ref }}` per your request."}' \
+            >/dev/null 2>&1 || true
+
+      - name: Mint coder App token (bdh-org-coder)
+        id: coder
+        if: steps.pr.outputs.skip != 'true'
+        env:
+          VAULT_ADDR: ${{ vars.VAULT_ADDR }}
+        run: /srv/github-runner/bin/mint-coder-app-token.sh
+
+      - uses: actions/checkout@v4
+        if: steps.pr.outputs.skip != 'true'
+        with:
+          ref: ${{ steps.pr.outputs.ref }}   # the PR head branch, not main
+          token: ${{ steps.coder.outputs.coder_token }}
+
+      # Submodules (common/, stack-common/) live in bdh-org; hydrate with a bdh-org
+      # coder token regardless of this repo's org (same wiring as agent-issue-to-pr).
+      # A repo with no submodules just no-ops the update.
+      - name: Mint bdh-org coder token (submodule hydration)
+        id: coderbdh
+        if: steps.pr.outputs.skip != 'true'
+        env:
+          VAULT_ADDR: ${{ vars.VAULT_ADDR }}
+        run: /srv/github-runner/bin/mint-coder-app-token.sh bdh-org
+
+      - name: Hydrate submodules (bdh-org)
+        if: steps.pr.outputs.skip != 'true'
+        env:
+          T: ${{ steps.coderbdh.outputs.coder_token }}
+        run: |
+          for k in $(git config --local --name-only --get-regexp '^url\.' || true); do
+            git config --local --unset-all "$k" || true
+          done
+          git -c "url.https://x-access-token:${T}@github.com/bdh-org/.insteadOf=https://github.com/bdh-org/" \
+            submodule update --init --recursive
+
+      - name: Fetch Claude OAuth token from Vault (coder-ai)
+        id: vault
+        if: steps.pr.outputs.skip != 'true'
+        env:
+          VAULT_ADDR: ${{ vars.VAULT_ADDR }}
+        run: /srv/github-runner/bin/vault-fetch-ci-secret.sh
+
+      # claude-dev SSH key for the in-turn self-gate (only needed when gating).
+      - name: Fetch claude-dev SSH key from Vault
+        id: devkey
+        if: steps.pr.outputs.skip != 'true' && inputs.gate_cmd != ''
+        env:
+          VAULT_ADDR: ${{ vars.VAULT_ADDR }}
+          CODER_SECRET_PATH: kv/ai/coder/claude-dev-ssh
+          CODER_SECRET_FIELD: private_key_b64
+          SECRET_OUTPUT_NAME: claude_dev_key_b64
+          SECRET_ENV_NAME: ""
+        run: /srv/github-runner/bin/vault-fetch-ci-secret.sh
+
+      - uses: anthropics/claude-code-action@v1
+        if: steps.pr.outputs.skip != 'true'
+        env:
+          CLAUDE_DEV_SSH: ${{ vars.CLAUDE_DEV_SSH }}
+          KEY_B64: ${{ steps.devkey.outputs.claude_dev_key_b64 }}
+          GH_TOKEN: ${{ steps.coder.outputs.coder_token }}
+          GATE_CMD: ${{ inputs.gate_cmd }}
+        with:
+          claude_code_oauth_token: ${{ steps.vault.outputs.oauth_token }}
+          github_token: ${{ steps.coder.outputs.coder_token }}
+          prompt: |
+            A reviewer requested changes on an OPEN pull request in this repository.
+            The PR's branch `${{ steps.pr.outputs.ref }}` is already checked out.
+
+            Reviewer's revision request (ignore the leading `/revise` token):
+            ${{ github.event.comment.body }}
+
+            Make ONLY the requested changes on the current branch. Follow this
+            repository's CLAUDE.md conventions. Do NOT open a new pull request -- one
+            already exists; you are updating it. Do NOT merge.
+
+            Run the repo's fast local checks and fix any failures FIRST: `make
+            version-check` and `make lint` (ignore "No rule to make target" if a repo
+            doesn't have one). For any version change ALWAYS use `make bump-patch` --
+            never hand-edit version strings. Re-run until both pass.
+
+            If (and only if) the env var GATE_CMD is non-empty, also VERIFY on the
+            dev tier by running exactly:
+              $GATE_CMD ${{ steps.pr.outputs.ref }}
+            exit 0 = green. If it FAILS, read the output, fix, commit, push, re-run the
+            SAME command -- up to 3 attempts total.
+
+            Finally COMMIT (conventional-commit style) and PUSH to the SAME branch
+            (`${{ steps.pr.outputs.ref }}`), which updates the existing PR.
+          claude_args: |
+            --model claude-opus-4-8
+            --max-turns 50
+            --allowedTools "Read,Write,Edit,Bash"
+
+      # Authoritative dev-tier gate (post-step), only for repos with a gate command.
+      # gate_cmd is the full command sans branch (e.g. ".../svcdev-gate.sh hog");
+      # the PR head ref is appended here.
+      - name: Dev-tier gate (deploy + smoke)
+        if: steps.pr.outputs.skip != 'true' && inputs.gate_cmd != ''
+        env:
+          CLAUDE_DEV_SSH: ${{ vars.CLAUDE_DEV_SSH }}
+          GH_TOKEN: ${{ github.token }}
+          KEY_B64: ${{ steps.devkey.outputs.claude_dev_key_b64 }}
+        run: ${{ inputs.gate_cmd }} "${{ steps.pr.outputs.ref }}"
