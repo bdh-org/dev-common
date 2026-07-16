@@ -1,6 +1,6 @@
 name: Tag Version (self-hosted)
 
-# Reusable version-tagging workflow on the alfie self-hosted runner.
+# Reusable version-tagging workflow on the forge self-hosted runner.
 # Consumers add a thin wrapper:
 #
 #   on:
@@ -16,7 +16,7 @@ name: Tag Version (self-hosted)
 #
 # The tag still lands on github.com: the runner clones from and pushes to
 # github.com (authed by the injected GITHUB_TOKEN); only the executing machine
-# changes from a cloud runner to alfie.
+# changes from a cloud runner to forge.
 on:
   workflow_call:
 

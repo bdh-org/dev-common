@@ -1,6 +1,6 @@
 name: Self-hosted CI
 
-# Reusable CI workflow that runs on the alfie self-hosted runner.
+# Reusable CI workflow that runs on the forge self-hosted runner.
 # Consumers add a thin wrapper:
 #
 #   jobs:
@@ -55,8 +55,8 @@ jobs:
         run: git submodule update --init common
 
       # Point CONDA_ROOT at the runner's REAL home rather than a hardcoded path:
-      # github-runner homes differently across CI hosts (alfie: /home/github-runner,
-      # forge: /srv/github-runner), and hardcoding forces a phantom dir. $HOME is the
+      # github-runner's home isn't the assumed /home/github-runner on forge (it's
+      # /srv/github-runner), and hardcoding forces a phantom dir. $HOME is the
       # runner user's home, so conda lives at <home>/miniforge3 -- portable across hosts.
       - name: Resolve CONDA_ROOT from the runner's home
         run: echo "CONDA_ROOT=$HOME/miniforge3" >> "$GITHUB_ENV"
