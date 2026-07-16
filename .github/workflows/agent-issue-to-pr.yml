@@ -1,0 +1,142 @@
+name: agent-issue-to-pr (reusable)
+# Reusable (workflow_call) implementation of the headless issue -> PR pipeline
+# (home-infra#53/#123). A thin per-repo wrapper owns the `issues: [labeled]` trigger
+# and the agent-pr/agent-deploy label filter and CALLS this, so the logic lives here
+# once instead of copied into every repo (matches tag-version + agent-pr-revise).
+#
+# Apply `agent-pr` (PR left for a human to merge) or `agent-deploy` (auto-merge on a
+# GREEN dev-tier gate) to an issue; claude-code-action@v1 runs headless on the forge
+# self-hosted runner, implements the issue, self-gates, and opens a PR that links the
+# issue. Identity: Claude OAuth from Vault (kv/ai/coder/anthropic via coder-ai);
+# GitHub ops (checkout/push/PR/merge) on a per-run bdh-org-coder App token
+# (home-infra#91). An App-token merge still triggers the registry-image deploy.
+on:
+  workflow_call:
+    inputs:
+      gate_cmd:
+        description: >
+          The repo's authoritative dev-tier gate command WITHOUT the trailing branch
+          arg (the workflow appends agent/issue-<n>). Copy it from the repo's old
+          standalone gate step -- e.g. "/srv/github-runner/bin/svcdev-gate.sh hog".
+          EMPTY = no gate: skips the dev-tier gate AND disables agent-deploy
+          auto-merge (PR-only repos like home-infra). heller's dag-parse gate is
+          divergent and stays on its standalone workflow until a dag-parse mode lands.
+        type: string
+        required: false
+        default: ""
+
+jobs:
+  agent:
+    runs-on: [self-hosted, forge]
+    steps:
+      # Mint the running repo's org installation token for the bdh-org-coder App
+      # (home-infra#91) -- the headless git actor. checkout persists it for the
+      # agent's pushes; the action and the auto-merge step reuse it.
+      - name: Mint coder App token (bdh-org-coder)
+        id: coder
+        env:
+          VAULT_ADDR: ${{ vars.VAULT_ADDR }}
+        run: /srv/github-runner/bin/mint-coder-app-token.sh
+
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ steps.coder.outputs.coder_token }}
+
+      # Submodules (common/, stack-common/) always live in bdh-org -> hydrate with a
+      # bdh-org coder token regardless of this repo's org, so the agent can run
+      # `make bump-patch` in-turn (home-infra#89/#91). No-op if a repo has none.
+      - name: Mint bdh-org coder token (submodule hydration)
+        id: coderbdh
+        env:
+          VAULT_ADDR: ${{ vars.VAULT_ADDR }}
+        run: /srv/github-runner/bin/mint-coder-app-token.sh bdh-org
+
+      - name: Hydrate submodules (bdh-org)
+        env:
+          T: ${{ steps.coderbdh.outputs.coder_token }}
+        run: |
+          for k in $(git config --local --name-only --get-regexp '^url\.' || true); do
+            git config --local --unset-all "$k" || true
+          done
+          git -c "url.https://x-access-token:${T}@github.com/bdh-org/.insteadOf=https://github.com/bdh-org/" \
+            submodule update --init --recursive
+
+      - name: Fetch Claude OAuth token from Vault (coder-ai)
+        id: vault
+        env:
+          VAULT_ADDR: ${{ vars.VAULT_ADDR }}
+        run: /srv/github-runner/bin/vault-fetch-ci-secret.sh
+
+      # claude-dev SSH key for the in-turn self-gate + the post-step gate (only when gating).
+      - name: Fetch claude-dev SSH key from Vault
+        id: devkey
+        if: inputs.gate_cmd != ''
+        env:
+          VAULT_ADDR: ${{ vars.VAULT_ADDR }}
+          CODER_SECRET_PATH: kv/ai/coder/claude-dev-ssh
+          CODER_SECRET_FIELD: private_key_b64
+          SECRET_OUTPUT_NAME: claude_dev_key_b64
+          SECRET_ENV_NAME: ""
+        run: /srv/github-runner/bin/vault-fetch-ci-secret.sh
+
+      - uses: anthropics/claude-code-action@v1
+        env:
+          CLAUDE_DEV_SSH: ${{ vars.CLAUDE_DEV_SSH }}
+          KEY_B64: ${{ steps.devkey.outputs.claude_dev_key_b64 }}
+          GH_TOKEN: ${{ steps.coder.outputs.coder_token }}
+          GATE_CMD: ${{ inputs.gate_cmd }}
+        with:
+          claude_code_oauth_token: ${{ steps.vault.outputs.oauth_token }}
+          github_token: ${{ steps.coder.outputs.coder_token }}
+          prompt: |
+            Implement GitHub issue #${{ github.event.issue.number }} in this repository.
+
+            Title: ${{ github.event.issue.title }}
+
+            ${{ github.event.issue.body }}
+
+            Create a branch named `agent/issue-${{ github.event.issue.number }}`, commit
+            with conventional-commit style, and PUSH it. Follow this repository's CLAUDE.md
+            conventions. Never commit directly to main.
+
+            Run the repo's fast local checks and fix any failures FIRST: `make
+            version-check` and `make lint` (ignore "No rule to make target" if a repo
+            doesn't have one). For any version change ALWAYS use `make bump-patch` --
+            never hand-edit version strings, or the Makefile VERSION and __version__ drift
+            and CI's version-check fails. Re-run until both pass.
+
+            If (and only if) the env var GATE_CMD is non-empty, VERIFY on the dev tier
+            BEFORE opening the PR by running this exact command:
+              $GATE_CMD agent/issue-${{ github.event.issue.number }}
+            It deploys your pushed branch to the dev tier and smokes it; exit 0 = green.
+            If it FAILS, read the output, fix, commit, push, and re-run the SAME command --
+            up to 3 attempts total.
+
+            Finally open a pull request whose body says
+            "Closes #${{ github.event.issue.number }}":
+            - if the gate is GREEN (or there is no gate), open a normal PR;
+            - if it is STILL failing after 3 attempts, open a DRAFT pull request whose body
+              explains what is still red (include the gate's final output).
+          claude_args: |
+            --model claude-opus-4-8
+            --max-turns 50
+            --allowedTools "Read,Write,Edit,Bash"
+
+      # Authoritative dev-tier gate (post-step) -- re-runs the SAME gate as the final
+      # verdict so the PR gets a real commit status regardless of the agent's turns.
+      - name: Dev-tier gate (deploy + smoke)
+        if: inputs.gate_cmd != ''
+        env:
+          CLAUDE_DEV_SSH: ${{ vars.CLAUDE_DEV_SSH }}
+          GH_TOKEN: ${{ github.token }}
+          KEY_B64: ${{ steps.devkey.outputs.claude_dev_key_b64 }}
+        run: ${{ inputs.gate_cmd }} "agent/issue-${{ github.event.issue.number }}"
+
+      # agent-deploy trust tier: on a green gate, auto-merge (unless a protected path was
+      # touched -> the shared script downgrades to manual review). Only for gated repos --
+      # a no-gate repo never auto-merges (nothing verified the change).
+      - name: Auto-merge on green gate (agent-deploy)
+        if: github.event.label.name == 'agent-deploy' && inputs.gate_cmd != ''
+        env:
+          GH_TOKEN: ${{ steps.coder.outputs.coder_token }}
+        run: /srv/github-runner/bin/agent-automerge.sh "agent/issue-${{ github.event.issue.number }}"
