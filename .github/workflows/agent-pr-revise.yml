@@ -93,6 +93,10 @@ jobs:
           for k in $(git config --local --name-only --get-regexp '^url\.' || true); do
             git config --local --unset-all "$k" || true
           done
+          # sync FIRST: the persistent runner workspace keeps submodule URLs in
+          # .git/modules/*/config, and `submodule init` never overwrites them --
+          # a URL fixed in .gitmodules would otherwise stay broken forever (#105).
+          git submodule sync --recursive || true
           git -c "url.https://x-access-token:${T}@github.com/bdh-org/.insteadOf=https://github.com/bdh-org/" \
             submodule update --init --recursive
 
