@@ -24,6 +24,16 @@ on:
         type: string
         required: false
         default: ""
+      max_turns:
+        description: >
+          Claude Code --max-turns budget for the agent run. The default caps cost on
+          small issues (~50 turns is plenty for a docs fix or config change); repos
+          whose agent issues are feature-scale (new adapters, cross-cutting refactors)
+          opt up in their thin wrapper -- 4 of 6 hog runs died at 50 on 2026-07-17
+          (finzeug/hog#335).
+        type: number
+        required: false
+        default: 50
 
 jobs:
   agent:
@@ -119,7 +129,7 @@ jobs:
               explains what is still red (include the gate's final output).
           claude_args: |
             --model claude-opus-4-8
-            --max-turns 50
+            --max-turns ${{ inputs.max_turns }}
             --allowedTools "Read,Write,Edit,Bash"
 
       # Authoritative dev-tier gate (post-step) -- re-runs the SAME gate as the final
