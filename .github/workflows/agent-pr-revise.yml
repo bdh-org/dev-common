@@ -26,6 +26,14 @@ on:
         type: string
         required: false
         default: ""
+      max_turns:
+        description: >
+          Claude Code --max-turns budget for the revision run. Default matches
+          agent-issue-to-pr; revisions are usually smaller than the original
+          implementation, so most wrappers should leave this alone.
+        type: number
+        required: false
+        default: 50
 
 jobs:
   revise:
@@ -143,7 +151,7 @@ jobs:
             (`${{ steps.pr.outputs.ref }}`), which updates the existing PR.
           claude_args: |
             --model claude-opus-4-8
-            --max-turns 50
+            --max-turns ${{ inputs.max_turns }}
             --allowedTools "Read,Write,Edit,Bash"
 
       # Authoritative dev-tier gate (post-step), only for repos with a gate command.
