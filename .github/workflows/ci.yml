@@ -36,6 +36,17 @@ jobs:
       - name: Version consistency
         run: make version-check
 
+      # Registry-image deploys deliver DAGs ONLY when the image bakes them: the
+      # merge-to-main pipeline ships the image, and Airflow tasks docker-run into
+      # it — a dags/ dir the Dockerfile never COPYs means merged DAG changes
+      # silently never land (bdh-org/home-infra#15; bit panoptikon/hog/freddyb).
+      - name: DAG delivery guardrail
+        run: |
+          if [ -d dags ] && [ -f Dockerfile ] && ! grep -Eq '^[[:space:]]*COPY[[:space:]]+.*dags' Dockerfile; then
+            echo "::error::dags/ exists but the Dockerfile never COPYs it — DAG changes will not be delivered by the registry image. Add 'COPY dags/ /app/dags/' (bdh-org/home-infra#15)."
+            exit 1
+          fi
+
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ inputs.python-version }}
