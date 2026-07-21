@@ -4,13 +4,18 @@ name: agent-pr-revise (reusable)
 # owns the `issue_comment` trigger + the `/revise` filter and CALLS this, so the
 # logic lives here once instead of copied into every repo (matches tag-version).
 #
-# Turns a `/revise ...` comment on an OPEN agent PR -- head branch agent/issue-*
-# (the headless issue->PR pipeline) OR any PR authored by the agent service
-# account (input agent_author, default bdh-ai: devcontainer Claude sessions open
-# PRs as bdh-ai on ordinary <issue>-<desc> branches, #107) --
-# into more commits on the SAME branch: checks out that branch, makes the
-# requested changes, optionally self-gates on svc-dev, and pushes -- updating the
-# PR in place. Does NOT open a new PR and does NOT auto-merge (a human asked for
+# Turns a `/revise ...` comment on ANY open same-repo PR into more commits on
+# the SAME branch: checks out that branch, makes the requested changes,
+# optionally self-gates on svc-dev, and pushes -- updating the PR in place.
+#
+# /revise is a DELEGATION verb: a trusted human hands work on a PR to the AI,
+# end of story (#107). So it deliberately does NOT care whose PR it is or how
+# the branch is named (it originally accepted only the headless pipeline's
+# agent/issue-* branches -- twice too narrow); authorization is the wrapper's
+# commenter trust filter alone. The only skips are PRs a revision push cannot
+# land on: closed PRs and fork-headed PRs.
+#
+# Does NOT open a new PR and does NOT auto-merge (a human asked for
 # changes, so they re-review). Identity: pushes ride a per-run bdh-org-coder App
 # installation token (home-infra#91); the Claude OAuth token comes from Vault
 # (coder-ai). Runs on the shared forge self-hosted runner.
@@ -37,15 +42,6 @@ on:
         type: number
         required: false
         default: 50
-      agent_author:
-        description: >
-          PR author login treated as an agent PR in addition to agent/issue-*
-          head branches (#107). Devcontainer Claude sessions open PRs as this
-          service account on ordinary <issue>-<desc> branches; /revise applies
-          to those too. Human-authored PRs stay excluded either way.
-        type: string
-        required: false
-        default: "bdh-ai"
 
 jobs:
   revise:
@@ -53,28 +49,26 @@ jobs:
     steps:
       # issue_comment carries the PR number (github.event.issue.number) but NOT its
       # head branch -- resolve it from the API (curl+python3; gh is not on every org
-      # runner's PATH). Guard that it is an agent PR -- agent/issue-* head branch or
-      # agent_author-authored (#107); ignore anything else.
+      # runner's PATH). Any open same-repo PR qualifies (#107): authorization is the
+      # wrapper's commenter trust filter. Guard only what cannot work -- a closed PR
+      # (branch may be gone) and a fork PR (the coder token cannot push to a fork).
       - name: Resolve + validate PR head branch
         id: pr
         run: |
           pr="$(curl -sS -H "Authorization: Bearer ${{ github.token }}" -H "Accept: application/vnd.github+json" \
                  "https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.issue.number }}")"
           ref="$(printf '%s' "$pr" | python3 -c 'import sys,json;print(json.load(sys.stdin)["head"]["ref"])')"
-          author="$(printf '%s' "$pr" | python3 -c 'import sys,json;print(json.load(sys.stdin)["user"]["login"])')"
-          echo "PR #${{ github.event.issue.number }} head branch = $ref (author: $author)"
-          case "$ref" in
-            agent/issue-*) agentpr=yes ;;
-            *) agentpr=no ;;
-          esac
-          if [ "$agentpr" = "no" ] && [ -n "${{ inputs.agent_author }}" ] && [ "$author" = "${{ inputs.agent_author }}" ]; then
-            agentpr=yes
-          fi
-          if [ "$agentpr" = "yes" ]; then
-            echo "ref=$ref" >> "$GITHUB_OUTPUT"
-          else
-            echo "::notice::$ref (author $author) is not an agent PR -- ignoring /revise"
+          state="$(printf '%s' "$pr" | python3 -c 'import sys,json;print(json.load(sys.stdin)["state"])')"
+          headrepo="$(printf '%s' "$pr" | python3 -c 'import sys,json;print(json.load(sys.stdin)["head"]["repo"]["full_name"])')"
+          echo "PR #${{ github.event.issue.number }} head branch = $ref (state: $state, head repo: $headrepo)"
+          if [ "$state" != "open" ]; then
+            echo "::notice::PR is $state, not open -- ignoring /revise"
             echo "skip=true" >> "$GITHUB_OUTPUT"
+          elif [ "$headrepo" != "${{ github.repository }}" ]; then
+            echo "::notice::head branch lives in fork $headrepo -- cannot push a revision, ignoring /revise"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ref=$ref" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Acknowledge
