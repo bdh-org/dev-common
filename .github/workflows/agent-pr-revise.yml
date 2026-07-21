@@ -157,6 +157,11 @@ jobs:
             repository's CLAUDE.md conventions. Do NOT open a new pull request -- one
             already exists; you are updating it. Do NOT merge.
 
+            Address EVERY part of the request. If a part is beyond what you can
+            do here (needs a human decision, credentials, a different repo),
+            still address it in your completion comment (below) -- never drop a
+            part silently.
+
             Run the repo's fast local checks and fix any failures FIRST: `make
             version-check` and `make lint` (ignore "No rule to make target" if a repo
             doesn't have one). For any version change ALWAYS use `make bump-patch` --
@@ -170,6 +175,20 @@ jobs:
 
             Finally COMMIT (conventional-commit style) and PUSH to the SAME branch
             (`${{ steps.pr.outputs.ref }}`), which updates the existing PR.
+
+            REQUIRED last step -- post ONE completion comment on the PR
+            (`gh` may be absent; use curl with $GH_TOKEN:
+              curl -sS -X POST -H "Authorization: Bearer $GH_TOKEN" \
+                "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments" \
+                -d "$(python3 -c 'import json,sys;print(json.dumps({"body":sys.stdin.read()}))' <<'BODY'
+            ...your summary...
+            BODY
+            )" )
+            summarizing: (a) what you changed and pushed, (b) any part of the
+            request you did NOT complete and why, (c) the gate result if you ran
+            one. A run that ends without this comment is a FAILED revision even
+            if the code pushed -- the requester must never have to inspect
+            commits to learn what happened (dev-common#112).
           claude_args: |
             --model claude-opus-4-8
             --max-turns ${{ inputs.max_turns }}
