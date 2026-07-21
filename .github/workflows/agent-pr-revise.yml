@@ -4,7 +4,10 @@ name: agent-pr-revise (reusable)
 # owns the `issue_comment` trigger + the `/revise` filter and CALLS this, so the
 # logic lives here once instead of copied into every repo (matches tag-version).
 #
-# Turns a `/revise ...` comment on an OPEN agent PR (head branch agent/issue-*)
+# Turns a `/revise ...` comment on an OPEN agent PR -- head branch agent/issue-*
+# (the headless issue->PR pipeline) OR any PR authored by the agent service
+# account (input agent_author, default bdh-ai: devcontainer Claude sessions open
+# PRs as bdh-ai on ordinary <issue>-<desc> branches, #107) --
 # into more commits on the SAME branch: checks out that branch, makes the
 # requested changes, optionally self-gates on svc-dev, and pushes -- updating the
 # PR in place. Does NOT open a new PR and does NOT auto-merge (a human asked for
@@ -34,6 +37,15 @@ on:
         type: number
         required: false
         default: 50
+      agent_author:
+        description: >
+          PR author login treated as an agent PR in addition to agent/issue-*
+          head branches (#107). Devcontainer Claude sessions open PRs as this
+          service account on ordinary <issue>-<desc> branches; /revise applies
+          to those too. Human-authored PRs stay excluded either way.
+        type: string
+        required: false
+        default: "bdh-ai"
 
 jobs:
   revise:
@@ -41,18 +53,29 @@ jobs:
     steps:
       # issue_comment carries the PR number (github.event.issue.number) but NOT its
       # head branch -- resolve it from the API (curl+python3; gh is not on every org
-      # runner's PATH). Guard that it is an agent PR; ignore anything else.
+      # runner's PATH). Guard that it is an agent PR -- agent/issue-* head branch or
+      # agent_author-authored (#107); ignore anything else.
       - name: Resolve + validate PR head branch
         id: pr
         run: |
           pr="$(curl -sS -H "Authorization: Bearer ${{ github.token }}" -H "Accept: application/vnd.github+json" \
                  "https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.issue.number }}")"
           ref="$(printf '%s' "$pr" | python3 -c 'import sys,json;print(json.load(sys.stdin)["head"]["ref"])')"
-          echo "PR #${{ github.event.issue.number }} head branch = $ref"
+          author="$(printf '%s' "$pr" | python3 -c 'import sys,json;print(json.load(sys.stdin)["user"]["login"])')"
+          echo "PR #${{ github.event.issue.number }} head branch = $ref (author: $author)"
           case "$ref" in
-            agent/issue-*) echo "ref=$ref" >> "$GITHUB_OUTPUT" ;;
-            *) echo "::notice::$ref is not an agent PR -- ignoring /revise"; echo "skip=true" >> "$GITHUB_OUTPUT" ;;
+            agent/issue-*) agentpr=yes ;;
+            *) agentpr=no ;;
           esac
+          if [ "$agentpr" = "no" ] && [ -n "${{ inputs.agent_author }}" ] && [ "$author" = "${{ inputs.agent_author }}" ]; then
+            agentpr=yes
+          fi
+          if [ "$agentpr" = "yes" ]; then
+            echo "ref=$ref" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::$ref (author $author) is not an agent PR -- ignoring /revise"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Acknowledge
         if: steps.pr.outputs.skip != 'true'
