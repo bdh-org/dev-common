@@ -149,14 +149,29 @@ jobs:
         run: /srv/github-runner/bin/vault-fetch-ci-secret.sh
 
       # dagparse gate: log in to the registry BEFORE the agent -- the login persists
-      # in ~/.docker/config.json for the whole job, so the agent's self-gate can pull
-      # the plugin image WITHOUT ever holding REGISTRY_RUNNER_PW (rides in via the
-      # wrapper's `secrets: inherit`).
+      # (run-scoped DOCKER_CONFIG, home-infra#154) for the whole job, so the agent's
+      # self-gate can pull the plugin image WITHOUT ever holding the credential.
+      # Password from VAULT (kv/ci/deploy via deploy-ci, same as ci-build), NOT a
+      # GitHub secret: org secrets resolve EMPTY through a cross-org
+      # `secrets: inherit` reusable call (dev-common#118).
+      - name: Fetch registry credential from Vault (deploy-ci)
+        id: regpw
+        if: steps.pr.outputs.skip != 'true' && inputs.gate_cmd != '' && inputs.gate_kind == 'dagparse'
+        env:
+          VAULT_ADDR: ${{ vars.VAULT_ADDR }}
+          CODER_ROLE: deploy-ci
+          CODER_SECRET_PATH: kv/ci/deploy
+          CODER_SECRET_FIELD: registry_pw
+          SECRET_OUTPUT_NAME: registry_pw
+          SECRET_ENV_NAME: ""
+        run: /srv/github-runner/bin/vault-fetch-ci-secret.sh
+
       - name: Registry login (dagparse gate)
         if: steps.pr.outputs.skip != 'true' && inputs.gate_cmd != '' && inputs.gate_kind == 'dagparse'
         env:
           DOCKER_HOST: unix:///run/user/996/docker.sock
-        run: echo "${{ secrets.REGISTRY_RUNNER_PW }}" | docker login registry.home.arpa -u runner --password-stdin
+          DOCKER_CONFIG: /tmp/docker-config-${{ github.run_id }}
+        run: echo "${{ steps.regpw.outputs.registry_pw }}" | docker login registry.home.arpa -u runner --password-stdin
 
       - uses: anthropics/claude-code-action@v1
         if: steps.pr.outputs.skip != 'true'
@@ -165,9 +180,11 @@ jobs:
           KEY_B64: ${{ steps.devkey.outputs.claude_dev_key_b64 }}
           GH_TOKEN: ${{ steps.coder.outputs.coder_token }}
           GATE_CMD: ${{ inputs.gate_cmd }}
-          # dagparse: the gate's docker calls need the forge rootless daemon; empty
-          # (svcdev/no-gate) is ignored by the docker CLI.
+          # dagparse: the gate's docker calls need the forge rootless daemon and the
+          # run-scoped config holding the registry login; empty (svcdev/no-gate) is
+          # ignored by the docker CLI.
           DOCKER_HOST: ${{ inputs.gate_kind == 'dagparse' && 'unix:///run/user/996/docker.sock' || '' }}
+          DOCKER_CONFIG: ${{ inputs.gate_kind == 'dagparse' && format('/tmp/docker-config-{0}', github.run_id) || '' }}
         with:
           claude_code_oauth_token: ${{ steps.vault.outputs.oauth_token }}
           github_token: ${{ steps.coder.outputs.coder_token }}
@@ -230,4 +247,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           KEY_B64: ${{ steps.devkey.outputs.claude_dev_key_b64 }}
           DOCKER_HOST: ${{ inputs.gate_kind == 'dagparse' && 'unix:///run/user/996/docker.sock' || '' }}
+          DOCKER_CONFIG: ${{ inputs.gate_kind == 'dagparse' && format('/tmp/docker-config-{0}', github.run_id) || '' }}
         run: ${{ inputs.gate_cmd }} "${{ steps.pr.outputs.ref }}"
