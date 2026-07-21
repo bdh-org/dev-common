@@ -19,8 +19,28 @@ on:
           arg (the workflow appends agent/issue-<n>). Copy it from the repo's old
           standalone gate step -- e.g. "/srv/github-runner/bin/svcdev-gate.sh hog".
           EMPTY = no gate: skips the dev-tier gate AND disables agent-deploy
-          auto-merge (PR-only repos like home-infra). heller's dag-parse gate is
-          divergent and stays on its standalone workflow until a dag-parse mode lands.
+          auto-merge (PR-only repos like home-infra). For heller's DagBag-parse
+          gate pass "/srv/github-runner/bin/dag-parse-gate.sh dags" WITH
+          gate_kind: dagparse (dev-common#116).
+        type: string
+        required: false
+        default: ""
+      gate_kind:
+        description: >
+          Gate plumbing flavor; meaningful only when gate_cmd is non-empty.
+          "svcdev" (default): deploy+smoke via the claude-dev SSH identity --
+          fetches the claude-dev key from Vault. "dagparse": heller-style
+          DagBag-parse -- NO claude-dev key; instead a pre-agent registry docker
+          login (persisted credential, the agent never holds REGISTRY_RUNNER_PW)
+          and DOCKER_HOST exported for the gate's docker runs (dev-common#116).
+        type: string
+        required: false
+        default: "svcdev"
+      protected:
+        description: >
+          Optional override for the agent-deploy auto-merge protected-paths regex
+          (agent-automerge.sh denylist). Empty = the script's default. heller
+          extends it with dags/ + scripts/ (ledger safety).
         type: string
         required: false
         default: ""
@@ -81,10 +101,11 @@ jobs:
           VAULT_ADDR: ${{ vars.VAULT_ADDR }}
         run: /srv/github-runner/bin/vault-fetch-ci-secret.sh
 
-      # claude-dev SSH key for the in-turn self-gate + the post-step gate (only when gating).
+      # claude-dev SSH key for the in-turn self-gate + the post-step gate (svcdev
+      # flavor only -- the dagparse gate never SSHes to the dev tier).
       - name: Fetch claude-dev SSH key from Vault
         id: devkey
-        if: inputs.gate_cmd != ''
+        if: inputs.gate_cmd != '' && inputs.gate_kind != 'dagparse'
         env:
           VAULT_ADDR: ${{ vars.VAULT_ADDR }}
           CODER_SECRET_PATH: kv/ai/coder/claude-dev-ssh
@@ -93,12 +114,26 @@ jobs:
           SECRET_ENV_NAME: ""
         run: /srv/github-runner/bin/vault-fetch-ci-secret.sh
 
+      # dagparse gate: the gate docker-runs the shared plugin image, so log in to
+      # the registry BEFORE the agent -- the login persists in ~/.docker/config.json
+      # for the whole job, so the agent's self-gate can pull WITHOUT ever holding
+      # REGISTRY_RUNNER_PW (same shape as heller's old standalone; the secret rides
+      # in via the wrapper's `secrets: inherit`).
+      - name: Registry login (dagparse gate)
+        if: inputs.gate_cmd != '' && inputs.gate_kind == 'dagparse'
+        env:
+          DOCKER_HOST: unix:///run/user/996/docker.sock
+        run: echo "${{ secrets.REGISTRY_RUNNER_PW }}" | docker login registry.home.arpa -u runner --password-stdin
+
       - uses: anthropics/claude-code-action@v1
         env:
           CLAUDE_DEV_SSH: ${{ vars.CLAUDE_DEV_SSH }}
           KEY_B64: ${{ steps.devkey.outputs.claude_dev_key_b64 }}
           GH_TOKEN: ${{ steps.coder.outputs.coder_token }}
           GATE_CMD: ${{ inputs.gate_cmd }}
+          # dagparse: the gate's docker calls need the forge rootless daemon; empty
+          # (svcdev/no-gate) is ignored by the docker CLI.
+          DOCKER_HOST: ${{ inputs.gate_kind == 'dagparse' && 'unix:///run/user/996/docker.sock' || '' }}
         with:
           claude_code_oauth_token: ${{ steps.vault.outputs.oauth_token }}
           github_token: ${{ steps.coder.outputs.coder_token }}
@@ -122,7 +157,7 @@ jobs:
             If (and only if) the env var GATE_CMD is non-empty, VERIFY on the dev tier
             BEFORE opening the PR by running this exact command:
               $GATE_CMD agent/issue-${{ github.event.issue.number }}
-            It deploys your pushed branch to the dev tier and smokes it; exit 0 = green.
+            ${{ inputs.gate_kind == 'dagparse' && 'It DagBag-parses dags/ against the shared dag_log_levels plugin; exit 0 = green (0 import errors).' || 'It deploys your pushed branch to the dev tier and smokes it; exit 0 = green.' }}
             If it FAILS, read the output, fix, commit, push, and re-run the SAME command --
             up to 3 attempts total.
 
@@ -144,6 +179,7 @@ jobs:
           CLAUDE_DEV_SSH: ${{ vars.CLAUDE_DEV_SSH }}
           GH_TOKEN: ${{ github.token }}
           KEY_B64: ${{ steps.devkey.outputs.claude_dev_key_b64 }}
+          DOCKER_HOST: ${{ inputs.gate_kind == 'dagparse' && 'unix:///run/user/996/docker.sock' || '' }}
         run: ${{ inputs.gate_cmd }} "agent/issue-${{ github.event.issue.number }}"
 
       # agent-deploy trust tier: on a green gate, auto-merge (unless a protected path was
@@ -153,4 +189,6 @@ jobs:
         if: github.event.label.name == 'agent-deploy' && inputs.gate_cmd != ''
         env:
           GH_TOKEN: ${{ steps.coder.outputs.coder_token }}
+          # Empty falls through to agent-automerge.sh's default denylist (":-").
+          PROTECTED: ${{ inputs.protected }}
         run: /srv/github-runner/bin/agent-automerge.sh "agent/issue-${{ github.event.issue.number }}"
