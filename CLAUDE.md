@@ -165,12 +165,24 @@ Repos without a Python environment skip step 3:
 - P1 — orchestrator + Apache, no Python app code.
 - P2c — DB service, no Python env in the container.
 
-### P10: Production deployment with retry
-`prod-deploy-all` deploys the full stack from the primary repo via SSH.
-All git operations use `git_retry` (make define/call macro) — 5 attempts with
-10s backoff to handle transient DNS failures (Tailscale MagicDNS).
+### P10: Production deployment (runner-on-merge)
+Merging to main IS the production deploy. The repo's `ci-build` workflow
+(self-hosted runner) builds a SHA-tagged image, pushes it to the stack's
+registry, and triggers the deploy wrapper on the prod host
+(`ssh deploy@<host> "<svc> <sha>"`), which runs the stack's deploy script
+as the scoped prod service user: pull the image, restart the container,
+deliver the image-baked `dags/` (P7).
 
-`dev-deploy-all` is the parallel for the dev tier; see P12.
+`make prod-deploy` (stack deploy.mk) is a thin force-redeploy escape
+hatch — it re-triggers `ci-build` via `gh workflow run`, normally
+unnecessary. The primary repo's `prod-deploy-all` loops it over every
+service (fleet bring-up / DR); P2b static sites override `prod-deploy`
+to host-build and rsync their `dist/` instead of riding the runner.
+
+`dev-deploy-all` is the manually driven parallel for the dev tier; see
+P12. Its git operations use `git_retry` (make define/call macro) — 5
+attempts with 10s backoff to handle transient DNS failures (Tailscale
+MagicDNS).
 
 ### P11: Project scaffolding (devtemplate)
 New repos are created by cloning `devtemplate`, which embeds the standard
