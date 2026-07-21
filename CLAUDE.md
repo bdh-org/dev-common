@@ -28,8 +28,7 @@ that matches the repo's GitHub org. Tokens live at
 | Token file | GitHub org | Used by |
 | --- | --- | --- |
 | `gh-bdh-org.token` | `bdh-org` | home-site, dev-common, devtemplate, actions-runner, brief, roy |
-| `gh-finzeug.token` | `finzeug` | hog, oleo, canary, heller, panoptikon, refdims, ratecraft |
-| `gh-finriskanalytics.token` | `finriskanalytics` | freddyb |
+| `gh-finzeug.token` | `finzeug` | hog, oleo, canary, heller, panoptikon, refdims, ratecraft, ferret, freddyb |
 
 Pick the token from the repo's origin org
 (`git remote get-url origin`), then prefix the command:
