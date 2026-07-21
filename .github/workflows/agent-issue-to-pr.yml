@@ -24,6 +24,16 @@ on:
         type: string
         required: false
         default: ""
+      max_turns:
+        description: >
+          Claude Code --max-turns budget for the agent run. The default caps cost on
+          small issues (~50 turns is plenty for a docs fix or config change); repos
+          whose agent issues are feature-scale (new adapters, cross-cutting refactors)
+          opt up in their thin wrapper -- 4 of 6 hog runs died at 50 on 2026-07-17
+          (finzeug/hog#335).
+        type: number
+        required: false
+        default: 50
 
 jobs:
   agent:
@@ -58,6 +68,10 @@ jobs:
           for k in $(git config --local --name-only --get-regexp '^url\.' || true); do
             git config --local --unset-all "$k" || true
           done
+          # sync FIRST: the persistent runner workspace keeps submodule URLs in
+          # .git/modules/*/config, and `submodule init` never overwrites them --
+          # a URL fixed in .gitmodules would otherwise stay broken forever (#105).
+          git submodule sync --recursive || true
           git -c "url.https://x-access-token:${T}@github.com/bdh-org/.insteadOf=https://github.com/bdh-org/" \
             submodule update --init --recursive
 
@@ -119,7 +133,7 @@ jobs:
               explains what is still red (include the gate's final output).
           claude_args: |
             --model claude-opus-4-8
-            --max-turns 50
+            --max-turns ${{ inputs.max_turns }}
             --allowedTools "Read,Write,Edit,Bash"
 
       # Authoritative dev-tier gate (post-step) -- re-runs the SAME gate as the final
