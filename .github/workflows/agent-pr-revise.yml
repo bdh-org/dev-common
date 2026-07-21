@@ -34,6 +34,17 @@ on:
         type: string
         required: false
         default: ""
+      gate_kind:
+        description: >
+          Gate plumbing flavor; meaningful only when gate_cmd is non-empty.
+          "svcdev" (default): deploy+smoke via the claude-dev SSH identity --
+          fetches the claude-dev key from Vault. "dagparse": heller-style
+          DagBag-parse -- NO claude-dev key; instead a pre-agent registry docker
+          login (persisted credential, the agent never holds REGISTRY_RUNNER_PW)
+          and DOCKER_HOST exported for the gate's docker runs (dev-common#116).
+        type: string
+        required: false
+        default: "svcdev"
       max_turns:
         description: >
           Claude Code --max-turns budget for the revision run. Default matches
@@ -124,10 +135,11 @@ jobs:
           VAULT_ADDR: ${{ vars.VAULT_ADDR }}
         run: /srv/github-runner/bin/vault-fetch-ci-secret.sh
 
-      # claude-dev SSH key for the in-turn self-gate (only needed when gating).
+      # claude-dev SSH key for the in-turn self-gate (svcdev flavor only -- the
+      # dagparse gate never SSHes to the dev tier).
       - name: Fetch claude-dev SSH key from Vault
         id: devkey
-        if: steps.pr.outputs.skip != 'true' && inputs.gate_cmd != ''
+        if: steps.pr.outputs.skip != 'true' && inputs.gate_cmd != '' && inputs.gate_kind != 'dagparse'
         env:
           VAULT_ADDR: ${{ vars.VAULT_ADDR }}
           CODER_SECRET_PATH: kv/ai/coder/claude-dev-ssh
@@ -136,6 +148,16 @@ jobs:
           SECRET_ENV_NAME: ""
         run: /srv/github-runner/bin/vault-fetch-ci-secret.sh
 
+      # dagparse gate: log in to the registry BEFORE the agent -- the login persists
+      # in ~/.docker/config.json for the whole job, so the agent's self-gate can pull
+      # the plugin image WITHOUT ever holding REGISTRY_RUNNER_PW (rides in via the
+      # wrapper's `secrets: inherit`).
+      - name: Registry login (dagparse gate)
+        if: steps.pr.outputs.skip != 'true' && inputs.gate_cmd != '' && inputs.gate_kind == 'dagparse'
+        env:
+          DOCKER_HOST: unix:///run/user/996/docker.sock
+        run: echo "${{ secrets.REGISTRY_RUNNER_PW }}" | docker login registry.home.arpa -u runner --password-stdin
+
       - uses: anthropics/claude-code-action@v1
         if: steps.pr.outputs.skip != 'true'
         env:
@@ -143,6 +165,9 @@ jobs:
           KEY_B64: ${{ steps.devkey.outputs.claude_dev_key_b64 }}
           GH_TOKEN: ${{ steps.coder.outputs.coder_token }}
           GATE_CMD: ${{ inputs.gate_cmd }}
+          # dagparse: the gate's docker calls need the forge rootless daemon; empty
+          # (svcdev/no-gate) is ignored by the docker CLI.
+          DOCKER_HOST: ${{ inputs.gate_kind == 'dagparse' && 'unix:///run/user/996/docker.sock' || '' }}
         with:
           claude_code_oauth_token: ${{ steps.vault.outputs.oauth_token }}
           github_token: ${{ steps.coder.outputs.coder_token }}
@@ -170,7 +195,8 @@ jobs:
             If (and only if) the env var GATE_CMD is non-empty, also VERIFY on the
             dev tier by running exactly:
               $GATE_CMD ${{ steps.pr.outputs.ref }}
-            exit 0 = green. If it FAILS, read the output, fix, commit, push, re-run the
+            ${{ inputs.gate_kind == 'dagparse' && 'It DagBag-parses dags/ against the shared dag_log_levels plugin; exit 0 = green (0 import errors).' || 'exit 0 = green.' }}
+            If it FAILS, read the output, fix, commit, push, re-run the
             SAME command -- up to 3 attempts total.
 
             Finally COMMIT (conventional-commit style) and PUSH to the SAME branch
@@ -203,4 +229,5 @@ jobs:
           CLAUDE_DEV_SSH: ${{ vars.CLAUDE_DEV_SSH }}
           GH_TOKEN: ${{ github.token }}
           KEY_B64: ${{ steps.devkey.outputs.claude_dev_key_b64 }}
+          DOCKER_HOST: ${{ inputs.gate_kind == 'dagparse' && 'unix:///run/user/996/docker.sock' || '' }}
         run: ${{ inputs.gate_cmd }} "${{ steps.pr.outputs.ref }}"
