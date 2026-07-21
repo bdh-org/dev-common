@@ -1,0 +1,41 @@
+name: agent-pr-revise (wrapper)
+# Thin wrapper (home-infra#123; fleet completion dev-common#109): the `/revise
+# <request>` PR-comment trigger + commenter trust filter live here; the pipeline
+# is the dev-common reusable (one source of truth).
+#
+# /revise is a DELEGATION verb (dev-common#107): a trusted human hands work on
+# ANY open same-repo PR to the AI -- agent-authored or human-authored alike.
+# The agent applies the request and pushes to the PR's own branch; it never
+# opens a new PR and never merges (the requester re-reviews).
+#
+# gate_cmd is empty: this repo is not in the svc-dev tier, so there is no
+# deploy+smoke gate to run.
+#
+# FILENAME NOTE: every other repo calls its wrapper agent-pr-revise.yml, but in
+# dev-common that path IS the reusable, so the wrapper lives here as
+# pr-revise.yml. Same behavior, different filename -- do not "fix" this.
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write        # push the agent's revision commits
+  pull-requests: write   # comment status back on the PR
+  issues: write          # PR-conversation comments ride the issues API
+  statuses: write        # gate commit status (unused here; harmless)
+  id-token: write        # claude-code-action mints a GitHub OIDC token
+
+concurrency:
+  group: agent-revise-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  revise:
+    # PR comments only, starting with `/revise`, from a trusted author. The prefix
+    # also excludes the bot's own status comments, so there is no self-trigger loop.
+    if: >
+      github.event.issue.pull_request != null &&
+      startsWith(github.event.comment.body, '/revise') &&
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
+    uses: bdh-org/dev-common/.github/workflows/agent-pr-revise.yml@main
+    secrets: inherit
