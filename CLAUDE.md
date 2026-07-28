@@ -248,6 +248,8 @@ every container, so workspace-absolute links there are last-writer-wins and
 dangle in all but the most-recently-set-up container.) Current skills: `ship` (end-to-end
 issue -> PR -> squash-merge -> cleanup), `update-common` (bump the dev-common
 submodule across repos), `incorporate-devtemplate` (diff repos against
-devtemplate, file issues). `make incorporate-devtemplate` is a signpost that
+devtemplate, file issues), `verification-discipline` (write checks and tests
+that ask the data what it holds rather than asserting what it ought to).
+`make incorporate-devtemplate` is a signpost that
 points at the skill — the work needs human judgment, so there is no
 fully-automated target.
