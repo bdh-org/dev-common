@@ -232,8 +232,18 @@ vars `CLAUDE_PROD_HOST` / `CLAUDE_DEV_HOST` name. stack-common's
 `setup-stack-hosts.sh` writes those env vars at `/etc/profile.d` so they
 survive devcontainer rebuilds.
 
-Source for the wrappers + install docs lives in the stack's primary repo at
-`claude-access/`.
+Source for the wrappers + install docs lives in the stack's **infra/architect**
+repo at `claude-access/` — not the primary repo. These are host-provisioning
+scripts: they install to `/usr/local/bin` and `/etc` on the prod host as root,
+and a primary repo neither builds nor ships them, so carrying them there puts
+undeployed root-installed code inside a deployable service. The infra repo is
+also where the rest of the host provisioning lives, including the ACL grant for
+the reader these wrappers authenticate.
+
+One consequence to plan for: the infra repo is typically NOT synced to the prod
+host (being non-operational, it is not one of the deployed siblings), so the
+install cannot read from a checkout there. Deliver by push-rsync from the dev
+host instead — stage unprivileged, install as root, remove the staging dir.
 
 ### P14: Shared Claude Code skills
 Reusable Claude Code skills live in `dev-common/skills/<name>/SKILL.md`

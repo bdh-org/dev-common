@@ -75,7 +75,7 @@ fi
 
 # Install the claude-prod shim that proxies to the prod wrapper over SSH.
 # The corresponding server-side scripts and one-time setup live in
-# brianholland/home-site:claude-access/.  The private key is expected at
+# bdh-org/home-infra:claude-access/.  The private key is expected at
 # ~/.config/ai/claude/credentials/prod-readonly (host bind-mounted into every
 # devcontainer per the bind mount in devtemplate's devcontainer.json).
 echo "==> Installing claude-prod shim..."
@@ -92,7 +92,7 @@ HOST="${CLAUDE_PROD_HOST:-prod}"
 
 if [[ ! -r "$KEY" ]]; then
   echo "claude-prod: missing key at $KEY" >&2
-  echo "claude-prod: run the one-time setup in home-site/claude-access/INSTALL.md" >&2
+  echo "claude-prod: run the one-time setup in home-infra/claude-access/INSTALL.md" >&2
   exit 2
 fi
 if [[ "$#" -eq 0 ]]; then
@@ -114,7 +114,7 @@ echo "    claude-prod shim installed at /usr/local/bin/claude-prod"
 # Install the claude-dev shim that proxies to the dev wrapper over SSH.
 # Parallel to claude-prod above; targets twix (the dev host) by default.
 # Server-side scripts and one-time setup live in
-# brianholland/home-site:claude-access/INSTALL-dev.md.
+# bdh-org/home-infra:claude-access/INSTALL-dev.md.
 echo "==> Installing claude-dev shim..."
 sudo tee /usr/local/bin/claude-dev >/dev/null <<'CLAUDE_DEV_EOF'
 #!/usr/bin/env bash
@@ -130,7 +130,7 @@ HOST="${CLAUDE_DEV_HOST:-twix}"
 
 if [[ ! -r "$KEY" ]]; then
   echo "claude-dev: missing key at $KEY" >&2
-  echo "claude-dev: run the one-time setup in home-site/claude-access/INSTALL-dev.md" >&2
+  echo "claude-dev: run the one-time setup in home-infra/claude-access/INSTALL-dev.md" >&2
   exit 2
 fi
 if [[ "$#" -eq 0 ]]; then
