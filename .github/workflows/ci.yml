@@ -29,12 +29,61 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: false
+          # The version-bump guard below diffs against the base branch, which
+          # needs more than the default shallow clone.
+          fetch-depth: 0
 
       - name: Clone dev-common submodule
         run: git submodule update --init common
 
       - name: Version consistency
         run: make version-check
+
+      # A merge to main must be identifiable by version (bdh-org/dev-common#124).
+      #
+      # `version-check` above tests INTERNAL consistency -- Makefile VERSION
+      # against __init__.py / package.json / VERSION_TXT. It has no notion of a
+      # base branch, so it passes happily on a PR that changed code and forgot
+      # to bump. finzeug/panoptikon#569 merged that way: VERSION stayed on a
+      # number #567 had already tagged, tag-version.yml (which triggers only on
+      # Makefile changes) never fired, and the deployed image reported someone
+      # else's version.
+      #
+      # Skips repos with no VERSION line, so this cannot break a repo that does
+      # not version this way. Allows a pure bump PR, which is the fix rather
+      # than a violation.
+      - name: Version bumped
+        if: github.event_name == 'pull_request'
+        run: |
+          set -eu
+          if ! grep -qE '^VERSION[[:space:]]*=' Makefile 2>/dev/null; then
+            echo "no VERSION in Makefile -- this repo does not version here, skipping"
+            exit 0
+          fi
+          base="origin/${{ github.base_ref }}"
+          git fetch --quiet origin "${{ github.base_ref }}"
+          head_v=$(grep -m1 -E '^VERSION[[:space:]]*=' Makefile | sed -E 's/^VERSION[[:space:]]*=[[:space:]]*//')
+          base_v=$(git show "$base:Makefile" 2>/dev/null | grep -m1 -E '^VERSION[[:space:]]*=' | sed -E 's/^VERSION[[:space:]]*=[[:space:]]*//' || echo "")
+          if [ -z "$base_v" ]; then
+            echo "no VERSION on $base -- nothing to compare, skipping"
+            exit 0
+          fi
+          if [ "$head_v" != "$base_v" ]; then
+            echo "version bumped: $base_v -> $head_v"
+            exit 0
+          fi
+          # Unchanged. Only a complaint if the PR changed something else.
+          changed=$(git diff --name-only "$base"...HEAD | grep -v '^Makefile$' || true)
+          if [ -z "$changed" ]; then
+            echo "nothing changed but the Makefile -- nothing to version"
+            exit 0
+          fi
+          echo "::error::VERSION is still $base_v but this PR changes:"
+          echo "$changed" | sed 's/^/  /'
+          echo "::error::Run 'make bump-patch' -- never edit the version by hand."
+          echo "::error::Without a bump, tag-version.yml does not fire and the"
+          echo "::error::deployed image reports a version belonging to another change."
+          exit 1
 
       # Registry-image deploys deliver DAGs ONLY when the image bakes them: the
       # merge-to-main pipeline ships the image, and Airflow tasks docker-run into
