@@ -11,10 +11,19 @@ mkdir -p "${HOME}/.claude" "${HOME}/.config/ai/claude/identity/gh" "${HOME}/.con
 hostname > "$(dirname "$0")/.hostname"
 
 # Git hygiene on the HOST (idempotent), mirroring the container config: keep merged+
-# deleted branches from lingering locally. Guarded so a git hiccup can't abort init.
-if command -v git >/dev/null 2>&1; then
+# deleted branches from lingering locally. The definitions live in dev-common so the
+# host and the container assert the same thing rather than drifting apart as this
+# file gets copied from repo to repo (dev-common#97). Guarded so a git hiccup can't
+# abort init.
+HYGIENE="$(dirname "$0")/../common/devcontainer/git-hygiene.sh"
+if [ -f "$HYGIENE" ]; then
+  bash "$HYGIENE" || echo "WARN: git hygiene setup failed; run 'make setup-fix' to retry" >&2
+elif command -v git >/dev/null 2>&1; then
+  # Submodule not checked out yet -- apply what needs no dev-common, and say so.
   git config --global fetch.prune true
-  git config --global alias.gone '!git fetch -p && git branch -vv | awk "/: gone]/{print \$1}" | xargs -r git branch -D'
+  echo "WARN: $HYGIENE not found (dev-common submodule not checked out?); the" >&2
+  echo "      'git gone' alias was NOT installed. After 'git submodule update" >&2
+  echo "      --init', run 'make setup-fix' on the host." >&2
 fi
 
 # Ensure bind-mount source dirs exist (Docker fails if a mount source is

@@ -35,7 +35,7 @@ Shared Makefile targets. Requires `VERSION` variable in your Makefile.
 | `version.mk` | `bump-patch`, `bump-minor`, `bump-major`, `tag` | Semantic version management |
 | `utils.mk` | `show`, `list`, `ls`, `claude-install` | Common utilities |
 | `python.mk` | `env`, `env-info`, `list-imports`, `requirements`, `lint`, `lint-fix`, `format` | Python dev tools, conda env, production requirements |
-| `devcontainer.mk` | `dc-install`, `dc-up`, `dc-shell`, `dc-exec`, `dc-stop`, `dc-rm`, `dc-nuke` | Devcontainer lifecycle management via CLI |
+| `devcontainer.mk` | `dc-install`, `dc-up`, `dc-shell`, `dc-exec`, `dc-stop`, `dc-rm`, `dc-nuke`, `setup-verify`, `setup-fix` | Devcontainer lifecycle management via CLI; setup doctor for the global git config |
 
 ### github/ vs .github/
 
@@ -56,6 +56,7 @@ Composable scripts for setting up development containers. See [devcontainer/READ
 | File | Description |
 |------|-------------|
 | `setup-base.sh` | Core setup: tmux, Miniforge, shell aliases |
+| `git-hygiene.sh` | Global git config (`fetch.prune`, `git gone` alias); shared by the host and container setup, `--check` mode backs `make setup-verify` |
 | `setup-node.sh` | Claude Code CLI via npm |
 | `setup-python-dev.sh` | Python dev tools: ruff, pytest, jupyter, pipreqs |
 | `base-conda-packages.txt` | Minimal common packages |
