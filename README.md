@@ -49,6 +49,36 @@ Copy to your repo's `.github/workflows/` directory.
 |------|-------------|
 | `tag-version.yml` | Auto-create git tags when Makefile VERSION changes on main |
 
+#### Tag push rejected: "without `workflows` permission"
+
+A tag run can fail at the push with:
+
+```
+! [remote rejected] 1.3.97 -> 1.3.97 (refusing to allow a GitHub App to
+create or update workflow `.github/workflows/<file>.yml` without
+`workflows` permission)
+```
+
+This is not a problem with the tag. GitHub evaluates a **new ref's**
+workflow files against the current default branch, so when a commit
+touching `.github/workflows/` lands on main next to (typically seconds
+after) the version-bump merge, creating the tag trips the
+workflows-permission check. `GITHUB_TOKEN` can never be granted
+`workflows`, so no `permissions:` block helps and re-running the job
+cannot succeed. The workflow-change merge itself produces no tag run of
+its own — the `paths: Makefile` filter skips it — so the symptom is just
+a missing tag (bdh-org/dev-common#122; seen on finzeug/heller
+2026-07-22).
+
+The tag step detects this rejection and prints the remediation as a run
+annotation and job summary. The fix is a one-line manual push, from a
+clone authenticated with a PAT that has workflow scope, pointing the tag
+at the bump commit:
+
+```bash
+git tag 1.3.97 <bump-sha> && git push origin 1.3.97
+```
+
 ### devcontainer/
 
 Composable scripts for setting up development containers. See [devcontainer/README.md](devcontainer/README.md) for details.
