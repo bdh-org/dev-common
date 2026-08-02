@@ -20,6 +20,11 @@ name: agent-pr-revise (reusable)
 # installation token (home-infra#91); the Claude OAuth token comes from Vault
 # (coder-ai). Runs on the shared forge self-hosted runner.
 #
+# A run that pushes NO commit ends RED (dev-common#140): the "Verify the revision
+# pushed" post-step compares the PR's head SHA against the one resolved before the
+# agent ran, unconditionally and independent of gate_cmd, so a run cannot report
+# success on a revision that never landed. Either way it lands in the job summary.
+#
 # An individual request can opt up (or down) from the repo's defaults by putting
 # directives on their own lines in the `/revise` comment (dev-common#131):
 #
@@ -91,7 +96,10 @@ jobs:
           ref="$(printf '%s' "$pr" | python3 -c 'import sys,json;print(json.load(sys.stdin)["head"]["ref"])')"
           state="$(printf '%s' "$pr" | python3 -c 'import sys,json;print(json.load(sys.stdin)["state"])')"
           headrepo="$(printf '%s' "$pr" | python3 -c 'import sys,json;print(json.load(sys.stdin)["head"]["repo"]["full_name"])')"
-          echo "PR #${{ github.event.issue.number }} head branch = $ref (state: $state, head repo: $headrepo)"
+          # The head SHA BEFORE the agent runs -- the deliverable check below
+          # compares it against what the API reports afterwards (dev-common#140).
+          sha="$(printf '%s' "$pr" | python3 -c 'import sys,json;print(json.load(sys.stdin)["head"]["sha"])')"
+          echo "PR #${{ github.event.issue.number }} head branch = $ref @ $sha (state: $state, head repo: $headrepo)"
           if [ "$state" != "open" ]; then
             echo "::notice::PR is $state, not open -- ignoring /revise"
             echo "skip=true" >> "$GITHUB_OUTPUT"
@@ -100,6 +108,7 @@ jobs:
             echo "skip=true" >> "$GITHUB_OUTPUT"
           else
             echo "ref=$ref" >> "$GITHUB_OUTPUT"
+            echo "sha=$sha" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Acknowledge
@@ -275,6 +284,7 @@ jobs:
           echo "::notice::revision run budget -- model=$model max-turns=$turns (repo defaults: $DEFAULT_MODEL / $DEFAULT_TURNS)"
 
       - uses: anthropics/claude-code-action@v1
+        id: agent
         if: steps.pr.outputs.skip != 'true'
         env:
           CLAUDE_DEV_SSH: ${{ vars.CLAUDE_DEV_SSH }}
@@ -337,6 +347,77 @@ jobs:
             --model ${{ steps.budget.outputs.model }}
             --max-turns ${{ steps.budget.outputs.turns }}
             --allowedTools "Read,Write,Edit,Bash"
+
+      # Deliverable check (dev-common#140) -- UNCONDITIONAL, unlike the gate below.
+      # Here the deliverable is a pushed commit on the EXISTING PR, so compare the
+      # head SHA the API reports now against the one resolved before the agent ran.
+      # Same reasoning as agent-issue-to-pr: with an empty gate_cmd nothing but the
+      # agent's exit code judged the run, and an agent that makes the change, fails
+      # to push, and comments the patch instead exits 0 and goes green.
+      #
+      # A revision that deliberately changes nothing lands here too, and is red on
+      # purpose: /revise asks for commits, so "no commit" needs a human to look.
+      - name: Verify the revision pushed
+        if: ${{ !cancelled() && steps.agent.outcome != 'skipped' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.issue.number }}
+          REF: ${{ steps.pr.outputs.ref }}
+          BEFORE: ${{ steps.pr.outputs.sha }}
+        run: |
+          set -eu
+          python3 - <<'PY'
+          import json, os, time, urllib.request
+
+          repo, number = os.environ["REPO"], os.environ["PR"]
+          ref, before = os.environ["REF"], os.environ["BEFORE"]
+
+          def api(path):
+              req = urllib.request.Request(
+                  f"https://api.github.com/repos/{repo}/{path}",
+                  headers={"Authorization": "Bearer " + os.environ["GH_TOKEN"],
+                           "Accept": "application/vnd.github+json"})
+              with urllib.request.urlopen(req, timeout=30) as resp:
+                  return json.load(resp)
+
+          def say(*lines):
+              """Echo to the log AND the job summary, so the run list itself
+              distinguishes a pushed revision from a no-op one."""
+              for line in lines:
+                  print(line)
+              path = os.environ.get("GITHUB_STEP_SUMMARY")
+              if path:
+                  with open(path, "a") as fh:
+                      fh.write("\n".join(lines) + "\n")
+
+          for attempt in (1, 2):
+              pr = api(f"pulls/{number}")
+              after = pr["head"]["sha"]
+              # A push in the agent's final turn can trail the API by a moment; a
+              # false red would be as bad as the false green it replaces.
+              if after != before or attempt == 2:
+                  break
+              time.sleep(10)
+
+          if after != before:
+              say(f"### Revision pushed to PR #{number}",
+                  f"`{ref}` {before[:7]} -> {after[:7]} -- {pr['html_url']}")
+              raise SystemExit(0)
+
+          why = ("the push was rejected (e.g. the App token lacks a permission "
+                 "this change needs, such as `workflows: write`), the agent "
+                 "declined, or it ran out of turns first")
+          print(f"::error::PR #{number} head is still {before[:7]} -- no revision "
+                f"commit landed: {why}")
+          say(f"### No revision commit on PR #{number}",
+              f"`{ref}` is still at {before[:7]}: {why}.",
+              "",
+              "This run is red because nothing landed on the PR, not because the "
+              "agent crashed. Read the agent's comment on the PR before "
+              "re-requesting -- a repeat without a fix re-does the same work.")
+          raise SystemExit(1)
+          PY
 
       # Authoritative dev-tier gate (post-step), only for repos with a gate command.
       # gate_cmd is the full command sans branch (e.g. ".../svcdev-gate.sh hog");

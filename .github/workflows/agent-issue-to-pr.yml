@@ -11,6 +11,11 @@ name: agent-issue-to-pr (reusable)
 # GitHub ops (checkout/push/PR/merge) on a per-run bdh-org-coder App token
 # (home-infra#91). An App-token merge still triggers the registry-image deploy.
 #
+# A run that opens NO pull request ends RED (dev-common#140): the "Verify a PR
+# exists" post-step asks the API what exists on the agent's branch, unconditionally
+# and independent of gate_cmd, so a run cannot report success on a deliverable it
+# never produced. Either way the outcome lands in the job summary.
+#
 # An individual issue can opt up (or down) from the repo's defaults by putting
 # directives on their own lines in the issue body (dev-common#131):
 #
@@ -249,6 +254,7 @@ jobs:
           echo "::notice::agent run budget -- model=$model max-turns=$turns (repo defaults: $DEFAULT_MODEL / $DEFAULT_TURNS)"
 
       - uses: anthropics/claude-code-action@v1
+        id: agent
         env:
           CLAUDE_DEV_SSH: ${{ vars.CLAUDE_DEV_SSH }}
           KEY_B64: ${{ steps.devkey.outputs.claude_dev_key_b64 }}
@@ -295,6 +301,111 @@ jobs:
             --model ${{ steps.budget.outputs.model }}
             --max-turns ${{ steps.budget.outputs.turns }}
             --allowedTools "Read,Write,Edit,Bash"
+
+      # Deliverable check (dev-common#140) -- UNCONDITIONAL, unlike the gate below.
+      # Six repos call this reusable with an EMPTY gate_cmd, so for them the gate
+      # step is skipped and the agent's own exit code was the only verdict: a run
+      # that implemented the issue, failed to push, posted the finished patch as an
+      # issue comment and exited 0 still went GREEN (dev-common#131, three times on
+      # 2026-08-02 -- the green status read as "not picked up yet", so the issue was
+      # re-triggered twice and each retry re-did the work and re-spent the shared
+      # subscription allowance). And even where the gate does run, it verifies the
+      # DEV TIER, not this run's stated deliverable.
+      #
+      # So ask GitHub what exists rather than trusting an exit code or grepping the
+      # agent's log (the verification-discipline skill). No PR = red, and the red
+      # run is the signal that stops the pointless retry. A run that legitimately
+      # cannot produce a PR (a push the App token may not make) must end red too:
+      # the agent's explanatory comment is right, the green status was the lie.
+      #
+      # Runs whenever the agent ran, pass or fail -- a max-turns death is already
+      # red, but the summary should still name the missing deliverable. Skipped
+      # only when the agent never ran at all (Vault/checkout failure upstream).
+      - name: Verify a PR exists
+        if: ${{ !cancelled() && steps.agent.outcome != 'skipped' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          OWNER: ${{ github.repository_owner }}
+          BRANCH: agent/issue-${{ github.event.issue.number }}
+          ISSUE: ${{ github.event.issue.number }}
+        run: |
+          set -eu
+          python3 - <<'PY'
+          import json, os, time, urllib.error, urllib.request
+
+          repo, owner = os.environ["REPO"], os.environ["OWNER"]
+          branch, issue = os.environ["BRANCH"], os.environ["ISSUE"]
+
+          def api(path):
+              """GET one API path; None on 404 so a missing branch is answerable."""
+              req = urllib.request.Request(
+                  f"https://api.github.com/repos/{repo}/{path}",
+                  headers={"Authorization": "Bearer " + os.environ["GH_TOKEN"],
+                           "Accept": "application/vnd.github+json"})
+              try:
+                  with urllib.request.urlopen(req, timeout=30) as resp:
+                      return json.load(resp)
+              except urllib.error.HTTPError as exc:
+                  if exc.code == 404:
+                      return None
+                  raise
+
+          def say(*lines):
+              """Echo to the log AND the job summary, so the run list itself
+              distinguishes 'PR #N opened' from 'no PR'."""
+              for line in lines:
+                  print(line)
+              path = os.environ.get("GITHUB_STEP_SUMMARY")
+              if path:
+                  with open(path, "a") as fh:
+                      fh.write("\n".join(lines) + "\n")
+
+          # state=all, not just open: a PR merged (by a human, or by the
+          # agent-deploy auto-merge of an earlier run) is a delivered PR, not a
+          # missing one, and a closed-unmerged one is worth naming in the failure.
+          pulls = []
+          for attempt in (1, 2):
+              pulls = api(f"pulls?state=all&head={owner}:{branch}&per_page=100") or []
+              if pulls or attempt == 2:
+                  break
+              # A PR opened in the agent's final turn can trail the list endpoint by
+              # a moment; a false red here would be as bad as the false green it
+              # replaces.
+              time.sleep(10)
+
+          landed = ([p for p in pulls if p["state"] == "open"]
+                    or [p for p in pulls if p.get("merged_at")])
+          if landed:
+              pr = landed[0]
+              state = ("merged" if pr.get("merged_at")
+                       else "draft" if pr.get("draft") else "open")
+              say(f"### PR #{pr['number']} opened ({state})",
+                  f"[{pr['title']}]({pr['html_url']}) -- head `{branch}`, issue #{issue}")
+              raise SystemExit(0)
+
+          closed = [p for p in pulls if p["state"] == "closed"]
+          if closed:
+              why = (f"PR #{closed[0]['number']} from this branch was closed "
+                     "without merging")
+          elif api(f"branches/{branch}") is not None:
+              why = ("the branch exists, so the push landed but no PR was opened -- "
+                     "the agent declined, or ran out of turns first")
+          else:
+              why = ("the branch does not exist, so nothing was pushed -- the push "
+                     "was rejected (e.g. the App token lacks a permission this "
+                     "change needs, such as `workflows: write`)")
+
+          print(f"::error::No pull request for issue #{issue}: {why}")
+          say(f"### No pull request opened for issue #{issue}",
+              f"Nothing to merge from `{branch}`: {why}.",
+              "",
+              "This run is red because the deliverable is missing, not because the "
+              "agent crashed. Read the agent's comment on the issue before "
+              "re-triggering -- a retry without a fix re-does the same work and "
+              "spends the allowance again.")
+          raise SystemExit(1)
+          PY
 
       # Authoritative dev-tier gate (post-step) -- re-runs the SAME gate as the final
       # verdict so the PR gets a real commit status regardless of the agent's turns.
