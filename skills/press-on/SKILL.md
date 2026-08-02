@@ -2,7 +2,7 @@
 name: press-on
 description: Carry an agreed queue forward without stopping to ask. Decide open choices yourself, record each as a named parameter, and continue. Use when work must progress unattended.
 when_to_use: Fired on a loop for unattended work, or invoked directly to resume a queue that has stalled on a question rather than on a failure.
-argument-hint: [what to work on, and what done means]
+argument-hint: "[what to work on, and what done means]"
 disallowed-tools: AskUserQuestion
 ---
 
