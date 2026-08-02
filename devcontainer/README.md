@@ -38,6 +38,29 @@ Core setup sourced by all projects:
 - Configures `.condarc` with conda-forge (strict channel priority)
 - Adds shell aliases (`gl`, `l`, `la`, `ll`)
 - Sets PATH priority (conda before `~/.local/bin`)
+- Applies the global git hygiene config via `git-hygiene.sh`
+
+### git-hygiene.sh
+
+Single source of truth for the global git config the setup scripts own —
+`fetch.prune` and the `git gone` alias. Run as a standalone script (not
+sourced) by both `setup-base.sh` (container) and `init-host.sh` (host), so
+the two can't drift apart.
+
+```bash
+bash "$COMMON/git-hygiene.sh"           # apply (idempotent)
+bash "$COMMON/git-hygiene.sh" --check   # report drift, change nothing, exit 1 if drifted
+```
+
+`git gone` deletes local branches whose upstream was merged and deleted on
+the remote. It **refuses to prune** — loudly, with a non-zero exit — when
+`git fetch -p` fails or the repo has no remote, rather than reporting success
+having done nothing from stale upstream state.
+
+Because `init-host.sh` only runs on a devcontainer rebuild, a machine set up
+before a config landed never receives it. `make setup-verify` / `make
+setup-fix` (see below) are the doctor for that; both work on the host and
+inside the container.
 
 ### setup-python-dev.sh
 
@@ -124,6 +147,16 @@ The setup scripts handle initial container creation. For ongoing environment man
 |--------|-------------|
 | `make env` | Install/refresh base conda packages, project packages, and dev tools |
 | `make env-info` | Show conda environment info and installed packages |
+
+### Setup Doctor
+
+From `make/devcontainer.mk`. Re-asserts the global git config the setup
+scripts install, without a devcontainer rebuild. Safe to run on the host.
+
+| Target | Description |
+|--------|-------------|
+| `make setup-verify` | Report drift in the global git hygiene config; exit 1 if drifted |
+| `make setup-fix` | (Re)assert it |
 
 ### Production Requirements
 

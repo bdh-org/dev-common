@@ -1,7 +1,31 @@
-.PHONY: dc-install dc-up dc-shell dc-exec dc-stop dc-rm dc-nuke dc-prune
+.PHONY: dc-install dc-up dc-shell dc-exec dc-stop dc-rm dc-nuke dc-prune setup-verify setup-fix
 
 # Dry-run guard for dc-prune; set DRY=0 to apply.
 DRY ?= 1
+
+COMMON_DIR ?= common
+
+# The doctor for the setup scripts' global git config (dev-common#97). Hosts set
+# up before a given config landed never get it -- init-host.sh only runs on a
+# devcontainer rebuild -- so there has to be a way to re-assert it on demand,
+# from the host as well as from inside the container. Resolves in dev-common
+# itself (./devcontainer) as well as in consumers (./common/devcontainer).
+GIT_HYGIENE = $(firstword $(wildcard $(COMMON_DIR)/devcontainer/git-hygiene.sh devcontainer/git-hygiene.sh))
+
+# Shared preamble: fail with a useful message rather than a bare "No such file".
+define _require_hygiene
+	@test -n "$(GIT_HYGIENE)" || { \
+	  echo "git-hygiene.sh not found -- run 'git submodule update --init $(COMMON_DIR)' first" >&2; \
+	  exit 1; }
+endef
+
+setup-verify: ## check this machine's global git hygiene config (fetch.prune, `git gone`)
+	$(call _require_hygiene)
+	@bash $(GIT_HYGIENE) --check
+
+setup-fix: ## (re)assert this machine's global git hygiene config
+	$(call _require_hygiene)
+	@bash $(GIT_HYGIENE)
 
 dc-install: ## Install devcontainer CLI globally
 	npm install -g @devcontainers/cli

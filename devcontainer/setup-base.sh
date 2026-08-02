@@ -88,10 +88,11 @@ alias ll='ls -alFT'
 EOF
 fi
 
-# Git hygiene (idempotent): auto-prune deleted remote branches on fetch/pull, and a
-# `git gone` alias to drop local branches whose upstream was merged+deleted -- keeps
-# checkouts from piling up stale branches after PRs merge on GitHub.
-git config --global fetch.prune true
-git config --global alias.gone '!git fetch -p && git branch -vv | awk "/: gone]/{print \$1}" | xargs -r git branch -D'
+# Git hygiene (idempotent): fetch.prune + the `git gone` alias. The definitions
+# live in git-hygiene.sh so the container and the HOST (init-host.sh) assert the
+# same thing -- see dev-common#97. Run as a child process, not sourced: it sets
+# its own shell options.
+echo "==> Configuring git hygiene..."
+bash "$(dirname "${BASH_SOURCE[0]}")/git-hygiene.sh"
 
 echo "==> Base setup complete"
