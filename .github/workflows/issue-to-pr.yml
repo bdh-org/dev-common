@@ -1,0 +1,37 @@
+name: agent-issue-to-pr (wrapper)
+# Thin wrapper (home-infra#123; dev-common#132): owns the `issues: [labeled]`
+# trigger and the agent-pr label filter; the pipeline itself is the dev-common
+# reusable (one source of truth, same shape as tag-version + pr-revise).
+#
+# gate_cmd is empty: dev-common is not in the svc-dev tier, so there is no
+# deploy+smoke gate to run. An empty gate also disables agent-deploy auto-merge
+# in the reusable, which is why this repo carries only the agent-pr label --
+# the agent opens a PR and a human merges it (same posture as home-infra).
+#
+# FILENAME NOTE: every other repo calls its wrapper agent-issue-to-pr.yml, but
+# in dev-common that path IS the reusable, so the wrapper lives here as
+# issue-to-pr.yml -- exactly as the revise wrapper lives at pr-revise.yml.
+# Same behavior, different filename -- do not "fix" this.
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  contents: write        # push the agent's branch
+  pull-requests: write   # open the PR
+  issues: write          # comment status back on the issue
+  statuses: write        # gate commit status (unused here; harmless)
+  id-token: write        # claude-code-action mints a GitHub OIDC token
+
+concurrency:
+  group: agent-issue-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  agent:
+    if: github.event.label.name == 'agent-pr' || github.event.label.name == 'agent-deploy'
+    uses: bdh-org/dev-common/.github/workflows/agent-issue-to-pr.yml@main
+    with:
+      # no deployable dev tier -> no gate, no agent-deploy auto-merge
+      gate_cmd: ""
+    secrets: inherit
