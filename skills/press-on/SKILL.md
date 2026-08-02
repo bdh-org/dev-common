@@ -2,6 +2,7 @@
 name: press-on
 description: Carry an agreed queue forward without stopping to ask. Decide open choices yourself, record each as a named parameter, and continue. Use when work must progress unattended.
 when_to_use: Fired on a loop for unattended work, or invoked directly to resume a queue that has stalled on a question rather than on a failure.
+argument-hint: [what to work on, and what done means]
 disallowed-tools: AskUserQuestion
 ---
 
@@ -18,7 +19,16 @@ composing a question, you have found a decision you are supposed to make.
 
 ## 1. Establish the queue
 
-Work out what is actually in flight before doing anything:
+**If you were given an argument, that argument is the queue.** It names the work and,
+usually, what finishing looks like. Take it literally: if it says take an issue to a
+merged PR, merging is authorised for that work; if it says open a PR, stop at the PR.
+Where it is silent on how far to go, default to a green PR and leave the merge.
+
+When a tick finds that stated work already complete, say so in one line and stop for
+this tick rather than inventing adjacent work. Starting unrequested initiatives
+unattended is its own failure.
+
+With no argument, work out what is actually in flight before doing anything:
 
 - the current branch and its uncommitted or unpushed work
 - open PRs you own, especially any that are red or have unaddressed review comments
@@ -115,8 +125,14 @@ Anything else means there is a next item, and you should be working on it.
 
 ## Notes on running this
 
-- Fired on a loop (`/loop 30m /press-on`), each tick re-injects these instructions at the
-  top of the turn, which is far more reliable than a rule read once at session start.
+- Fired on a loop (`/loop 20m /press-on <work>`), each tick re-injects these instructions
+  at the top of the turn, which is far more reliable than a rule read once at session
+  start. Loop ticks fire only when the session is idle, so a tick never interrupts work
+  in progress: it fires precisely when a turn has ended, which is the stall it exists to
+  catch. Read the interval as "the most time a single stall can cost".
+- State what done means in the argument. "Work issue #42" leaves the finish line to
+  interpretation; "take #42 to a merged PR with CI green" does not, and it is also how
+  merge authorisation is granted.
 - Do not pin this skill to a cheap model. It makes decisions that persist in the codebase.
   Control cost with the loop interval and, for headless runs, `--max-budget-usd` -- not by
   downgrading the model doing the thinking.
