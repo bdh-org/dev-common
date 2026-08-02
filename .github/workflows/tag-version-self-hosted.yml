@@ -48,10 +48,51 @@ jobs:
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
+      # The push can be rejected for a reason that has nothing to do with the
+      # tag: GitHub evaluates a NEW ref's workflow files against the current
+      # default branch, so a commit touching .github/workflows/ that landed on
+      # main next to the bump makes tag creation trip the workflows-permission
+      # check. GITHUB_TOKEN can never hold `workflows`, so no `permissions:`
+      # block and no re-run gets past it -- the only fix is a manual tag push
+      # with a PAT. Left bare, the run dies on an opaque git error and the tag
+      # silently goes missing (bdh-org/dev-common#122; hit on finzeug/heller
+      # 2026-07-22), so name the cause and the remediation.
       - name: Create and push tag
         if: steps.check_tag.outputs.exists == 'false'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag "${{ steps.version.outputs.version }}"
-          git push origin "${{ steps.version.outputs.version }}"
+          git tag "$VERSION"
+          sha=$(git rev-parse HEAD)
+          set +e
+          git push origin "$VERSION" >push.log 2>&1
+          status=$?
+          set -e
+          cat push.log
+          [ "$status" = 0 ] && exit 0
+          if grep -q 'without .workflows. permission' push.log; then
+            echo "::error::Tag $VERSION was NOT created. The push was rejected by the"
+            echo "::error::workflow-file rule, not by anything wrong with the tag: a commit"
+            echo "::error::touching .github/workflows/ landed on main next to this version"
+            echo "::error::bump, and GitHub checks a new ref's workflow files against the"
+            echo "::error::default branch. GITHUB_TOKEN can never hold 'workflows' permission,"
+            echo "::error::so re-running this job cannot help (bdh-org/dev-common#122)."
+            echo "::error::Push the tag by hand with a PAT that has workflow scope:"
+            echo "::error::  git tag $VERSION $sha && git push origin $VERSION"
+            {
+              echo "### Tag \`$VERSION\` was not created"
+              echo
+              echo "Push rejected by GitHub's workflow-file rule — a workflow change"
+              echo "landed on main next to the bump (bdh-org/dev-common#122)."
+              echo "Re-running will not help. Push the tag by hand with a PAT:"
+              echo
+              echo '```'
+              echo "git tag $VERSION $sha && git push origin $VERSION"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::error::Tag $VERSION was NOT created -- git push failed (see log above)."
+          fi
+          exit "$status"

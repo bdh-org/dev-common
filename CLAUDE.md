@@ -149,6 +149,14 @@ docker-compose image tagging. `make bump-patch` increments and auto-commits.
 The `tag-version.yml` workflow (reusable from dev-common) creates git tags
 on push to main.
 
+One known failure: if a commit touching `.github/workflows/` lands on main
+next to a bump merge, the tag push is rejected ("without `workflows`
+permission") because GitHub checks a new ref's workflow files against the
+default branch. `GITHUB_TOKEN` can never hold `workflows`, so re-running does
+not help — push the tag by hand with a PAT pointing at the bump commit. The
+tag step prints this remediation itself; see dev-common's README
+(bdh-org/dev-common#122).
+
 ### P9: Devcontainer setup chain
 Four sequential steps initialize the development environment:
 1. `init-host.sh` — runs on HOST: creates credential dirs, extracts macOS
