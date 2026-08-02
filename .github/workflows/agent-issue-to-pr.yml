@@ -10,6 +10,14 @@ name: agent-issue-to-pr (reusable)
 # issue. Identity: Claude OAuth from Vault (kv/ai/coder/anthropic via coder-ai);
 # GitHub ops (checkout/push/PR/merge) on a per-run bdh-org-coder App token
 # (home-infra#91). An App-token merge still triggers the registry-image deploy.
+#
+# An individual issue can opt up (or down) from the repo's defaults by putting
+# directives on their own lines in the issue body (dev-common#131):
+#
+#   agent-model: sonnet     # opus | sonnet | haiku, or the full model id
+#   agent-turns: 120        # clamped to [10, 200]
+#
+# See the "Resolve model + turn budget" step for the allowlist and the clamp.
 on:
   workflow_call:
     inputs:
@@ -46,14 +54,25 @@ on:
         default: ""
       max_turns:
         description: >
-          Claude Code --max-turns budget for the agent run. The default caps cost on
-          small issues (~50 turns is plenty for a docs fix or config change); repos
-          whose agent issues are feature-scale (new adapters, cross-cutting refactors)
-          opt up in their thin wrapper -- 4 of 6 hog runs died at 50 on 2026-07-17
-          (finzeug/hog#335).
+          Default Claude Code --max-turns budget for the agent run, and the fallback
+          when an issue asks for something unusable. The default caps cost on small
+          issues (~50 turns is plenty for a docs fix or config change); repos whose
+          agent issues are feature-scale (new adapters, cross-cutting refactors) opt
+          up in their thin wrapper -- 4 of 6 hog runs died at 50 on 2026-07-17
+          (finzeug/hog#335). Prefer a per-issue `agent-turns:` directive over raising
+          this: a repo-wide floor makes every small issue pay the big ceiling too
+          (dev-common#131).
         type: number
         required: false
         default: 50
+      model:
+        description: >
+          Default Claude model for the agent run, and the fallback when an issue asks
+          for one outside the allowlist. Must itself be an allowlisted value (see the
+          "Resolve model + turn budget" step) or it is ignored in favour of Opus.
+        type: string
+        required: false
+        default: claude-opus-5
 
 jobs:
   agent:
@@ -141,6 +160,94 @@ jobs:
           DOCKER_CONFIG: /tmp/docker-config-${{ github.run_id }}
         run: echo "${{ steps.regpw.outputs.registry_pw }}" | docker login registry.home.arpa -u runner --password-stdin
 
+      # Per-issue cost profile (dev-common#131). The issue body may carry
+      #   agent-model: sonnet
+      #   agent-turns: 120
+      # on their own lines, so the rare feature-scale issue opts up without every
+      # small issue in the repo paying that ceiling (hog carried max_turns: 150 for
+      # exactly that reason).
+      #
+      # The issue body is an INPUT that steers model choice and spend, so it is
+      # never passed through: the model must match an allowlist and the turn budget
+      # is clamped to [10, 200]. Anything unrecognised warns and falls back to the
+      # workflow default rather than failing the run -- an absent or malformed
+      # directive is byte-for-byte the previous behaviour. The body reaches the
+      # script through env, not `${{ }}`, which would splice issue text into the
+      # shell source.
+      #
+      # agent-pr-revise.yml carries the same block against the comment body; these
+      # two files duplicate their step chain by design (no composite action --
+      # cross-repo private actions need an org-wide access grant this does not).
+      - name: Resolve model + turn budget
+        id: budget
+        env:
+          BODY: ${{ github.event.issue.body }}
+          DEFAULT_MODEL: ${{ inputs.model }}
+          DEFAULT_TURNS: ${{ inputs.max_turns }}
+        run: |
+          set -eu
+          MIN_TURNS=10
+          MAX_TURNS=200
+
+          # One directive out of the body: line-anchored, case-insensitive, first
+          # match wins. Fenced code blocks are stripped first, so an issue that
+          # *documents* the directives (dev-common#131 itself does, in a fence) does
+          # not accidentally request them.
+          directive() {
+            printf '%s\n' "$BODY" | tr -d '\r' \
+              | awk '/^[[:space:]]*```/ { fence = !fence; next } !fence' \
+              | sed -nE "s/^[[:space:]]*$1:[[:space:]]*([^[:space:]]+).*/\1/Ip" \
+              | head -1
+          }
+
+          # Allowlist. Applied to the repo default too, so a wrapper typo cannot
+          # smuggle an arbitrary --model value in either.
+          allowlisted() {
+            case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
+              opus|claude-opus-5)               echo claude-opus-5 ;;
+              sonnet|claude-sonnet-5)           echo claude-sonnet-5 ;;
+              haiku|claude-haiku-4-5*)          echo claude-haiku-4-5-20251001 ;;
+              *)                                echo "" ;;
+            esac
+          }
+
+          model="$(allowlisted "$DEFAULT_MODEL")"
+          if [ -z "$model" ]; then
+            echo "::warning::workflow default model '$DEFAULT_MODEL' is not allowlisted -- using claude-opus-5"
+            model=claude-opus-5
+          fi
+          want="$(directive agent-model)"
+          if [ -n "$want" ]; then
+            picked="$(allowlisted "$want")"
+            if [ -n "$picked" ]; then model="$picked"
+            else echo "::warning::agent-model '$want' is not allowlisted -- using $model"; fi
+          fi
+
+          turns="$DEFAULT_TURNS"
+          want="$(directive agent-turns)"
+          case "$want" in
+            "") ;;
+            *[!0-9]*)
+              echo "::warning::agent-turns '$want' is not a number -- using $turns" ;;
+            # 5+ digits is over the ceiling by any reading; short-circuit rather than
+            # feed a huge literal to $(( )).
+            ?????*)
+              turns="$MAX_TURNS"
+              echo "::warning::agent-turns $want clamped to $turns (allowed $MIN_TURNS-$MAX_TURNS)" ;;
+            *)
+              asked=$((10#$want))
+              turns="$asked"
+              [ "$turns" -ge "$MIN_TURNS" ] || turns="$MIN_TURNS"
+              [ "$turns" -le "$MAX_TURNS" ] || turns="$MAX_TURNS"
+              [ "$turns" -eq "$asked" ] || echo "::warning::agent-turns $asked clamped to $turns (allowed $MIN_TURNS-$MAX_TURNS)"
+              ;;
+          esac
+
+          echo "model=$model" >> "$GITHUB_OUTPUT"
+          echo "turns=$turns" >> "$GITHUB_OUTPUT"
+          # Echoed so a run's cost profile is readable after the fact, not inferred.
+          echo "::notice::agent run budget -- model=$model max-turns=$turns (repo defaults: $DEFAULT_MODEL / $DEFAULT_TURNS)"
+
       - uses: anthropics/claude-code-action@v1
         env:
           CLAUDE_DEV_SSH: ${{ vars.CLAUDE_DEV_SSH }}
@@ -185,8 +292,8 @@ jobs:
             - if it is STILL failing after 3 attempts, open a DRAFT pull request whose body
               explains what is still red (include the gate's final output).
           claude_args: |
-            --model claude-opus-5
-            --max-turns ${{ inputs.max_turns }}
+            --model ${{ steps.budget.outputs.model }}
+            --max-turns ${{ steps.budget.outputs.turns }}
             --allowedTools "Read,Write,Edit,Bash"
 
       # Authoritative dev-tier gate (post-step) -- re-runs the SAME gate as the final
