@@ -26,7 +26,8 @@ name: agent-pr-revise (reusable)
 # success on a revision that never landed. Either way it lands in the job summary.
 #
 # An individual request can opt up (or down) from the repo's defaults by putting
-# directives on their own lines in the `/revise` comment (dev-common#131):
+# directives on their own lines in the `/revise` comment, unindented and outside any
+# code block (dev-common#131):
 #
 #   agent-model: sonnet     # opus | sonnet | haiku, or the full model id
 #   agent-turns: 120        # clamped to [10, 200]
@@ -213,6 +214,14 @@ jobs:
       # than failing the run, so an absent or malformed directive behaves exactly as
       # before. The body arrives via env, not `${{ }}`, which would splice comment
       # text into the shell source.
+      #
+      # KEEP IN SYNC with the same step in agent-issue-to-pr.yml: it reads the issue
+      # body instead of the `/revise` comment, and the script below is
+      # byte-identical apart from the word "revision"/"agent" in the closing
+      # ::notice::. These two files duplicate their step chain by design -- no
+      # composite action, because cross-repo private actions need an org-wide access
+      # grant this does not have -- so the model allowlist lives in two places and
+      # drifts silently unless both are edited together (dev-common#142).
       - name: Resolve model + turn budget
         id: budget
         if: steps.pr.outputs.skip != 'true'
@@ -221,28 +230,59 @@ jobs:
           DEFAULT_MODEL: ${{ inputs.model }}
           DEFAULT_TURNS: ${{ inputs.max_turns }}
         run: |
+          # NO `pipefail`, deliberately: `head -1` closes the pipe on the first
+          # match and SIGPIPEs sed, which pipefail would turn into a failed step.
+          # With `set -eu` alone the pipeline exits 0. Do not "harden" this.
           set -eu
           MIN_TURNS=10
           MAX_TURNS=200
 
-          # One directive out of the body: line-anchored, case-insensitive, first
-          # match wins. Fenced code blocks are stripped first, so a comment that
-          # *quotes* a directive does not accidentally request it.
+          # One directive out of the body: anchored at COLUMN 0, case-insensitive,
+          # first match wins. Fenced code blocks are stripped, and the column-0
+          # anchor drops markdown's other quoting forms -- four-space indented
+          # blocks, `>` blockquotes, list items -- so a body that *documents* or
+          # *quotes* the directives (dev-common#131 and #142 both do) cannot
+          # accidentally request them (dev-common#142). `sed -E ... /I` is a GNU
+          # extension: fine on the Ubuntu runner, would need rewriting if this
+          # block is ever reused on BSD.
           directive() {
             printf '%s\n' "$BODY" | tr -d '\r' \
               | awk '/^[[:space:]]*```/ { fence = !fence; next } !fence' \
-              | sed -nE "s/^[[:space:]]*$1:[[:space:]]*([^[:space:]]+).*/\1/Ip" \
+              | sed -nE "s/^$1:[[:space:]]*([^[:space:]]+).*/\1/Ip" \
               | head -1
           }
 
-          # Allowlist. Applied to the repo default too, so a wrapper typo cannot
-          # smuggle an arbitrary --model value in either.
+          # An unterminated fence leaves that toggle open, so every directive below
+          # it is dropped. Say so instead of ignoring them silently.
+          if printf '%s\n' "$BODY" | tr -d '\r' \
+               | awk '/^[[:space:]]*```/ { fence = !fence } END { exit !fence }'; then
+            echo "::warning::body has an unclosed \`\`\` code fence -- any directive below it is ignored"
+          fi
+
+          # Allowlist + clamp. BOTH are applied to the repo default as well, so a
+          # wrapper typo cannot smuggle in an arbitrary --model value or uncap spend
+          # any more than an over-eager body can (dev-common#142).
           allowlisted() {
             case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
               opus|claude-opus-5)               echo claude-opus-5 ;;
               sonnet|claude-sonnet-5)           echo claude-sonnet-5 ;;
               haiku|claude-haiku-4-5*)          echo claude-haiku-4-5-20251001 ;;
               *)                                echo "" ;;
+            esac
+          }
+
+          # Echoes the clamped turn count, or "" for a non-number.
+          clamp_turns() {
+            case "$1" in
+              ""|*[!0-9]*) echo "" ;;
+              # 5+ digits is over the ceiling by any reading; short-circuit rather
+              # than feed a huge literal to $(( )).
+              ?????*) echo "$MAX_TURNS" ;;
+              *)
+                n=$((10#$1))
+                [ "$n" -ge "$MIN_TURNS" ] || n="$MIN_TURNS"
+                [ "$n" -le "$MAX_TURNS" ] || n="$MAX_TURNS"
+                echo "$n" ;;
             esac
           }
 
@@ -258,25 +298,23 @@ jobs:
             else echo "::warning::agent-model '$want' is not allowlisted -- using $model"; fi
           fi
 
-          turns="$DEFAULT_TURNS"
+          turns="$(clamp_turns "$DEFAULT_TURNS")"
+          if [ -z "$turns" ]; then
+            turns="$MAX_TURNS"
+            echo "::warning::workflow default max_turns '$DEFAULT_TURNS' is not a number -- using $turns"
+          elif [ "$turns" != "$DEFAULT_TURNS" ]; then
+            echo "::warning::workflow default max_turns $DEFAULT_TURNS clamped to $turns (allowed $MIN_TURNS-$MAX_TURNS)"
+          fi
           want="$(directive agent-turns)"
-          case "$want" in
-            "") ;;
-            *[!0-9]*)
-              echo "::warning::agent-turns '$want' is not a number -- using $turns" ;;
-            # 5+ digits is over the ceiling by any reading; short-circuit rather than
-            # feed a huge literal to $(( )).
-            ?????*)
-              turns="$MAX_TURNS"
-              echo "::warning::agent-turns $want clamped to $turns (allowed $MIN_TURNS-$MAX_TURNS)" ;;
-            *)
-              asked=$((10#$want))
-              turns="$asked"
-              [ "$turns" -ge "$MIN_TURNS" ] || turns="$MIN_TURNS"
-              [ "$turns" -le "$MAX_TURNS" ] || turns="$MAX_TURNS"
-              [ "$turns" -eq "$asked" ] || echo "::warning::agent-turns $asked clamped to $turns (allowed $MIN_TURNS-$MAX_TURNS)"
-              ;;
-          esac
+          if [ -n "$want" ]; then
+            picked="$(clamp_turns "$want")"
+            if [ -z "$picked" ]; then
+              echo "::warning::agent-turns '$want' is not a number -- using $turns"
+            else
+              [ "$picked" = "$want" ] || echo "::warning::agent-turns $want clamped to $picked (allowed $MIN_TURNS-$MAX_TURNS)"
+              turns="$picked"
+            fi
+          fi
 
           echo "model=$model" >> "$GITHUB_OUTPUT"
           echo "turns=$turns" >> "$GITHUB_OUTPUT"
