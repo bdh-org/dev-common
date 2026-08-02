@@ -2,6 +2,9 @@
 name: watch
 description: Cheap, exit-early polling for /loop ticks. Runs ONE probe against a named target — a repo's CI, a deploy, a PR's checks, the open-PR queue — and stops in a single line when nothing has changed; it only gathers detail when the probe went red or moved. Use for "is CI green?", "did the deploy land?", "any new PRs to review?". Not for fixing what it finds.
 model: haiku
+# A loop tick runs unattended: a question would end the turn and stall the loop
+# until a human returns, silently. Removing the tool makes that impossible.
+disallowed-tools: AskUserQuestion
 ---
 
 # watch — one probe per tick, then stop
@@ -45,7 +48,7 @@ command:
 | `<org>/<repo> deploy` | last `ci-build` run on `main` — merge to main *is* the deploy (P10), so its conclusion is whether the deploy landed |
 | `<org>/<repo> pr <n>` | `gh pr checks <n> --repo <org>/<repo>` |
 | `<org>/<repo> prs` | `gh pr list --repo <org>/<repo> --json number,title,updatedAt` |
-| anything else | ask once what single command answers it, then use only that |
+| anything else | derive the single probe from the target string. If it genuinely cannot be resolved, say so in one line and end the tick -- never ask |
 
 `gh` has no ambient auth here — pass the org-scoped token inline (see
 `CLAUDE.md`): `bdh-org` → `gh-bdh-org.token`, `finzeug` → `gh-finzeug.token`.
