@@ -1,11 +1,20 @@
 name: agent-issue-to-pr (reusable)
 # Reusable (workflow_call) implementation of the headless issue -> PR pipeline
-# (home-infra#53/#123). A thin per-repo wrapper owns the `issues: [labeled]` trigger
-# and the agent-pr/agent-deploy label filter and CALLS this, so the logic lives here
-# once instead of copied into every repo (matches tag-version + agent-pr-revise).
+# (home-infra#53/#123). A thin per-repo wrapper owns the triggers -- `issues:
+# [labeled]` with the agent-pr/agent-deploy label filter, and `issue_comment:
+# [created]` with the `/agent` verb + commenter trust filter -- and CALLS this, so
+# the logic lives here once instead of copied into every repo (matches tag-version
+# + agent-pr-revise).
 #
-# Apply `agent-pr` (PR left for a human to merge) or `agent-deploy` (auto-merge on a
-# GREEN dev-tier gate) to an issue; claude-code-action@v1 runs headless on the forge
+# Two ways to start a run, same pipeline either way:
+#   * apply `agent-pr` (PR left for a human to merge) or `agent-deploy` (auto-merge
+#     on a GREEN dev-tier gate) to an issue; or
+#   * comment `/agent` on the issue (dev-common#143) -- symmetric with `/revise` on
+#     a PR. The label is not touched, and because `github.event.label.name` is empty
+#     on that path the agent-deploy auto-merge below never fires: the deploy trust
+#     tier stays a label decision.
+#
+# Then claude-code-action@v1 runs headless on the forge
 # self-hosted runner, implements the issue, self-gates, and opens a PR that links the
 # issue. Identity: Claude OAuth from Vault (kv/ai/coder/anthropic via coder-ai);
 # GitHub ops (checkout/push/PR/merge) on a per-run bdh-org-coder App token
@@ -16,12 +25,22 @@ name: agent-issue-to-pr (reusable)
 # and independent of gate_cmd, so a run cannot report success on a deliverable it
 # never produced. Either way the outcome lands in the job summary.
 #
-# An individual issue can opt up (or down) from the repo's defaults by putting
-# directives on their own lines in the issue body, unindented and outside any code
-# block (dev-common#131):
+# An individual run can opt up (or down) from the repo's defaults with directives on
+# their own lines, unindented and outside any code block (dev-common#131):
 #
 #   agent-model: sonnet     # opus | sonnet | haiku, or the full model id
 #   agent-turns: 120        # clamped to [10, 200]
+#
+# WHERE they are read from follows the trigger (dev-common#143): the `/agent` comment
+# that started the run, or the issue body on the label path. Only the triggering
+# comment -- a `/agent` carrying no directive gets the repo defaults rather than
+# inheriting an earlier comment's or the body's, because a budget belongs to a run
+# and not to the issue. The verb token is stripped from the first line, so both
+#
+#   /agent agent-turns: 150      and      /agent
+#                                         agent-turns: 150
+#
+# ask for the same thing.
 #
 # See the "Resolve model + turn budget" step for the allowlist and the clamp.
 on:
@@ -166,24 +185,32 @@ jobs:
           DOCKER_CONFIG: /tmp/docker-config-${{ github.run_id }}
         run: echo "${{ steps.regpw.outputs.registry_pw }}" | docker login registry.home.arpa -u runner --password-stdin
 
-      # Per-issue cost profile (dev-common#131). The issue body may carry
+      # Per-run cost profile (dev-common#131). The triggering text may carry
       #   agent-model: sonnet
       #   agent-turns: 120
       # on their own lines, so the rare feature-scale issue opts up without every
       # small issue in the repo paying that ceiling (hog carried max_turns: 150 for
       # exactly that reason).
       #
-      # The issue body is an INPUT that steers model choice and spend, so it is
-      # never passed through: the model must match an allowlist and the turn budget
-      # is clamped to [10, 200]. Anything unrecognised warns and falls back to the
+      # WHICH text depends on the trigger (dev-common#143): the `/agent` comment on
+      # an issue_comment run, the issue body on a labeled one. Reading the comment is
+      # the point of the verb -- the budget is scoped to the run that asked for it
+      # instead of sticking to the issue, and a re-run at a new budget is one action
+      # rather than "edit body, unlabel, relabel" (which silently runs against the
+      # PRE-edit body if done in the other order, because github.event.issue.body is
+      # a snapshot from the label event).
+      #
+      # That text is an INPUT that steers model choice and spend, so it is never
+      # passed through: the model must match an allowlist and the turn budget is
+      # clamped to [10, 200]. Anything unrecognised warns and falls back to the
       # workflow default rather than failing the run -- an absent or malformed
-      # directive is byte-for-byte the previous behaviour. The body reaches the
-      # script through env, not `${{ }}`, which would splice issue text into the
+      # directive is byte-for-byte the previous behaviour. It reaches the script
+      # through env, not `${{ }}`, which would splice issue/comment text into the
       # shell source.
       #
       # KEEP IN SYNC with the same step in agent-pr-revise.yml: it reads the
-      # `/revise` comment instead of the issue body, and the script below is
-      # byte-identical apart from the word "agent"/"revision" in the closing
+      # `/revise` comment only, and the script below is byte-identical apart from
+      # the BODY selection below and the word "agent"/"revision" in the closing
       # ::notice::. These two files duplicate their step chain by design -- no
       # composite action, because cross-repo private actions need an org-wide access
       # grant this does not have -- so the model allowlist lives in two places and
@@ -191,7 +218,13 @@ jobs:
       - name: Resolve model + turn budget
         id: budget
         env:
-          BODY: ${{ github.event.issue.body }}
+          # Both sources are passed and the script picks by event. NOT a
+          # `${{ cond && comment || issue }}` ternary: that falls through to the
+          # issue body whenever the comment side is falsy, which would quietly
+          # resurrect the sticky-body behaviour for an empty comment.
+          EVENT_NAME: ${{ github.event_name }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
           DEFAULT_MODEL: ${{ inputs.model }}
           DEFAULT_TURNS: ${{ inputs.max_turns }}
         run: |
@@ -201,6 +234,27 @@ jobs:
           set -eu
           MIN_TURNS=10
           MAX_TURNS=200
+
+          # Directives come from the `/agent` comment that started this run, or
+          # from the issue body when a label started it -- never both, so a
+          # `/agent` with no directive runs at the repo defaults instead of
+          # inheriting whatever an earlier comment or the body asked for.
+          # Last-request-wins applies only WITHIN the triggering text.
+          #
+          # The verb token is stripped from the FIRST line before parsing, so the
+          # natural one-liner works:
+          #   /agent agent-turns: 150
+          # Without it the column-0 anchor below (dev-common#142) would never see
+          # that directive -- the line starts with `/agent`, not `agent-turns:`.
+          # Only the first directive fits on the verb line; a second one still
+          # needs a line of its own.
+          if [ "$EVENT_NAME" = "issue_comment" ]; then
+            BODY="$(printf '%s\n' "$COMMENT_BODY" | sed -E '1s|^/agent[[:space:]]*||')"
+            echo "directive source: the /agent comment"
+          else
+            BODY="$ISSUE_BODY"
+            echo "directive source: the issue body"
+          fi
 
           # One directive out of the body: anchored at COLUMN 0, case-insensitive,
           # first match wins. Fenced code blocks are stripped, and the column-0
@@ -455,6 +509,11 @@ jobs:
       # agent-deploy trust tier: on a green gate, auto-merge (unless a protected path was
       # touched -> the shared script downgrades to manual review). Only for gated repos --
       # a no-gate repo never auto-merges (nothing verified the change).
+      #
+      # A `/agent`-comment run (dev-common#143) carries no label, so
+      # github.event.label.name is empty and this step is skipped: the comment verb
+      # starts a run, it does not grant the deploy trust tier. Ask for that with the
+      # agent-deploy label, as before.
       - name: Auto-merge on green gate (agent-deploy)
         if: github.event.label.name == 'agent-deploy' && inputs.gate_cmd != ''
         env:

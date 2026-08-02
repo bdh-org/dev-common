@@ -1,7 +1,26 @@
 name: agent-issue-to-pr (wrapper)
-# Thin wrapper (home-infra#123; dev-common#132): owns the `issues: [labeled]`
-# trigger and the agent-pr label filter; the pipeline itself is the dev-common
-# reusable (one source of truth, same shape as tag-version + pr-revise).
+# Thin wrapper (home-infra#123; dev-common#132): owns the triggers and the
+# label/commenter filters; the pipeline itself is the dev-common reusable (one
+# source of truth, same shape as tag-version + pr-revise).
+#
+# TWO entry points, both landing in the same reusable (dev-common#143):
+#   1. label `agent-pr` (or `agent-deploy`) on an issue -- the original path.
+#   2. a `/agent` comment on an issue -- symmetric with `/revise` on a PR, and
+#      the way to re-run an issue with a different budget:
+#
+#        /agent agent-turns: 150
+#
+#      The directives are read from THAT comment (see the reusable), so a re-run
+#      needs one action instead of "edit the body, remove the label, re-add it"
+#      -- an ordering trap, since `github.event.issue.body` is a snapshot from
+#      the label event. It also keeps the budget out of the issue body, where it
+#      would be sticky (applying to every later re-label) and would rewrite the
+#      specification to carry an operational knob.
+#
+# `/agent` is a trusted verb: like `/revise` it is reachable by anyone who can
+# comment, so it gates on author_association. It never auto-merges either --
+# the agent-deploy trust tier is a label decision, and on this path
+# `github.event.label.name` is empty.
 #
 # gate_cmd is empty: dev-common is not in the svc-dev tier, so there is no
 # deploy+smoke gate to run. An empty gate also disables agent-deploy auto-merge
@@ -15,6 +34,8 @@ name: agent-issue-to-pr (wrapper)
 on:
   issues:
     types: [labeled]
+  issue_comment:
+    types: [created]
 
 permissions:
   contents: write        # push the agent's branch
@@ -29,7 +50,19 @@ concurrency:
 
 jobs:
   agent:
-    if: github.event.label.name == 'agent-pr' || github.event.label.name == 'agent-deploy'
+    # Either the label path, or a `/agent` comment on an ISSUE from a trusted
+    # author. `issue.pull_request == null` is what keeps this disjoint from
+    # `/revise`, whose wrapper requires `!= null` -- so `/agent` on a PR does
+    # nothing and `/revise` is untouched. The `/agent` prefix also excludes the
+    # bot's own status comments, so a completion comment cannot self-trigger.
+    if: >
+      (github.event_name == 'issues' &&
+      (github.event.label.name == 'agent-pr' || github.event.label.name == 'agent-deploy'))
+      ||
+      (github.event_name == 'issue_comment' &&
+      github.event.issue.pull_request == null &&
+      startsWith(github.event.comment.body, '/agent') &&
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
     uses: bdh-org/dev-common/.github/workflows/agent-issue-to-pr.yml@main
     with:
       # no deployable dev tier -> no gate, no agent-deploy auto-merge
