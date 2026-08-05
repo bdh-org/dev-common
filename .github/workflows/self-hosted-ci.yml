@@ -55,7 +55,28 @@ jobs:
           clean: true            # default: git reset --hard && git clean -ffdx
 
       - name: Fetch dev-common submodule
-        run: git submodule update --init common
+        run: |
+          # Drop any submodule an earlier job left behind, then init only what
+          # this workflow wants.
+          #
+          # checkout's clean:true runs `git reset --hard && git clean -ffdx`, and
+          # NEITHER touches a populated submodule: its contents are a tracked
+          # gitlink, not untracked files, and reset does not recurse. Verified --
+          # after reset+clean a submodule stays populated AND at whatever commit
+          # it was left on.
+          #
+          # forge's _work/<repo>/<repo> is shared by every workflow for that repo,
+          # and agent-issue-to-pr / agent-pr-revise (also runs-on forge) init
+          # `--recursive`. So one agent run leaves every submodule on disk, and
+          # every later CI job inherits them at an arbitrary commit. Any test
+          # guarded on "is this submodule checked out?" then runs against unknown
+          # code -- silently (finzeug/heller#356).
+          #
+          # `common` is kept rather than deinited-and-refetched: it is wanted
+          # anyway, and re-cloning it on every job across the fleet is pure cost.
+          git submodule status 2>/dev/null | awk '{print $2}' | grep -vx common \
+            | xargs -r git submodule deinit -f -- 2>/dev/null || true
+          git submodule update --init common
 
       # Point CONDA_ROOT at the runner's REAL home rather than a hardcoded path:
       # github-runner's home isn't the assumed /home/github-runner on forge (it's
