@@ -31,6 +31,17 @@ on:
       test-path:
         type: string
         default: tests/
+      extra-submodules:
+        description: >
+          Space-separated submodule paths to init and pip-install beyond `common`,
+          e.g. "lib/ratecraft lib/ledger-io". ORDER MATTERS: they are installed
+          left to right, so a dependency comes before its dependent. Needs the
+          repo to set the VAULT_ADDR variable -- fetching them uses an org App
+          token, because GITHUB_TOKEN is scoped to this repo alone and cannot
+          read a sibling repo. Empty (the default) leaves every existing consumer
+          untouched.
+        type: string
+        default: ""
       ci-env-file:
         description: Minimal conda env file, used only when full-env is false
         type: string
@@ -74,9 +85,36 @@ jobs:
           #
           # `common` is kept rather than deinited-and-refetched: it is wanted
           # anyway, and re-cloning it on every job across the fleet is pure cost.
-          git submodule status 2>/dev/null | awk '{print $2}' | grep -vx common \
+          keep="common ${{ inputs.extra-submodules }}"
+          git submodule status 2>/dev/null | awk '{print $2}' \
+            | grep -vxF -f <(printf '%s\n' $keep) \
             | xargs -r git submodule deinit -f -- 2>/dev/null || true
           git submodule update --init common
+
+      # GITHUB_TOKEN is scoped to THIS repo, so it cannot read a sibling repo --
+      # which is what a cross-repo submodule is. The coder App is installed in
+      # every org and mints a ~1h installation token per org, the same mechanism
+      # the agent pipeline uses to hydrate submodules (home-infra#91).
+      - name: Mint an org token for the extra submodules
+        id: subtoken
+        if: inputs.extra-submodules != ''
+        env:
+          VAULT_ADDR: ${{ vars.VAULT_ADDR }}
+        run: /srv/github-runner/bin/mint-coder-app-token.sh ${{ github.repository_owner }}
+
+      - name: Fetch the extra submodules
+        if: inputs.extra-submodules != ''
+        env:
+          T: ${{ steps.subtoken.outputs.coder_token }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          # sync FIRST: the persistent runner workspace keeps submodule URLs in
+          # .git/modules/*/config and `submodule init` never overwrites them, so
+          # a URL corrected in .gitmodules would otherwise stay broken forever
+          # (bdh-org/dev-common#105).
+          git submodule sync -- ${{ inputs.extra-submodules }} || true
+          git -c "url.https://x-access-token:${T}@github.com/${OWNER}/.insteadOf=https://github.com/${OWNER}/" \
+            submodule update --init -- ${{ inputs.extra-submodules }}
 
       # Point CONDA_ROOT at the runner's REAL home rather than a hardcoded path:
       # github-runner's home isn't the assumed /home/github-runner on forge (it's
@@ -132,6 +170,17 @@ jobs:
           else
             echo "conda env $CI_ENV up to date (cache hit: $key)"
           fi
+
+      # Vendored siblings install from lib/ rather than PyPI, so requirements-prod
+      # deliberately omits them -- which meant every code path behind them was
+      # invisible to CI, degrading to a warning rather than a failure
+      # (finzeug/panoptikon#648).
+      - name: Install the extra submodules into the env
+        if: inputs.extra-submodules != ''
+        run: |
+          source "$CONDA_ROOT/etc/profile.d/conda.sh"
+          conda activate "$CI_ENV"
+          pip install ${{ inputs.extra-submodules }}
 
       - name: Version consistency
         run: make version-check
