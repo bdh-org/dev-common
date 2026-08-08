@@ -42,6 +42,35 @@ writes. These PATs authenticate as the `bdh-ai` service account; the
 ambient git identity (a personal token) must not be used for automated
 writes.
 
+## Saying which seat you are
+
+Every AI seat authenticates as the same `bdh-ai` account, so nothing GitHub
+records distinguishes them: an issue filed from any devcontainer reads
+`login: bdh-ai`, `type: User`, `performed_via_github_app: null`. Two
+mechanisms close that gap, one automatic and one yours to remember.
+
+**Commits and PRs — automatic, nothing to do.** `setup-claude-identity.sh`
+writes a container-local `~/.gitconfig-seat` setting `user.name` to
+`bdh-ai (architect)` or `bdh-ai (contractor/<repo>)`, derived from
+`PROJECT_NAME`. Only the display name varies; `user.email` stays `bdh-ai`
+for every seat.
+
+**Never set `user.name` or `user.email` in a repo's `.git/config`.** Repo
+checkouts are bind-mounted from the host, so a repo-local override is
+shared with the human's own session -- which is how two repos ended up
+attributing container commits to a person (bdh-org/home-infra#317). If a
+seat name looks wrong, fix `~/.gitconfig-seat`, never the repo.
+
+**Issues and issue comments — add a footer**, since these never touch git:
+
+```markdown
+<sub>filed from the <repo> devcontainer</sub>
+```
+
+Use the repo whose devcontainer you are running in, which is the directory
+your `CLAUDE.md` was loaded from -- not the repo the issue is filed against.
+They differ often: cross-repo work is normal from the architect workspace.
+
 ## Package Management
 - Install packages with `conda` (conda-forge) into the dev environment when possible.
 - Use `pip` only as a fallback when a package is not available on conda-forge.
