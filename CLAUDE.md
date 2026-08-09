@@ -15,6 +15,32 @@ Use a concise, descriptive title.
 
 Example: `feat: add user authentication`
 
+## Referring to issues and PRs
+
+**Every issue or PR number in text the user reads is a hyperlink, and says which
+it is.** Never a bare `#441`, and never a bare `hog#441`.
+
+```markdown
+PR [hog#441](https://github.com/finzeug/hog/pull/441)
+issue [slingshot#138](https://github.com/finzeug/slingshot/issues/138)
+```
+
+Two separate requirements, and both are needed:
+
+1. **A link.** Brian reads in a terminal, where markdown links are clickable. A
+   bare number costs him a manual lookup every single time.
+2. **The word "PR" or "issue" beside it.** Issues and PRs share one number
+   space, so `hog#441` cannot say which it is, and the rendered link text hides
+   the `/pull/` vs `/issues/` that would have told him. Grouping works too
+   ("PRs merged: ...", "Issues: ...").
+
+Org for the URL, from the repo's `origin`: `bdh-org` (home-infra, home-site,
+dev-common, devtemplate, brief, roy), `finzeug` (hog, oleo, canary, heller,
+panoptikon, refdims, ratecraft, ferret, freddyb, slingshot, ledger-io).
+
+This is here rather than in a memory note because it kept regressing when it was
+only a note. Brian has asked for it repeatedly.
+
 ## GitHub Authentication
 The devcontainer has **no ambient `gh` auth** — this is deliberate, not a
 misconfiguration. `GITHUB_TOKEN` is intentionally empty and `gh`'s
