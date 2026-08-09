@@ -49,7 +49,7 @@ if [ ! -f "$GITCONFIG" ]; then
 	helper =
 	helper = !/usr/bin/gh auth git-credential
 [include]
-	path = ~/.gitconfig-seat
+	path = ~/.gitconfig-role
 EOF
 fi
 
@@ -78,49 +78,62 @@ if [ -e "$HOME/.config/gh" ] && [ ! -L "$HOME/.config/gh" ]; then
 fi
 ln -sfn "$GH_DIR" "$HOME/.config/gh"
 
-# --- Per-seat commit attribution (bdh-org/home-infra#317) -------------------
+# --- Per-devcontainer commit attribution (bdh-org/home-infra#317) -----------
 #
-# The "seat" is the devcontainer, so the marker has to be container-local, and
-# neither obvious place is:
+# Which ROLE a session is acting in -- architect or contractor -- is a property
+# of the devcontainer it runs in, so the marker has to be container-local. The
+# two obvious places both leak:
 #
 #   * $GITCONFIG is bind-mounted from the host's ~/.config/ai/claude and is
-#     therefore SHARED BY EVERY CONTAINER -- a name written here labels all
-#     seats identically.
+#     therefore SHARED BY EVERY DEVCONTAINER -- a name written here labels
+#     every session identically.
 #   * a repo's .git/config lives inside the checkout, and /workspaces/* are
 #     bind mounts of the host's working trees, so a local override is shared
-#     with the human's own session. This is not hypothetical: it is how
-#     hog and slingshot ended up committing as Brian personally.
+#     with the human's own shell. This is not hypothetical: it is how hog and
+#     slingshot ended up committing as Brian personally.
 #
 # An include splits the difference -- the DIRECTIVE is shared and harmless
-# (git skips a missing include silently, so containers that have not run this
-# yet are unaffected), while the VALUE is a container-local file. Only
-# user.name is set; user.email stays bdh-ai for every seat, which is correct
-# because every seat IS bdh-ai. This is display-only, exactly as the
-# home-infra CLAUDE.md rule intended -- it just could not be done safely at
-# the layer that rule named.
+# (git skips a missing include silently, so devcontainers that have not run
+# this yet are unaffected), while the VALUE is a container-local file. Only
+# user.name is set; user.email stays bdh-ai everywhere, which is correct
+# because every session IS bdh-ai. Display-only, exactly as the home-infra
+# CLAUDE.md rule intended -- it just could not be done safely at the layer
+# that rule named.
 #
 # The bootstrap heredoc above only fires on a fresh host, so the directive is
 # also ensured idempotently here for hosts whose gitconfig already exists.
+#
+# MIGRATION: this file was briefly called ~/.gitconfig-seat. "Seat" is a
+# GitHub billing term and meant nothing here, so it is now ~/.gitconfig-role,
+# naming what it actually holds. Drop the old include and the stale file, or
+# the shared gitconfig accumulates both and the dead one wins or loses by
+# ordering rather than by intent.
+if git config --file "$GITCONFIG" --get-all include.path 2>/dev/null \
+   | grep -qx '~/.gitconfig-seat'; then
+  git config --file "$GITCONFIG" --unset-all include.path '~/.gitconfig-seat'
+fi
+rm -f "$HOME/.gitconfig-seat"
+
 if ! git config --file "$GITCONFIG" --get-all include.path 2>/dev/null \
-     | grep -qx '~/.gitconfig-seat'; then
-  git config --file "$GITCONFIG" --add include.path '~/.gitconfig-seat'
+     | grep -qx '~/.gitconfig-role'; then
+  git config --file "$GITCONFIG" --add include.path '~/.gitconfig-role'
 fi
 
 # PROJECT_NAME is exported by each repo's .devcontainer/env.sh, derived from
 # the repo directory name -- so this needs no per-repo edit. home-infra is the
-# architect workspace (it bind-mounts the whole stack); everything else is a
-# contractor seat, named so "which devcontainer" is answerable, not just
-# "which role".
+# architect workspace (it bind-mounts the whole stack); every other
+# devcontainer is a contractor one, named so "which devcontainer" is
+# answerable and not merely "which role".
 case "${PROJECT_NAME:-unknown}" in
-  home-infra) SEAT="architect" ;;
-  unknown)    SEAT="unknown" ;;
-  *)          SEAT="contractor/$PROJECT_NAME" ;;
+  home-infra) ROLE="architect" ;;
+  unknown)    ROLE="unknown" ;;
+  *)          ROLE="contractor/$PROJECT_NAME" ;;
 esac
 printf '# Written by setup-claude-identity.sh -- container-local, do not commit.\n[user]\n\tname = bdh-ai (%s)\n' \
-  "$SEAT" > "$HOME/.gitconfig-seat"
+  "$ROLE" > "$HOME/.gitconfig-role"
 
 echo "==> ~/.gitconfig -> $GITCONFIG"
 echo "==> ~/.config/gh -> $GH_DIR"
-echo "==> seat -> $HOME/.gitconfig-seat"
+echo "==> role -> $HOME/.gitconfig-role"
 echo "    user.name = $(git config --get user.name)"
 echo "    user.email = $(git config --get user.email)"
