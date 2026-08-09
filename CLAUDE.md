@@ -42,24 +42,30 @@ writes. These PATs authenticate as the `bdh-ai` service account; the
 ambient git identity (a personal token) must not be used for automated
 writes.
 
-## Saying which seat you are
+## Saying which devcontainer you are
 
-Every AI seat authenticates as the same `bdh-ai` account, so nothing GitHub
+Vocabulary, because these get conflated: a **devcontainer** is the environment
+(one per repo); a **session** is one running Claude Code conversation inside
+one; a **role** is what that session acts as -- **architect** or
+**contractor**. The role follows the devcontainer, so naming the devcontainer
+names the role.
+
+Every session authenticates as the same `bdh-ai` account, so nothing GitHub
 records distinguishes them: an issue filed from any devcontainer reads
 `login: bdh-ai`, `type: User`, `performed_via_github_app: null`. Two
 mechanisms close that gap, one automatic and one yours to remember.
 
 **Commits and PRs — automatic, nothing to do.** `setup-claude-identity.sh`
-writes a container-local `~/.gitconfig-seat` setting `user.name` to
+writes a container-local `~/.gitconfig-role` setting `user.name` to
 `bdh-ai (architect)` or `bdh-ai (contractor/<repo>)`, derived from
 `PROJECT_NAME`. Only the display name varies; `user.email` stays `bdh-ai`
-for every seat.
+everywhere.
 
 **Never set `user.name` or `user.email` in a repo's `.git/config`.** Repo
 checkouts are bind-mounted from the host, so a repo-local override is
-shared with the human's own session -- which is how two repos ended up
+shared with the human's own shell -- which is how two repos ended up
 attributing container commits to a person (bdh-org/home-infra#317). If a
-seat name looks wrong, fix `~/.gitconfig-seat`, never the repo.
+role name looks wrong, fix `~/.gitconfig-role`, never the repo.
 
 **Issues and issue comments — add a footer**, since these never touch git:
 
