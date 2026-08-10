@@ -41,6 +41,25 @@ Shared Makefile targets. Requires `VERSION` variable in your Makefile.
 
 The `github/` directory contains workflow templates for consumer repos — copy these to your repo's `.github/workflows/` directory. The `.github/` directory contains workflows that run on this repo itself.
 
+Most of `.github/workflows/` is `workflow_call`-only — reusable implementations
+that fire on *other* repos' events. `shell-tests.yml` is the exception: it is
+dev-common's own PR gate over the shell it ships, and should not be copied into
+a consumer repo.
+
+### tests/
+
+dev-common's own tests, run by `make test` and by `shell-tests.yml` on every PR.
+
+| File | Covers |
+|------|--------|
+| `setup-claude-identity.test.sh` | `devcontainer/setup-claude-identity.sh` — role naming per `PROJECT_NAME`, `user.email` left alone, the `~/.gitconfig-seat` → `~/.gitconfig-role` migration, and idempotency across repeated runs |
+
+Each case runs the real script against a throwaway `$HOME` — the script's only
+inputs are `$HOME` and `$PROJECT_NAME`, so nothing needs stubbing and nothing
+touches the machine running the test. That script executes in every devcontainer
+across the fleet and writes to a gitconfig shared by all of them, so a defect in
+it is a fleet-wide one (bdh-org/dev-common#157, bdh-org/home-infra#317).
+
 ### github/workflows/
 
 Copy to your repo's `.github/workflows/` directory.

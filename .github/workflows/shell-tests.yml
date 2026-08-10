@@ -1,0 +1,49 @@
+name: Shell tests
+
+# dev-common's OWN gate (bdh-org/dev-common#157) -- not a reusable workflow, and
+# not to be copied into consumer repos.
+#
+# Everything else in .github/workflows/ here is a template or a `workflow_call`
+# implementation that runs on OTHER repos' events, which left this repo's own
+# shell scripts with no PR-triggered check at all. That matters most for
+# devcontainer/setup-claude-identity.sh: it runs during setup in every
+# devcontainer across all 16 repos, writes to a bind-mounted gitconfig SHARED by
+# every container, and until now merged on nothing stronger than the author
+# having run it by hand against a temp $HOME.
+#
+# No `paths:` filter. The job is a few seconds of bash, and a path-filtered check
+# is one that can never be required: a PR it skips reports no status at all
+# rather than a green one.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  shell:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      # Catches the typo class that `set -euo pipefail` cannot: a script that
+      # never parses fails at container-setup time, on every rebuild, for
+      # whoever pulls the submodule next.
+      - name: Syntax-check every shell script
+        run: |
+          set -eu
+          found=0
+          while IFS= read -r f; do
+            found=$((found + 1))
+            bash -n "$f" || { echo "::error file=$f::bash -n failed"; exit 1; }
+            echo "ok  $f"
+          done < <(git ls-files '*.sh')
+          echo "$found script(s) parsed"
+
+      - name: setup-claude-identity.sh
+        run: bash tests/setup-claude-identity.test.sh

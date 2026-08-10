@@ -84,6 +84,24 @@ Claude Code CLI setup:
 - Seeds a private `~/.claude.json` (onboarding stub) if absent, so each
   container keeps its own Claude Code state instead of sharing the host file
 
+### setup-claude-identity.sh
+
+Points `~/.gitconfig` and `~/.config/gh` at the host-managed identity tree
+(`~/.config/ai/claude/identity/`), bootstrapping it on a fresh host:
+
+- Symlinks the standard tool paths into that tree, so git and gh find Claude's
+  config without environment-variable indirection
+- Adds one `include.path = ~/.gitconfig-role` to the identity gitconfig and
+  writes that container-local file with `user.name = bdh-ai (<role>)`, derived
+  from `$PROJECT_NAME` — `architect` for home-infra, `contractor/<repo>`
+  elsewhere. Only `user.name`; `user.email` stays `bdh-ai` everywhere
+  (bdh-org/home-infra#317)
+
+Its only inputs are `$HOME` and `$PROJECT_NAME`. Because it runs in every
+devcontainer and writes to a gitconfig shared by all of them, it is gated by
+`tests/setup-claude-identity.test.sh` on every PR — run it with `make test`
+before changing this script (bdh-org/dev-common#157).
+
 ### setup-waterbrother.sh
 
 waterbrother CLI setup:
