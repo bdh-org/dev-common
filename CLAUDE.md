@@ -15,6 +15,28 @@ Use a concise, descriptive title.
 
 Example: `feat: add user authentication`
 
+## Check `ARCHITECT-INBOX.md` at session start
+
+If the repo root has an `ARCHITECT-INBOX.md`, **read it before doing anything
+else.** It is how the architect session passes context to this one: what
+changed elsewhere that affects your work, what a review concluded, what not to
+start because it is about to be superseded.
+
+It is **gitignored**, so it will not appear in `git status` and nothing will
+prompt you. That is why this line exists.
+
+Two conventions:
+
+- **Reply in the same file** when asked to. Append; do not rewrite someone
+  else's section. The architect polls it, so an answer there is seen.
+- **Anything that needs a decision, a record, or a reply you depend on belongs
+  on the GitHub issue or PR instead.** The inbox is a push channel between two
+  running sessions; it does not survive a container rebuild, is invisible to
+  the headless agent and to claude.ai/code sessions, and nobody is notified.
+
+Delete a section once actioned. A stale inbox is worse than none — it gets
+skimmed, and then the next real message is skimmed too.
+
 ## Referring to issues and PRs
 
 **Every issue or PR number in text the user reads is a hyperlink, and says which
