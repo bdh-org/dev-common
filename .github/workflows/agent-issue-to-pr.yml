@@ -25,6 +25,12 @@ name: agent-issue-to-pr (reusable)
 # and independent of gate_cmd, so a run cannot report success on a deliverable it
 # never produced. Either way the outcome lands in the job summary.
 #
+# The PR always closes its issue (home-site#266). The prompt asks for it, but a
+# model complies with "write Closes #N" only most of the time -- and a run that
+# forgot merged a PR that left its issue open. The "Ensure the PR closes the
+# issue" post-step appends the keyword when it is missing, so the link is a
+# property of the workflow rather than of a sample.
+#
 # An individual run can opt up (or down) from the repo's defaults with directives on
 # their own lines, unindented and outside any code block (dev-common#131):
 #
@@ -388,6 +394,110 @@ jobs:
             --model ${{ steps.budget.outputs.model }}
             --max-turns ${{ steps.budget.outputs.turns }}
             --allowedTools "Read,Write,Edit,Bash"
+
+      # Guarantee the issue link (home-site#266). The prompt above ASKS for
+      # "Closes #<n>" in the PR body, and the model complies most of the time --
+      # which is the bug: home-site#266 merged a PR that never closed its issue,
+      # while the run before it did. A closing keyword is not a judgement call,
+      # so it must not be left to a sampler.
+      #
+      # This step writes it. The workflow already knows the issue number exactly
+      # (it is the trigger event), so it only has to find the PR and, if no
+      # closing reference to THAT issue is already there, append one. Idempotent:
+      # a body the agent got right is left byte-for-byte alone, so re-running a
+      # run does not stack duplicate lines.
+      #
+      # Ordering matters twice. It runs BEFORE the auto-merge step, because a
+      # keyword added to an already-merged PR closes nothing -- GitHub evaluates
+      # the body at merge time. And it runs BEFORE "Verify a PR exists", so the
+      # deliverable check stays the single place that decides red/green on a
+      # missing PR: no PR here is a notice, never a failure.
+      #
+      # python3 + the REST API rather than the `gh pr edit` the issue sketched:
+      # the forge runner has no `gh` on PATH, and the step below already
+      # establishes urllib as how this workflow asks GitHub what exists.
+      - name: Ensure the PR closes the issue
+        if: ${{ !cancelled() && steps.agent.outcome != 'skipped' }}
+        env:
+          # The coder App token, not github.token: it opened the PR, it is the
+          # identity the auto-merge step already writes with, and it does not
+          # depend on the CALLER granting `pull-requests: write` (a reusable
+          # inherits the caller's permissions block, and not every wrapper in
+          # the org spells that one out).
+          GH_TOKEN: ${{ steps.coder.outputs.coder_token }}
+          REPO: ${{ github.repository }}
+          OWNER: ${{ github.repository_owner }}
+          BRANCH: agent/issue-${{ github.event.issue.number }}
+          ISSUE: ${{ github.event.issue.number }}
+        run: |
+          set -eu
+          python3 - <<'PY'
+          import json, os, re, time, urllib.error, urllib.request
+
+          repo, owner = os.environ["REPO"], os.environ["OWNER"]
+          branch, issue = os.environ["BRANCH"], os.environ["ISSUE"]
+
+          def api(path, method="GET", payload=None):
+              data = json.dumps(payload).encode() if payload is not None else None
+              req = urllib.request.Request(
+                  f"https://api.github.com/repos/{repo}/{path}", data=data, method=method,
+                  headers={"Authorization": "Bearer " + os.environ["GH_TOKEN"],
+                           "Accept": "application/vnd.github+json",
+                           "Content-Type": "application/json"})
+              try:
+                  with urllib.request.urlopen(req, timeout=30) as resp:
+                      return json.load(resp)
+              except urllib.error.HTTPError as exc:
+                  if exc.code == 404:
+                      return None
+                  raise
+
+          # Only OPEN PRs: a merged or closed one cannot be made to close
+          # anything by editing it now. Same trailing-list tolerance as the
+          # verify step -- a PR opened in the agent's last turn can lag.
+          pr = None
+          for attempt in (1, 2):
+              pulls = api(f"pulls?state=open&head={owner}:{branch}&per_page=100") or []
+              if pulls:
+                  pr = pulls[0]
+                  break
+              if attempt == 2:
+                  break
+              time.sleep(10)
+
+          if pr is None:
+              # Not an error HERE. "Verify a PR exists" owns that verdict, and
+              # it distinguishes "merged already" from "never opened".
+              print(f"::notice::No open PR on {branch} to link to issue #{issue} "
+                    "-- leaving the verdict to the deliverable check")
+              raise SystemExit(0)
+
+          body = pr.get("body") or ""
+
+          # GitHub's closing keywords, as documented, against `#<n>` or the full
+          # issue URL -- so a body that already links the issue in either form is
+          # left alone. Deliberately NOT trying to honour markdown quoting: the
+          # cost of a false "already there" is an issue that stays open (the bug),
+          # while the cost of a false "missing" is one redundant line.
+          KEYWORDS = r"clos(?:e|es|ed)|fix(?:|es|ed)|resolv(?:e|es|ed)"
+          ref = rf"(?:#{issue}|https://github\.com/{re.escape(repo)}/issues/{issue})"
+          if re.search(rf"\b(?:{KEYWORDS})\b[\s:]*{ref}(?![0-9])", body, re.I):
+              print(f"::notice::PR #{pr['number']} already closes issue #{issue} "
+                    "-- body unchanged")
+              raise SystemExit(0)
+
+          new_body = (body.rstrip() + "\n\nCloses #" + issue + "\n").lstrip("\n")
+          api(f"pulls/{pr['number']}", method="PATCH", payload={"body": new_body})
+          print(f"::notice::Appended 'Closes #{issue}' to PR #{pr['number']} "
+                "-- the agent did not write a closing keyword")
+
+          path = os.environ.get("GITHUB_STEP_SUMMARY")
+          if path:
+              with open(path, "a") as fh:
+                  fh.write(f"\nAdded `Closes #{issue}` to [PR #{pr['number']}]"
+                           f"({pr['html_url']}) -- the agent's body did not link "
+                           "the issue.\n")
+          PY
 
       # Deliverable check (dev-common#140) -- UNCONDITIONAL, unlike the gate below.
       # Six repos call this reusable with an EMPTY gate_cmd, so for them the gate
