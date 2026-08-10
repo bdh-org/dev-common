@@ -28,11 +28,16 @@ prompt you. That is why this line exists.
 Two conventions:
 
 - **Reply in the same file** when asked to. Append; do not rewrite someone
-  else's section. The architect polls it, so an answer there is seen.
-- **Anything that needs a decision, a record, or a reply you depend on belongs
-  on the GitHub issue or PR instead.** The inbox is a push channel between two
-  running sessions; it does not survive a container rebuild, is invisible to
-  the headless agent and to claude.ai/code sessions, and nobody is notified.
+  else's section.
+- **But do not expect the reply to be seen on its own.** NOTHING monitors this
+  file, or GitHub, on the architect's behalf. There is no background process:
+  an architect session exists only while Brian is running one, and it sees an
+  answer only if it happens to look. If the reply matters, **also put it on the
+  GitHub issue or PR** — that is the record, it survives every session, and it
+  is where a sweep will find it.
+- The inbox is a push channel between two **running** sessions. It does not
+  survive a container rebuild, is invisible to the headless agent and to
+  claude.ai/code sessions, and notifies nobody.
 
 Delete a section once actioned. A stale inbox is worse than none — it gets
 skimmed, and then the next real message is skimmed too.
