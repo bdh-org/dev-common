@@ -62,8 +62,32 @@ set -euo pipefail
 log() { printf '[entrypoint-vault] %s\n' "$*" >&2; }
 
 # ---- Fallback: no Vault creds -> no-op passthrough (safe pre-cutover) --------
+# Say WHICH input is missing, and whether it is UNSET or EMPTY (home-infra#155).
+#
+# These are different failures with different fixes, and the old one-line message
+# collapsed all of them into the same sentence:
+#   UNSET  -> nothing in the compose chain mentions this var at all. The service's
+#             stub never mapped <SVC>_VAULT_* -> VAULT_* ("not mapped by the stub").
+#   EMPTY  -> compose interpolated a variable it knows about but has no value for.
+#             .env.vault was written without an entry for this service, i.e. it is
+#             not in vault-bootstrap's allowlist, or the bootstrapper token is
+#             absent so nothing was minted ("not minted" / "not injected").
+# The #141 post-mortem is exactly this: three look-alike failures, one message.
+# Lengths only, never values -- a length is diagnostic (a truncated secret-id shows
+# up as a wrong length) and reveals nothing.
+_state() {
+  eval "_isset=\${$1+x}; _val=\${$1:-}"
+  if [ -z "${_isset:-}" ]; then printf 'UNSET'
+  elif [ -z "$_val" ];  then printf 'EMPTY'
+  else printf 'set(%s chars)' "${#_val}"; fi
+}
 if [ -z "${VAULT_ROLE_ID:-}" ] || [ -z "${VAULT_SECRET_ID:-}" ]; then
-  log "VAULT_ROLE_ID/VAULT_SECRET_ID not set — skipping Vault fetch; using existing file/env fallbacks"
+  log "SKIPPING Vault fetch — using existing file/env fallbacks. Inputs:"
+  log "  VAULT_ADDR=$(_state VAULT_ADDR)  VAULT_ROLE_ID=$(_state VAULT_ROLE_ID)  VAULT_SECRET_ID=$(_state VAULT_SECRET_ID)"
+  log "  UNSET = this service's compose stub never mapped <SVC>_VAULT_* -> VAULT_*."
+  log "  EMPTY = the stub maps it, but .env.vault carried no value: the service is"
+  log "          missing from vault-bootstrap's VAULT_SERVICES allowlist, or the host"
+  log "          has no bootstrapper token so nothing was minted."
   exec "$@"
 fi
 
