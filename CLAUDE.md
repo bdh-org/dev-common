@@ -103,6 +103,36 @@ Use the repo whose devcontainer you are running in, which is the directory
 your `CLAUDE.md` was loaded from -- not the repo the issue is filed against.
 They differ often: cross-repo work is normal from the architect workspace.
 
+## Every command you hand over names its machine and its account
+
+Brian runs about seven machines, with several accounts on each. A command
+without a location is not actionable, so **say which host and which user id, in
+the same breath as the command** — never leave it to be inferred from what was
+being discussed.
+
+```
+On Minerva, as brian:
+
+    sudo chown --reference=/srv/svc-prod/refdims-data/PG_VERSION /srv/svc-prod/refdims-data
+```
+
+For a multi-step sequence, put host and account beside **each** step rather than
+once at the top: steps get copied one at a time, and the header does not travel
+with them. Where a command internally switches account — `sudo machinectl shell
+svc-prod@ ...`, `sudo -u ...`, an `ssh` inside a make target — say both which
+account the human types it as and which one it ends up running as.
+
+The rule extends to make targets, which are the easiest thing to get wrong: a
+`prod-*` target usually runs on a DEV host and ssh's *into* prod, so "run `make
+prod-bootstrap`" is ambiguous exactly where it matters. Name the host you invoke
+it from and the checkout you invoke it in.
+
+**When you do not know which host something belongs on, ask.** The assumption
+has been wrong more often than right, and the failures are not cheap: a
+`prod-bootstrap` recommended without saying it runs from a dev host was run on
+prod, where it chowned what the Makefile still believed was the live Postgres
+data directory (bdh-org/dev-common#159, finzeug/refdims#177).
+
 ## Package Management
 - Install packages with `conda` (conda-forge) into the dev environment when possible.
 - Use `pip` only as a fallback when a package is not available on conda-forge.
