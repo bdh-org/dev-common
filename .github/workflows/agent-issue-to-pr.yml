@@ -122,28 +122,119 @@ jobs:
         with:
           token: ${{ steps.coder.outputs.coder_token }}
 
-      # Submodules (common/, stack-common/) always live in bdh-org -> hydrate with a
-      # bdh-org coder token regardless of this repo's org, so the agent can run
-      # `make bump-patch` in-turn (home-infra#89/#91). No-op if a repo has none.
-      - name: Mint bdh-org coder token (submodule hydration)
-        id: coderbdh
+      # Hydrate submodules with a token minted for EACH submodule's own org,
+      # resolved from .gitmodules -- see the script's header for why the parent
+      # repo's org is exactly the wrong signal (dev-common#169). The agent needs
+      # every submodule on disk to run `make bump-patch` in-turn (home-infra#89/#91).
+      # A repo with no submodules mints nothing and no-ops.
+      - name: Hydrate submodules (per-submodule org tokens)
         env:
           VAULT_ADDR: ${{ vars.VAULT_ADDR }}
-        run: /srv/github-runner/bin/mint-coder-app-token.sh bdh-org
-
-      - name: Hydrate submodules (bdh-org)
-        env:
-          T: ${{ steps.coderbdh.outputs.coder_token }}
         run: |
+          set -euo pipefail
+
+          # One installation token PER ORG, and the org comes from the submodule's URL in
+          # .gitmodules -- never from the parent repo's org (dev-common#169). panoptikon
+          # lives in finzeug and vendors two bdh-org submodules alongside two finzeug
+          # ones, so either org taken as the default leaves half of them unclonable.
+          # Both directions have already broken a delivery path: bdh-org assumed here
+          # (finzeug/panoptikon#700), the parent's org assumed by hand the same morning.
+          # Neither org is the right default; the URL is.
+          MINT="${MINT:-/srv/github-runner/bin/mint-coder-app-token.sh}"
+
+          # path<TAB>url for every submodule any .gitmodules on disk declares. Nested
+          # paths are printed parent-prefixed, exactly the way `git submodule status
+          # --recursive` reports them, so the check at the end can look a path up here.
+          sm_map() {
+            local f dir k p u
+            while IFS= read -r f; do
+              case "$f" in */.gitmodules) dir="${f%.gitmodules}";; *) dir="";; esac
+              while IFS= read -r k; do
+                p="$(git config -f "$f" --get "$k")" || continue
+                u="$(git config -f "$f" --get "${k%.path}.url")" || u=""
+                printf '%s\t%s\n' "${dir}${p}" "$u"
+              done < <(git config -f "$f" --name-only --get-regexp '^submodule\..*\.path$' 2>/dev/null || true)
+            done < <(find . -name .gitmodules -not -path './.git/*' -printf '%P\n' | sort)
+          }
+
+          # The GitHub org owning a submodule URL; empty for anything else -- a relative
+          # or non-GitHub URL needs no token of ours and must not cost a mint attempt.
+          sm_org() {
+            printf '%s\n' "$1" | sed -nE 's#^(https://github\.com/|git@github\.com:)([^/]+)/.*#\2#p'
+          }
+
+          # tests/hydrate-submodules.test.sh sources everything above and stops here.
+          if [ -n "${HYDRATE_LIB_ONLY:-}" ]; then return 0; fi
+
+          # Credential rewrites an earlier job on this persistent runner left behind.
           for k in $(git config --local --name-only --get-regexp '^url\.' || true); do
             git config --local --unset-all "$k" || true
           done
           # sync FIRST: the persistent runner workspace keeps submodule URLs in
-          # .git/modules/*/config, and `submodule init` never overwrites them --
-          # a URL fixed in .gitmodules would otherwise stay broken forever (#105).
+          # .git/modules/*/config, and `submodule init` never overwrites them -- a URL
+          # fixed in .gitmodules would otherwise stay broken forever (#105).
           git submodule sync --recursive || true
-          git -c "url.https://x-access-token:${T}@github.com/bdh-org/.insteadOf=https://github.com/bdh-org/" \
-            submodule update --init --recursive
+
+          declare -A SEEN=()
+          CFG=()
+
+          mint() { # org -> append an insteadOf rewrite carrying a token for that org
+            local org="$1" out tok
+            out="$(mktemp "${RUNNER_TEMP:-/tmp}/hydrate-XXXXXX")"
+            # The mint script masks its token by printing ::add-mask:: on STDOUT, so
+            # stdout must reach the job log; the value itself only lands in $out, never
+            # in a step output (a hydration token is nobody else's business).
+            if ! GITHUB_OUTPUT="$out" CODER_TOKEN_ENV_NAME="" "$MINT" "$org"; then
+              rm -f "$out"; return 1
+            fi
+            tok="$(sed -n 's/^coder_token=//p' "$out" | head -1)"
+            rm -f "$out"
+            [ -n "$tok" ] || return 1
+            CFG+=(-c "url.https://x-access-token:${tok}@github.com/${org}/.insteadOf=https://github.com/${org}/")
+          }
+
+          # Several passes: a nested submodule's .gitmodules is only readable once its
+          # parent is checked out, so an org can first appear mid-hydration. Both the
+          # mint and the update are tolerant here -- a mint failure for a directory that
+          # merely happens to contain a .gitmodules must not fail the run. The check
+          # below is the only thing that decides this step.
+          for pass in 1 2 3 4 5; do
+            new=0
+            while IFS= read -r org; do
+              [ -n "$org" ] || continue
+              [ -z "${SEEN[$org]:-}" ] || continue
+              SEEN[$org]=1
+              new=1
+              mint "$org" || echo "::warning::could not mint a ${org} token for submodule hydration"
+            done < <(sm_map | cut -f2 | while IFS= read -r u; do sm_org "$u"; done | sort -u)
+            if [ "$pass" -gt 1 ] && [ "$new" = 0 ]; then break; fi
+            git ${CFG[@]+"${CFG[@]}"} submodule update --init --recursive || true
+          done
+
+          # Fail LOUDLY, naming the submodule and the org it needed. A submodule the repo
+          # declares and this step did not populate must never be handed on as an empty
+          # directory for a later step to trip over 40 lines from the cause
+          # (home-infra#343, home-infra#359). `submodule status` prefixes '-' for one
+          # never initialised and '+' for one left at a commit other than the pin --
+          # and '+' is how this bug hid for a month, a stale checkout on the persistent
+          # runner standing in for a fetch that never happened.
+          bad="$(git submodule status --recursive 2>/dev/null | grep -E '^[-+]' || true)"
+          if [ -n "$bad" ]; then
+            map="$(sm_map)"
+            echo "::error::submodule hydration incomplete -- refusing to run the agent against a partial checkout"
+            while read -r rev path _; do
+              [ -n "${path:-}" ] || continue
+              url="$(printf '%s\n' "$map" | awk -F'\t' -v p="$path" '$1 == p {print $2; exit}')"
+              org="$(sm_org "$url")"
+              case "$rev" in -*) why="never initialised";; *) why="not at the pinned commit";; esac
+              echo "::error::  ${path}: ${why} -- url ${url:-unknown}, org ${org:-unknown}"
+            done <<< "$bad"
+            echo "If the org is right, check that the bdh-org-coder App is installed there" >&2
+            echo "(Vault kv/ai/coder/github-app needs an install_<org> field for it)." >&2
+            exit 1
+          fi
+          git submodule status --recursive | sed 's/^/  /'
+          echo "submodule hydration OK"
 
       - name: Fetch Claude OAuth token from Vault (coder-ai)
         id: vault

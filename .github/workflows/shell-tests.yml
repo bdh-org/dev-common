@@ -47,3 +47,10 @@ jobs:
 
       - name: setup-claude-identity.sh
         run: bash tests/setup-claude-identity.test.sh
+
+      # Extracts the hydration step out of the agent workflows and runs it for
+      # real against throwaway local repos -- so the script that decides whether
+      # the headless agent sees a complete checkout is no longer reachable only
+      # by merging it and watching a consumer repo (dev-common#169).
+      - name: hydrate-submodules.sh (embedded in the agent workflows)
+        run: bash tests/hydrate-submodules.test.sh
