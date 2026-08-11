@@ -102,6 +102,36 @@ Copy to your repo's `.github/workflows/` directory.
 |------|-------------|
 | `tag-version.yml` | Auto-create git tags when Makefile VERSION changes on main |
 
+#### There is deliberately NO `submodule-bump` wrapper here
+
+The fleet keeps its submodule pins current by sweeping consumers and opening
+one bump PR each. The **source** repo is the natural trigger, so this repo
+briefly carried a wrapper calling home-infra's reusable. **It was removed and
+should not be re-added** (bdh-org/dev-common#173).
+
+It never worked and cannot: **dev-common is public, home-infra is private**,
+and a public repository's workflow may not call a private repository's
+reusable workflow. No repo setting changes it. The symptom is easy to
+misread as a transient failure, so it is worth recognising:
+
+```bash
+$ gh run view <id> --json jobs --jq '.jobs|length'
+0
+$ gh run view <id> --log
+failed to get run log: log not found
+```
+
+**Zero jobs and no logs** means the run never started one — the workflow was
+never resolved. A run whose jobs ran and failed is an ordinary bug and a
+different thing entirely.
+
+Consumers of dev-common are still swept: home-infra's own workflow carries a
+daily `schedule:` that sweeps **both** sources, and being self-driven it has
+no resolution problem. The cost is up to 24h of latency on a pin, which beat
+adding cross-visibility plumbing. The engine and the consumer registry stay
+in home-infra on purpose — that registry is one stack's membership, and this
+repo is deliberately stack-agnostic (P3).
+
 #### Tag push rejected: "without `workflows` permission"
 
 A tag run can fail at the push with:
