@@ -34,8 +34,42 @@ Shared Makefile targets. Requires `VERSION` variable in your Makefile.
 |------|---------|-------------|
 | `version.mk` | `bump-patch`, `bump-minor`, `bump-major`, `tag` | Semantic version management |
 | `utils.mk` | `show`, `list`, `ls`, `claude-install` | Common utilities |
-| `python.mk` | `env`, `env-info`, `list-imports`, `requirements`, `lint`, `lint-fix`, `format` | Python dev tools, conda env, production requirements |
+| `python.mk` | `env`, `env-info`, `list-imports`, `requirements`, `lint`, `lint-fix`, `format`, `format-check` | Python dev tools, conda env, production requirements |
 | `devcontainer.mk` | `dc-install`, `dc-up`, `dc-shell`, `dc-exec`, `dc-stop`, `dc-rm`, `dc-nuke`, `setup-verify`, `setup-fix` | Devcontainer lifecycle management via CLI; setup doctor for the global git config |
+
+#### Opting in to `format-check`
+
+`format-check` fails when `ruff format` would change anything. It is
+**not** a prerequisite of `lint`: every consumer carries its own
+formatter debt, and wiring it into the shared `lint` would turn them all
+red at once. A repo opts in, once its debt is paid, from its own
+Makefile:
+
+```make
+lint: format-check
+```
+
+A target declared with a prerequisite and **no recipe** adds to the
+inherited rule instead of overriding it — no `warning: overriding
+recipe`, the dev-common recipe still runs, and `format-check` runs
+first. CI needs no change if it already invokes `make lint`.
+
+The rollout order that makes paying the debt safe, one commit each:
+
+1. config only — `line-length`, `[format]`, and an `exclude` for the
+   submodules
+2. one pure `ruff format` commit, nothing else in it
+3. `.git-blame-ignore-revs` naming that commit
+4. opt in with `lint: format-check`
+
+Two traps:
+
+- **`make format` is unsafe until the submodules are excluded.** `ruff
+  format .` descends into `common/` and `stack-common/` and rewrites
+  them in place.
+- **Verify the reformat by AST, not by test suite.** Comparing
+  `ast.dump` before and after each changed file proves the diff is
+  semantics-free; a green suite only suggests it.
 
 ### github/ vs .github/
 

@@ -19,7 +19,7 @@ CONDA := $(CONDA_PREFIX)/bin/conda
 BASE_PACKAGES := $(COMMON_DIR)/devcontainer/base-conda-packages.txt
 DEV_TOOLS := ruff pytest pytest-cov ipykernel jupyterlab pipreqs
 
-.PHONY: env env-info list-imports requirements lint lint-fix format
+.PHONY: env env-info list-imports requirements lint lint-fix format format-check
 
 # -----------------------------------------------------------------------------
 # Conda environment
@@ -87,3 +87,10 @@ lint-fix: ## lint with ruff and auto-fix
 
 format: ## format with ruff
 	$(CONDA_PREFIX)/bin/ruff format .
+
+# Deliberately NOT a prerequisite of `lint`: every consumer carries its own
+# formatter debt, so wiring it in here turns them all red at once. A repo opts
+# in once its debt is paid by adding `lint: format-check` to its own Makefile —
+# a prerequisite with no recipe extends the rule above rather than overriding it.
+format-check: ## fail if ruff format would change anything
+	$(CONDA_PREFIX)/bin/ruff format --check .
