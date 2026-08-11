@@ -35,6 +35,10 @@
 #                                            (home-infra#343)
 #   - a dry run                           -> assert the remote is untouched, not merely
 #                                            that the output says "would"
+#   - a PR nobody can find                -> assert the assignee and the label go out on the
+#                                            wire, and that a PR that could not get either
+#                                            fails the sweep by name; "a PR exists" is not
+#                                            the deliverable, "a PR Brian will see" is
 #
 # The PR body is checked too, because the body is what makes the merge safe: it has to say
 # in the PR that merging deploys.
@@ -113,6 +117,7 @@ def fixture():
     # two sweeps while the PR the first sweep opened is still open in PULLS.
     return json.load(open(os.environ["FIXTURE"]))
 PULLS = {}          # (repo) -> list of pull dicts
+LABELS = {}         # (repo) -> set of label names that EXIST in that repo
 NEXT = [900]
 
 def journal(method, path, body):
@@ -175,6 +180,11 @@ class H(BaseHTTPRequestHandler):
                                    "commits": commits,
                                    "files": [{"filename": f} for f in cmp_.get("files", [])]})
 
+        if rest[0] == "labels" and len(rest) == 2:
+            if rest[1] in LABELS.get("%s/%s" % (o, r), set()):
+                return self.send(200, {"name": rest[1]})
+            return self.send(404, {"message": "Not Found"})
+
         if rest[0] == "pulls" and len(rest) == 1:
             head = (q.get("head") or [""])[0]
             state = (q.get("state") or ["open"])[0]
@@ -196,9 +206,45 @@ class H(BaseHTTPRequestHandler):
             d = json.loads(b or "{}")
             NEXT[0] += 1
             pr = {"number": NEXT[0], "state": "open", "head": d.get("head", ""),
-                  "title": d.get("title", ""), "body": d.get("body", "")}
+                  "title": d.get("title", ""), "body": d.get("body", ""),
+                  "assignees": [], "labels": []}
             PULLS.setdefault("%s/%s" % (p[1], p[2]), []).append(pr)
             return self.send(201, pr)
+
+        # Create a repo label. `label_write: false` in the fixture is a token without
+        # issues:write in that org -- the per-org permissions gap the script has to report
+        # rather than degrade around.
+        if len(p) == 4 and p[0] == "repos" and p[3] == "labels":
+            repo = self.repo(p[1], p[2]) or {}
+            if not repo.get("label_write", True):
+                return self.send(403, {"message": "Resource not accessible by integration"})
+            d = json.loads(b or "{}")
+            LABELS.setdefault("%s/%s" % (p[1], p[2]), set()).add(d.get("name", ""))
+            return self.send(201, {"name": d.get("name", "")})
+
+        if len(p) == 6 and p[0] == "repos" and p[3] == "issues" and p[5] == "assignees":
+            d = json.loads(b or "{}")
+            repo = self.repo(p[1], p[2]) or {}
+            # GitHub answers 201 and SILENTLY DROPS an assignee it will not honour (a user
+            # with no push access to the repo is not assignable). `assignable: false`
+            # models exactly that, because a stub that 4xx'd instead would test the easy
+            # half and leave the half that actually goes wrong untested.
+            keep = list(d.get("assignees", [])) if repo.get("assignable", True) else []
+            for pr in PULLS.get("%s/%s" % (p[1], p[2]), []):
+                if str(pr["number"]) == p[4]:
+                    pr["assignees"] = keep
+            return self.send(201, {"number": int(p[4]),
+                                   "assignees": [{"login": a} for a in keep]})
+
+        if len(p) == 6 and p[0] == "repos" and p[3] == "issues" and p[5] == "labels":
+            d = json.loads(b or "{}")
+            key = "%s/%s" % (p[1], p[2])
+            names = [n for n in d.get("labels", []) if n in LABELS.get(key, set())]
+            for pr in PULLS.get(key, []):
+                if str(pr["number"]) == p[4]:
+                    pr["labels"] = names
+            return self.send(200, [{"name": n} for n in names])
+
         return self.send(404, {"message": "Not Found"})
 
     def do_PATCH(self):
@@ -416,6 +462,29 @@ printf '%s' "$BODY_INFRA" | grep -qF 'No `VERSION=` in this Makefile' \
   && ok "a consumer with NO ci-build is not told a deploy it does not have" \
   || bad "a consumer with NO ci-build is not told a deploy it does not have" "$BODY_INFRA"
 
+# --- findable, or it may as well not exist ------------------------------------
+#
+# Brian reviews these by searching, once a morning, across fourteen repos:
+#   is:pr is:open assignee:brianholland label:submodule-bump
+# Both halves of that query are asserted on the wire, per consumer.
+
+{ jhas 'POST /repos/bdh-org/home-site/issues/901/assignees {"assignees":["brianholland"]}' \
+  && jhas 'POST /repos/bdh-org/home-infra/issues/902/assignees {"assignees":["brianholland"]}'; } \
+  && ok "every PR is assigned to brianholland — not to bdh-ai, which both sessions already are" \
+  || bad "every PR is assigned to brianholland — not to bdh-ai, which both sessions already are" \
+         "$(grep assignees "${WORK}/journal.txt")"
+
+{ grep -qE '^POST /repos/bdh-org/home-site/labels \{"name":"submodule-bump"' "${WORK}/journal.txt" \
+  && grep -qE '^POST /repos/bdh-org/home-infra/labels \{"name":"submodule-bump"' "${WORK}/journal.txt"; } \
+  && ok "the submodule-bump label is created in a consumer that does not have it" \
+  || bad "the submodule-bump label is created in a consumer that does not have it" \
+         "$(grep labels "${WORK}/journal.txt")"
+
+{ jhas 'POST /repos/bdh-org/home-site/issues/901/labels {"labels":["submodule-bump"]}' \
+  && jhas 'POST /repos/bdh-org/home-infra/issues/902/labels {"labels":["submodule-bump"]}'; } \
+  && ok "every PR carries the submodule-bump label" \
+  || bad "every PR carries the submodule-bump label" "$(grep labels "${WORK}/journal.txt")"
+
 # --- the negative space -------------------------------------------------------
 #
 # Not `awk ... | grep -qiE`: under pipefail an early-exiting `grep -q` can SIGPIPE the awk
@@ -445,6 +514,15 @@ $OUT"
 [ "$(mainsha bdh-org/home-site)" = "$SITE_MAIN_BEFORE" ] \
   && ok "main is still untouched after the second sweep" \
   || bad "main is still untouched after the second sweep"
+
+# Re-applied on the refresh path (a PR somebody unassigned by hand is as invisible as one
+# that never had an assignee), but the label is CREATED only when it is absent.
+{ jhas 'POST /repos/bdh-org/home-site/issues/901/assignees {"assignees":["brianholland"]}' \
+  && jhas 'POST /repos/bdh-org/home-site/issues/901/labels {"labels":["submodule-bump"]}' \
+  && ! grep -qE '^POST /repos/bdh-org/home-site/labels ' "${WORK}/journal.txt"; } \
+  && ok "a refreshed PR is re-assigned and re-labelled, and the existing label is not re-created" \
+  || bad "a refreshed PR is re-assigned and re-labelled, and the existing label is not re-created" \
+         "$(cat "${WORK}/journal.txt")"
 
 # ============================================================================ case 3
 # The pin is already current: the open PR is CLOSED and its branch deleted, so an open
@@ -696,6 +774,78 @@ has "VERSION=2.1.0 before and after" \
   && ! jhas "POST /repos/finzeug/panoptikon/pulls"; } \
   && ok "the no-op consumer gets NO branch and NO PR — a versionless bump is never pushed" \
   || bad "the no-op consumer gets NO branch and NO PR — a versionless bump is never pushed"
+
+# ============================================================================ case 11
+# A PR that cannot be made FINDABLE is a failure, even though the PR is correct.
+#
+# Two shapes, one sweep, because they fail differently and both have to be named:
+#
+#   finzeug/oleo    the assignee is silently dropped. GitHub answers 201 with the login
+#                   simply missing from .assignees when the user has no push access, so a
+#                   sweep that trusted the status would report green over a PR assigned to
+#                   nobody -- the silent no-op of home-infra#343, one layer up.
+#   finzeug/ferret  the token has no issues:write in that org, so creating the label 403s.
+#                   That is the per-org permissions gap of home-infra#350, and the sweep
+#                   has to say so plainly rather than quietly ship unlabelled PRs.
+#
+# In both, the branch and the PR must still be there: the deliverable was produced, it just
+# cannot be found, and deleting it would make a bad morning worse.
+
+mk_consumer finzeug/oleo   common bdh-org/dev-common "$OLD" "3.0.0"
+mk_consumer finzeug/ferret common bdh-org/dev-common "$OLD" "1.0.0"
+OLEO_MAIN_BEFORE="$(mainsha finzeug/oleo)"
+FERRET_MAIN_BEFORE="$(mainsha finzeug/ferret)"
+
+cat >"${WORK}/fx-dark.json" <<EOF
+{
+  "bdh-org/dev-common": {"default_branch": "main", "head": "${HEAD}"},
+  "finzeug/oleo": {"default_branch": "main", "head": "${OLEO_MAIN_BEFORE}", "assignable": false,
+    "gitmodules": "[submodule \\"common\\"]\\n\\tpath = common\\n\\turl = https://github.com/bdh-org/dev-common.git\\n",
+    "contents": {"common": {"type": "submodule", "sha": "$(pin_of finzeug/oleo common)"}}},
+  "finzeug/ferret": {"default_branch": "main", "head": "${FERRET_MAIN_BEFORE}", "label_write": false,
+    "gitmodules": "[submodule \\"common\\"]\\n\\tpath = common\\n\\turl = https://github.com/bdh-org/dev-common.git\\n",
+    "contents": {"common": {"type": "submodule", "sha": "$(pin_of finzeug/ferret common)"}}},
+  "_compare": {"${OLD}": {"ahead_by": 3, "days_ago": 9, "subjects": ["feat: x"], "files": []}}
+}
+EOF
+printf 'finzeug/oleo   | - | - | P2b static site\nfinzeug/ferret | - | - | library consumer\n' \
+  > "${WORK}/reg-dark.txt"
+
+start_stub "${WORK}/fx-dark.json"
+run_bump --source bdh-org/dev-common --registry "${WORK}/reg-dark.txt"
+
+{ [ "$RC" = 1 ] && has "2 opened but not findable"; } \
+  && ok "a PR nobody is assigned to fails the sweep — 'a PR exists' is not the deliverable" \
+  || bad "a PR nobody is assigned to fails the sweep — 'a PR exists' is not the deliverable" "rc=$RC
+$OUT"
+
+{ has "finzeug/oleo" && has "not assignable" && has "dropped the assignee"; } \
+  && ok "the dropped assignee is named per occurrence, with the repo and the reason" \
+  || bad "the dropped assignee is named per occurrence, with the repo and the reason" "$OUT"
+
+{ has "finzeug/ferret" && has "cannot create label 'submodule-bump'" && has "403"; } \
+  && ok "a token without issues:write in an org is reported as that, not degraded around" \
+  || bad "a token without issues:write in an org is reported as that, not degraded around" "$OUT"
+
+# As a URL, not a bare number: the point of the failure is that somebody has to open that
+# PR and fix it by hand, and a number costs them a lookup per repo.
+{ has "open but not findable:" && has "https://github.com/finzeug/oleo/pull/" \
+  && has "https://github.com/finzeug/ferret/pull/"; } \
+  && ok "the unfindable PRs are listed in the summary, by URL, the way the other failure modes are" \
+  || bad "the unfindable PRs are listed in the summary, by URL, the way the other failure modes are" "$OUT"
+
+{ [ -n "$(refsha finzeug/oleo bump/common)" ] && [ -n "$(refsha finzeug/ferret bump/common)" ] \
+  && jhas "POST /repos/finzeug/oleo/pulls" && jhas "POST /repos/finzeug/ferret/pulls" \
+  && [ "$(mainsha finzeug/oleo)" = "$OLEO_MAIN_BEFORE" ] \
+  && [ "$(mainsha finzeug/ferret)" = "$FERRET_MAIN_BEFORE" ]; } \
+  && ok "an unfindable PR is still opened and still counted — the work is not thrown away" \
+  || bad "an unfindable PR is still opened and still counted — the work is not thrown away" "$OUT"
+
+# The 403 must not swallow the assignment: ferret IS assignable, and only the label failed.
+jhas 'POST /repos/finzeug/ferret/issues/' \
+  && ok "a label failure does not skip the assignment — both halves are attempted" \
+  || bad "a label failure does not skip the assignment — both halves are attempted" \
+         "$(cat "${WORK}/journal.txt")"
 
 # ============================================================================
 

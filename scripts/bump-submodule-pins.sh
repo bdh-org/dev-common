@@ -59,10 +59,32 @@
 #   non-zero. A sweep that silently covered 8 of 10 repos reports the same green as one
 #   that covered 10, which is the exact false green in home-infra#343.
 #
-#   Exit 0  every applicable consumer is current or now has an open PR
-#   Exit 1  at least one consumer could not be processed
+#   So is a PR that was opened and cannot be FOUND -- see below.
+#
+#   Exit 0  every applicable consumer is current or now has an open PR that is assigned
+#           and labelled
+#   Exit 1  at least one consumer could not be processed, or at least one PR could not be
+#           made findable
 #   Exit 2  nothing was assessed (no registry, no consumer pins this source, no token
 #           anywhere) -- NOT a pass
+#
+# AN UNFINDABLE PR IS A FAILURE TOO
+#
+#   The deliverable is not "a PR exists", it is "a PR Brian will see". He reviews these in
+#   one pass each morning, by searching, so every PR is assigned to him and carries the
+#   `submodule-bump` label (created in the consumer if absent) and the whole fleet is one
+#   query:
+#
+#       is:pr is:open assignee:brianholland label:submodule-bump
+#
+#   Assigned to `brianholland`, never to `bdh-ai`: that is the service account every
+#   devcontainer session authenticates as, so assigning it to itself tells nobody anything,
+#   and merging a bump is a deploy that only he can perform.
+#
+#   When the assignment or the labelling fails the PR is still open and still correct, but
+#   it is invisible to the only person who can act on it, which is the same class of silent
+#   no-op as never opening it (home-infra#343). Each occurrence is named, counted alongside
+#   the other failure modes, and exits non-zero.
 #
 # CREDENTIALS (home-infra#91)
 #
@@ -88,6 +110,12 @@ GIT_BASE="${GIT_BASE:-}"
 # a bump commit is attributable to the App and not to a person.
 GIT_AUTHOR_NAME_="${BUMP_GIT_NAME:-bdh-org-coder[bot]}"
 GIT_AUTHOR_EMAIL_="${BUMP_GIT_EMAIL:-305014630+bdh-org-coder[bot]@users.noreply.github.com}"
+# What makes a bump PR findable (see the header). Env-overridable so the tests can drive
+# them; the defaults are the fleet's and are not meant to be varied in production.
+ASSIGNEE="${BUMP_ASSIGNEE:-brianholland}"
+LABEL="${BUMP_LABEL:-submodule-bump}"
+LABEL_COLOR="${BUMP_LABEL_COLOR:-1d76db}"
+LABEL_DESC="Submodule pin bump opened by bump-submodule-pins.sh in bdh-org/dev-common. Merging one is a deploy."
 
 command -v jq  >/dev/null 2>&1 || { echo "bump-submodule-pins: jq is required" >&2; exit 2; }
 command -v git >/dev/null 2>&1 || { echo "bump-submodule-pins: git is required" >&2; exit 2; }
@@ -346,11 +374,90 @@ push_branch() {
   git -C "$wd" push --force "$url" "HEAD:refs/heads/${branch}" >/dev/null 2>&1
 }
 
+# ---------------------------------------------------------------------------- findability
+#
+# CAPABILITY, CHECKED RATHER THAN ASSUMED (2026-08-11, from the forge runner):
+#
+#   * Both coder App installation tokens answer `x-accepted-github-permissions:
+#     issues=write; pull_requests=write`, and each really did create and then delete a
+#     label -- bdh-org via bdh-org/dev-common, finzeug via finzeug/ferret. So the tokens
+#     can create a label and apply one in BOTH orgs; there is no per-org gap today.
+#   * `GET /repos/<consumer>/assignees/brianholland` is 204 in all 14 registry consumers,
+#     so he is assignable everywhere the sweep opens a PR.
+#
+# Nothing below relies on that staying true. Every call is checked and, where the status
+# alone can lie, read back -- so a permission revoked in one org later surfaces as a named
+# failure per PR rather than as a quiet degradation (home-infra#350).
+
+FIND_ERR=""
+
+# ensure_label <token> <consumer> -- the label has to exist in the consumer before it can be
+# applied, and in a repo that has never had a bump PR it does not. Sets FIND_ERR, returns 1.
+ensure_label() {
+  local tok="$1" consumer="$2"
+  api_get "$tok" "/repos/${consumer}/labels/${LABEL}"
+  [ "$STATUS" = "200" ] && return 0
+  if [ "$STATUS" != "404" ]; then
+    FIND_ERR="cannot read label '${LABEL}' (HTTP ${STATUS})"; return 1
+  fi
+  jq -nc --arg n "$LABEL" --arg c "$LABEL_COLOR" --arg d "$LABEL_DESC" \
+    '{name:$n, color:$c, description:$d}' > "${WORKROOT}/label.json"
+  api_send "$tok" POST "/repos/${consumer}/labels" "${WORKROOT}/label.json"
+  case "$STATUS" in
+    # 422 is "already exists": two sweeps racing, or somebody created it by hand between
+    # the GET and the POST. The label is there either way, which is all this asked for.
+    201|422) return 0 ;;
+    *) FIND_ERR="cannot create label '${LABEL}' (HTTP ${STATUS}: $(jqs '.message // ""'))"; return 1 ;;
+  esac
+}
+
+# make_findable <token> <consumer> <pr-number> -- assign the PR to ASSIGNEE and put LABEL on
+# it. Both calls are idempotent, so this runs on the refresh path too: a PR somebody
+# unassigned by hand is exactly as invisible as one that never had an assignee.
+#
+# Sets FIND_ERR to everything that went wrong (both halves are attempted, so one failure
+# does not hide the other) and returns 1 if anything did.
+make_findable() {
+  local tok="$1" consumer="$2" num="$3" why=""
+  FIND_ERR=""
+
+  jq -nc --arg a "$ASSIGNEE" '{assignees:[$a]}' > "${WORKROOT}/assignees.json"
+  api_send "$tok" POST "/repos/${consumer}/issues/${num}/assignees" "${WORKROOT}/assignees.json"
+  if [ "$STATUS" != "201" ]; then
+    why="not assigned to ${ASSIGNEE} (HTTP ${STATUS}: $(jqs '.message // ""'))"
+  elif ! printf '%s' "$BODY" | jq -e --arg a "$ASSIGNEE" \
+         '[(.assignees // [])[].login] | index($a)' >/dev/null 2>&1; then
+    # 201 is not proof. GitHub SILENTLY DROPS an assignee it will not honour -- a user
+    # without push access to the repo is not assignable -- and answers 201 with that login
+    # simply absent from .assignees. Trusting the status here would report success over a
+    # PR assigned to nobody, which is the failure this whole change exists to prevent.
+    why="${ASSIGNEE} is not assignable in ${consumer}: GitHub accepted the request and dropped the assignee (they need push access there)"
+  fi
+
+  if ensure_label "$tok" "$consumer"; then
+    jq -nc --arg l "$LABEL" '{labels:[$l]}' > "${WORKROOT}/labels.json"
+    api_send "$tok" POST "/repos/${consumer}/issues/${num}/labels" "${WORKROOT}/labels.json"
+    if [ "$STATUS" != "200" ]; then
+      why="${why:+${why}; }not labelled '${LABEL}' (HTTP ${STATUS}: $(jqs '.message // ""'))"
+    elif ! printf '%s' "$BODY" | jq -e --arg l "$LABEL" '[.[].name] | index($l)' >/dev/null 2>&1; then
+      why="${why:+${why}; }label '${LABEL}' was accepted but is not on the PR"
+    fi
+  else
+    why="${why:+${why}; }${FIND_ERR}"
+  fi
+
+  FIND_ERR="$why"
+  [ -z "$why" ]
+}
+
 # ---------------------------------------------------------------------------- the sweep
 
-repos=0; applicable=0; current=0; bumped=0; failed=0; nopin=0
-problems=""
+repos=0; applicable=0; current=0; bumped=0; failed=0; nopin=0; unfindable=0
+problems=""; dark=""
 fail() { failed=$((failed+1)); problems="${problems} $1"; }
+# A PR that exists but nobody can find is its own outcome: the bump still counts as bumped
+# (it is real and it is correct), and the sweep still fails.
+dim() { unfindable=$((unfindable+1)); dark="${dark} $1"; }
 
 while IFS= read -r line; do
   line="$(trim "$line")"
@@ -558,8 +665,8 @@ while IFS= read -r line; do
     fi
 
     if [ "$DRY" = 1 ]; then
-      printf '  DRY  %-26s %-14s would open/refresh %s: %s behind, oldest %sd%s\n' \
-        "$consumer" "$path" "$branch" "$behind" "$age" \
+      printf '  DRY  %-26s %-14s would open/refresh %s (assign %s, label %s): %s behind, oldest %sd%s\n' \
+        "$consumer" "$path" "$branch" "$ASSIGNEE" "$LABEL" "$behind" "$age" \
         "$([ -n "$newver" ] && printf ', version -> %s' "$newver")"
       bumped=$((bumped+1)); continue
     fi
@@ -598,6 +705,20 @@ while IFS= read -r line; do
         "$([ -n "$newver" ] && printf ', version -> %s' "$newver")"
     fi
     bumped=$((bumped+1))
+
+    # Assigned and labelled LAST, on both paths, because it is the only step whose failure
+    # leaves a correct PR behind. Loud per occurrence, and as a URL rather than a bare
+    # number: the whole point of the failure is that somebody has to go and look at that
+    # PR, so the line they read has to take them there.
+    if [ -z "$prnum" ]; then
+      printf '  DARK %-26s %-14s PR is open but its number was not in the response — cannot assign or label it\n' \
+        "$consumer" "$path"
+      dim "${consumer}:${path}(no-pr-number)"
+    elif ! make_findable "$tok" "$consumer" "$prnum"; then
+      printf '  DARK %-26s %-14s PR https://github.com/%s/pull/%s is open and correct but NOT findable: %s\n' \
+        "$consumer" "$path" "$consumer" "$prnum" "$FIND_ERR"
+      dim "https://github.com/${consumer}/pull/${prnum}"
+    fi
   done <<<"$paths"
 
   [ "$matched" = 1 ] || { nopin=$((nopin+1)); printf '  --   %-26s does not pin %s\n' "$consumer" "$SOURCE"; }
@@ -617,12 +738,19 @@ if [ "$applicable" -eq 0 ]; then
   exit 2
 fi
 
-log "bump-submodule-pins: ${SOURCE} -> ${applicable} pins across ${repos} repos — ${current} already current, ${bumped} $([ "$DRY" = 1 ] && echo 'would be bumped' || echo 'bumped'), ${failed} could not be processed"
+log "bump-submodule-pins: ${SOURCE} -> ${applicable} pins across ${repos} repos — ${current} already current, ${bumped} $([ "$DRY" = 1 ] && echo 'would be bumped' || echo 'bumped'), ${failed} could not be processed, ${unfindable} opened but not findable"
 [ "$DRY" = 1 ] && log "DRY RUN: nothing was pushed, no PR was opened or closed."
 
 if [ "$failed" -gt 0 ]; then
   note "could not process:${problems}"
   note "A consumer this sweep could not cover is a FAILURE, not a skip (home-infra#343) — fix and re-run."
+fi
+if [ "$unfindable" -gt 0 ]; then
+  note "open but not findable:${dark}"
+  note "Those PRs exist and are correct, but with no assignee and no '${LABEL}' label they are invisible to the only person who can merge them — which is the same class of silent no-op as never opening them (home-infra#343, #350)."
+  note "Assign ${ASSIGNEE} and add '${LABEL}' by hand, or fix the token's issues:write in that org, then re-run."
+fi
+if [ "$failed" -gt 0 ] || [ "$unfindable" -gt 0 ]; then
   exit 1
 fi
 exit 0
