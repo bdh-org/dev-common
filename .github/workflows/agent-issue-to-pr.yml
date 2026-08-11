@@ -86,16 +86,24 @@ on:
       max_turns:
         description: >
           Default Claude Code --max-turns budget for the agent run, and the fallback
-          when an issue asks for something unusable. The default caps cost on small
-          issues (~50 turns is plenty for a docs fix or config change); repos whose
-          agent issues are feature-scale (new adapters, cross-cutting refactors) opt
-          up in their thin wrapper -- 4 of 6 hog runs died at 50 on 2026-07-17
-          (finzeug/hog#335). Prefer a per-issue `agent-turns:` directive over raising
-          this: a repo-wide floor makes every small issue pay the big ceiling too
-          (dev-common#131).
+          when an issue asks for something unusable.
+
+          Raised 50 -> 100 (home-infra#367). The old value came with the reasoning
+          that "the default caps cost on small issues", and that reasoning is wrong:
+          --max-turns is a CEILING, not a budget that gets spent. An issue that
+          finishes in 12 turns costs 12 turns whether the cap is 50 or 100, so the
+          low default bought nothing on the small issues it was defending and killed
+          the large ones outright -- 4 of 6 hog runs on 2026-07-17 (finzeug/hog#335),
+          home-infra#215 at turn 51 of 50, two heller runs on 2026-08-10, each losing
+          a complete unbilled-but-finite allowance spend for no deliverable. What the
+          cap genuinely protects against is a RUNAWAY loop, and 100 still bounds that.
+
+          A per-issue `agent-turns:` directive is still the right tool for the rare
+          feature-scale issue (hog carried max_turns: 150 in its wrapper for exactly
+          that reason); this default is only the floor under it.
         type: number
         required: false
-        default: 50
+        default: 100
       model:
         description: >
           Default Claude model for the agent run, and the fallback when an issue asks
@@ -499,110 +507,66 @@ jobs:
                            "the issue.\n")
           PY
 
-      # Deliverable check (dev-common#140) -- UNCONDITIONAL, unlike the gate below.
-      # Six repos call this reusable with an EMPTY gate_cmd, so for them the gate
-      # step is skipped and the agent's own exit code was the only verdict: a run
-      # that implemented the issue, failed to push, posted the finished patch as an
-      # issue comment and exited 0 still went GREEN (dev-common#131, three times on
-      # 2026-08-02 -- the green status read as "not picked up yet", so the issue was
-      # re-triggered twice and each retry re-did the work and re-spent the shared
-      # subscription allowance). And even where the gate does run, it verifies the
-      # DEV TIER, not this run's stated deliverable.
+      # Deliverable check (dev-common#140) -- UNCONDITIONAL, unlike the gate below. Six
+      # repos call this reusable with an EMPTY gate_cmd, so for them the gate step is
+      # skipped and the agent's own exit code was the only verdict: a run that implemented
+      # the issue, failed to push, posted the finished patch as an issue comment and exited
+      # 0 still went GREEN (dev-common#131, three times on 2026-08-02 -- the green status
+      # read as "not picked up yet", so the issue was re-triggered twice and each retry
+      # re-did the work and re-spent the shared subscription allowance). And even where the
+      # gate does run, it verifies the DEV TIER, not this run's stated deliverable.
       #
-      # So ask GitHub what exists rather than trusting an exit code or grepping the
-      # agent's log (the verification-discipline skill). No PR = red, and the red
-      # run is the signal that stops the pointless retry. A run that legitimately
-      # cannot produce a PR (a push the App token may not make) must end red too:
-      # the agent's explanatory comment is right, the green status was the lie.
+      # So ask GitHub what exists rather than trusting an exit code or grepping the agent's
+      # log (the verification-discipline skill). No PR = red, and the red run is the signal
+      # that stops the pointless retry.
       #
-      # Runs whenever the agent ran, pass or fail -- a max-turns death is already
-      # red, but the summary should still name the missing deliverable. Skipped
-      # only when the agent never ran at all (Vault/checkout failure upstream).
-      - name: Verify a PR exists
+      # Now a forge SCRIPT rather than the inline python this used to be (home-infra#367),
+      # for two reasons that are really one reason:
+      #
+      #   * It reports the failure ON THE ISSUE, not only in the Actions tab. Two heller
+      #     runs died on 2026-08-10 and the issues showed nothing at all -- no comment, no
+      #     assignee, label still applied -- so they read as untouched work while the
+      #     allowance had already been spent twice. The script also CLEARS the trigger
+      #     label, because `issues: [labeled]` fires on the act of labelling and re-applying
+      #     one the issue already carries starts nothing: a second, independent silence.
+      #
+      #   * Logic that lives in a workflow YAML cannot be tested, and this logic was wrong.
+      #     Every no-branch case ended with "the push was rejected (e.g. the App token lacks
+      #     `workflows: write`)" -- a guess, printed as a finding, and flatly wrong for the
+      #     turn-cap deaths it was attached to. The script reads the agent's own execution
+      #     file for `subtype: error_max_turns` and asserts that BEFORE any permissions
+      #     hint. home-infra drives it against a stub API in CI, including that case.
+      #
+      # Runs whenever the agent ran, pass or fail -- a max-turns death is already red, but
+      # the outcome should still reach the issue. Skipped only when the agent never ran at
+      # all (Vault/checkout failure upstream).
+      - name: Report the run's outcome (PR check + issue comment)
         if: ${{ !cancelled() && steps.agent.outcome != 'skipped' }}
         env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          OWNER: ${{ github.repository_owner }}
-          BRANCH: agent/issue-${{ github.event.issue.number }}
+          # The coder App token, NOT github.token: this step comments on the issue and
+          # clears the trigger label, and the App installation carries issues:write across
+          # both orgs where a caller wrapper's `permissions:` block is the caller's to get
+          # wrong. The auto-merge step below already comments with the same identity.
+          GH_TOKEN: ${{ steps.coder.outputs.coder_token }}
           ISSUE: ${{ github.event.issue.number }}
+          # The agent's own account of what happened, so the reason is read rather than
+          # guessed. Both are empty if the action did not get far enough to write them,
+          # which the script tolerates by falling back to the API-only classification.
+          AGENT_CONCLUSION: ${{ steps.agent.outputs.conclusion }}
+          EXECUTION_FILE: ${{ steps.agent.outputs.execution_file }}
+          MAX_TURNS: ${{ steps.budget.outputs.turns }}
+          # Empty on the `/agent` comment path -- that run carries no label to clear.
+          TRIGGER_LABEL: ${{ github.event.label.name }}
         run: |
           set -eu
-          python3 - <<'PY'
-          import json, os, time, urllib.error, urllib.request
-
-          repo, owner = os.environ["REPO"], os.environ["OWNER"]
-          branch, issue = os.environ["BRANCH"], os.environ["ISSUE"]
-
-          def api(path):
-              """GET one API path; None on 404 so a missing branch is answerable."""
-              req = urllib.request.Request(
-                  f"https://api.github.com/repos/{repo}/{path}",
-                  headers={"Authorization": "Bearer " + os.environ["GH_TOKEN"],
-                           "Accept": "application/vnd.github+json"})
-              try:
-                  with urllib.request.urlopen(req, timeout=30) as resp:
-                      return json.load(resp)
-              except urllib.error.HTTPError as exc:
-                  if exc.code == 404:
-                      return None
-                  raise
-
-          def say(*lines):
-              """Echo to the log AND the job summary, so the run list itself
-              distinguishes 'PR #N opened' from 'no PR'."""
-              for line in lines:
-                  print(line)
-              path = os.environ.get("GITHUB_STEP_SUMMARY")
-              if path:
-                  with open(path, "a") as fh:
-                      fh.write("\n".join(lines) + "\n")
-
-          # state=all, not just open: a PR merged (by a human, or by the
-          # agent-deploy auto-merge of an earlier run) is a delivered PR, not a
-          # missing one, and a closed-unmerged one is worth naming in the failure.
-          pulls = []
-          for attempt in (1, 2):
-              pulls = api(f"pulls?state=all&head={owner}:{branch}&per_page=100") or []
-              if pulls or attempt == 2:
-                  break
-              # A PR opened in the agent's final turn can trail the list endpoint by
-              # a moment; a false red here would be as bad as the false green it
-              # replaces.
-              time.sleep(10)
-
-          landed = ([p for p in pulls if p["state"] == "open"]
-                    or [p for p in pulls if p.get("merged_at")])
-          if landed:
-              pr = landed[0]
-              state = ("merged" if pr.get("merged_at")
-                       else "draft" if pr.get("draft") else "open")
-              say(f"### PR #{pr['number']} opened ({state})",
-                  f"[{pr['title']}]({pr['html_url']}) -- head `{branch}`, issue #{issue}")
-              raise SystemExit(0)
-
-          closed = [p for p in pulls if p["state"] == "closed"]
-          if closed:
-              why = (f"PR #{closed[0]['number']} from this branch was closed "
-                     "without merging")
-          elif api(f"branches/{branch}") is not None:
-              why = ("the branch exists, so the push landed but no PR was opened -- "
-                     "the agent declined, or ran out of turns first")
-          else:
-              why = ("the branch does not exist, so nothing was pushed -- the push "
-                     "was rejected (e.g. the App token lacks a permission this "
-                     "change needs, such as `workflows: write`)")
-
-          print(f"::error::No pull request for issue #{issue}: {why}")
-          say(f"### No pull request opened for issue #{issue}",
-              f"Nothing to merge from `{branch}`: {why}.",
-              "",
-              "This run is red because the deliverable is missing, not because the "
-              "agent crashed. Read the agent's comment on the issue before "
-              "re-triggering -- a retry without a fix re-does the same work and "
-              "spends the allowance again.")
-          raise SystemExit(1)
-          PY
+          S=/srv/github-runner/bin/agent-report-outcome.sh
+          if [ ! -x "$S" ]; then
+            # Fail rather than skip. This step IS the deliverable check; a missing script
+            # silently passing would restore the exact false green dev-common#140 removed.
+            echo "::error::${S} is not installed on this runner. It ships from home-infra: run \`make forge-gate-redeploy\` there (the script is in GATE_SCRIPTS). Refusing to report on a deliverable this step could not check."
+            exit 1
+          fi
+          "$S" "agent/issue-${ISSUE}"
 
       # Authoritative dev-tier gate (post-step) -- re-runs the SAME gate as the final
       # verdict so the PR gets a real commit status regardless of the agent's turns.
