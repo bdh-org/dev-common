@@ -1,0 +1,64 @@
+# fleet-consumers.txt — the expected list of repos that carry submodule pins.
+#
+# ONE list, read by BOTH halves of the pin loop (home-infra#362), which since
+# home-infra#368 live in two repos:
+#
+#   dev-common   scripts/bump-submodule-pins.sh          remediation — open a PR that
+#                (this repo, beside this file)                         moves the pin forward
+#   home-infra   scripts/audit-submodule-pins.sh         detection   — how far behind is
+#                reads it as common/scripts/fleet-consumers.txt        every pin?
+#
+# The halves are split because the remediation runs in CI and the detection is run by a
+# human: a reusable workflow can only reach code in a repo its callers can see, and
+# home-infra is private. Home-infra keeps ONE copy of this list all the same — its own
+# `common/` submodule IS this directory, so the audit reads this very file rather than a
+# copy of it, and there is nothing to drift.
+#
+# It lives in a data file, rather than inside either script, because two lists would
+# drift and the drift would be invisible: the audit would report a repo the bump never
+# sweeps, or the bump would open PRs against a repo nobody audits. The absence each one
+# detects is only visible to something holding the expected list, so there has to be
+# exactly one of it.
+#
+# It is a list of STACK MEMBERS, which is knowledge dev-common otherwise does not carry --
+# it is the dev tooling every project across every stack pins, and it names no stack's
+# repos anywhere else. That is a real cost and it was paid deliberately (home-infra#368):
+# the alternative is two expected lists, and an expected list that drifts detects nothing.
+# Nothing in dev-common's own tooling reads this file; only the two scripts above do.
+#
+# FORMAT — one consumer per line:
+#
+#   <org>/<repo> | <max-behind or -> | <max-days or -> | why this repo's pins matter
+#
+# Fields 2 and 3 are per-repo overrides for the AUDIT's thresholds; `-` takes the
+# global default (MAX_BEHIND=10 commits, MAX_DAYS=30 days). The bump ignores them:
+# "current" is the only target it has. Blank lines and `#` comments are skipped.
+#
+# The registry names the CONSUMERS, not the pins. Submodules are discovered from each
+# repo's own .gitmodules on its default branch, so a repo GAINING a submodule is picked
+# up automatically while a repo VANISHING from the fleet is a line that stops matching
+# (which the audit reports as stale registry, not as a pass).
+#
+# Not listed, on purpose: dev-common and dataflow declare no submodules (a line here
+# would fail as stale); brief, roy and devtemplate consume dev-common but are not stack
+# members. Adding any of them is one line.
+#
+# Apostrophes are SAFE here. They were not when this block lived inside the audit as
+# the default word of a "${CONSUMERS:-...}" expansion, where bash parses quotes even
+# inside the double-quoted expansion — one `repo's` and the script did not parse at
+# all. Moving the data into a file retired that trap along with the duplication.
+
+bdh-org/home-infra       | - | - | the architect workspace: common + stack-common drive the shared make targets and skills everywhere
+bdh-org/home-site        | - | - | P1 primary/web edge -- owns docker-compose.yml and the vhost proxy for the whole stack
+bdh-org/home-stack-common| - | - | carries dev-common nested, so every stack-common pin in the fleet resolves through this one
+finzeug/heller           | - | - | THE LEDGER WRITER. Its ledger-io pin decides what semantics the book is written with (home-infra#349)
+finzeug/slingshot        | - | - | models the book with ledger-io; a revision split from heller is a disagreement nobody can localise
+finzeug/panoptikon       | - | - | reads the book with ledger-io; on 2026-08-10 it read with a different revision than heller wrote with
+finzeug/hog              | - | - | P2a service
+finzeug/canary           | - | - | P2a service
+finzeug/freddyb          | - | - | P2a service
+finzeug/oleo             | - | - | P2b static site
+finzeug/refdims          | - | - | P2c data service -- schema + seed
+finzeug/ferret           | - | - | library consumer
+finzeug/ratecraft        | - | - | a pinned-only library that is itself a consumer
+finzeug/ledger-io        | - | - | a pinned-only library that is itself a consumer

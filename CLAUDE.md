@@ -232,6 +232,31 @@ present, `@stack-common/CLAUDE.md`. By convention the stack-common repo is
 named `<stack>-stack-common` (e.g. `fra-stack-common`); the mount path is
 always `stack-common/`, so member wiring never depends on the repo name.
 
+#### A reusable workflow lives with the code it runs, in a repo the callers can see
+
+Two GitHub rules, and breaking either one is invisible until the workflow runs
+(bdh-org/home-infra#368, where both were hit within ten minutes):
+
+1. **A public repo can never use a workflow from a private one.** No setting
+   changes that. dev-common is public, so a reusable held in a private repo —
+   a stack's infra/architect repo, say — is unreachable from here forever.
+2. **A reusable's `actions/checkout` checks out the CALLER's repo**, not the
+   repo the workflow file came from. The job runs in the caller's workspace, so
+   a script sitting beside the workflow is simply not on disk: `No such file or
+   directory`, exit 127. Fix it by NAMING the repo in the checkout
+   (`repository:` plus `ref: ${{ github.job_workflow_sha }}`), which also pins
+   the code to the same commit the workflow itself was read from.
+
+So shared reusables live HERE, in dev-common — public, already checked out as
+`common/` in every consumer, already the home of `ci.yml`,
+`self-hosted-ci.yml`, `agent-issue-to-pr.yml`, `agent-pr-revise.yml`,
+`tag-version.yml`, `shell-tests.yml` and `bump-submodule-pins.yml`.
+
+The trap is that the *script* a workflow runs often belongs somewhere else by
+an equally good convention — "ops tooling belongs in the infra repo" — and that
+convention quietly stops applying the moment CI has to run the thing. When the
+two pull apart, CI wins: a tool nobody can invoke is not tooling.
+
 ### P4: Conda-dev / pip-prod dependency split
 Development and production use different package managers:
 - **Dev**: `conda-packages.txt` installed via conda in the devcontainer.

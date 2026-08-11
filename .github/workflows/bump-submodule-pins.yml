@@ -1,0 +1,188 @@
+name: bump-submodule-pins (reusable)
+# Keep every submodule pin in the fleet current, by opening a PR that moves it
+# (home-infra#362). The remediation half of the loop whose detection half is
+# `make audit-submodule-pins` in bdh-org/home-infra.
+#
+# WHY THIS LIVES IN dev-common
+#
+# It was written in home-infra, by the "ops tooling belongs in home-infra" convention, and
+# GitHub refused it twice within ten minutes (home-infra#368):
+#
+#   1. home-infra is PRIVATE and dev-common is PUBLIC, and a public repository can never
+#      use a workflow from a private one. No setting changes that -- so the dev-common half
+#      of the sweep, the one that has to be triggered from dev-common, could not have run
+#      from there at all.
+#   2. A reusable workflow's `actions/checkout` checks out the CALLER's repo. Called from
+#      home-stack-common, the job ran in home-stack-common's workspace while the engine sat
+#      in home-infra's, and the sweep died with
+#      `./scripts/bump-submodule-pins.sh: No such file or directory` (exit 127).
+#
+# The rule that came out of it: **a reusable workflow lives with the code it runs, in a repo
+# the callers can see.** dev-common is public, is already the fleet's shared-workflow home
+# (ci.yml, self-hosted-ci.yml, agent-issue-to-pr.yml, agent-pr-revise.yml, tag-version.yml,
+# shell-tests.yml) and is already checked out as `common/` in every consumer. The second
+# failure is fixed structurally below: the checkout NAMES this repo rather than trusting
+# whoever called.
+#
+# ONE REGISTRY, and it is here: scripts/fleet-consumers.txt. That list is home-site-stack
+# membership, which dev-common is otherwise deliberately ignorant of -- it is the dev tooling
+# every project across every stack pins. The compromise is that the list is DATA, read by the
+# engine and by home-infra's audit (through its own `common/` submodule) and by nothing else
+# in dev-common's tooling. One list beats a stack-purity argument that costs the fleet two
+# lists that drift invisibly (home-infra#362, #368).
+#
+# WHAT IT WILL NOT DO: merge anything, or push to any consumer's main. The engine enforces
+# both structurally (tests/submodule-bump.test.sh asserts it against a journalling stub and
+# real bare repos). Merging a bump is a DEPLOY; that stays a human act (home-infra#348).
+on:
+  workflow_call:
+    inputs:
+      source:
+        description: >
+          The submodule repo whose consumers to sweep, as <org>/<repo>. A caller in the
+          source repo passes its OWN slug -- the source is the only party that knows it
+          changed.
+        type: string
+        required: true
+      dry_run:
+        description: "Report what would be opened, push nothing, open no PR."
+        type: boolean
+        required: false
+        default: false
+  workflow_dispatch:
+    inputs:
+      source:
+        description: "Source to sweep (empty = both, in the safe order)"
+        type: string
+        required: false
+        default: ""
+      dry_run:
+        description: "Dry run"
+        type: boolean
+        required: false
+        default: true
+  schedule:
+    # 06:20 UTC daily. The backstop the issue asks for: a push trigger that never fires --
+    # a caller not yet installed, a workflow disabled, a run cancelled -- must not be able
+    # to turn into a month. The schedule sweeps BOTH sources, so it also covers a source
+    # repo whose caller was never added.
+    - cron: "20 6 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  # Per source, and never cancel in flight: a cancelled sweep can leave a consumer pushed
+  # but PR-less, which the next run repairs but which reads as a failure in the meantime.
+  group: submodule-bump-${{ inputs.source || 'all' }}
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    runs-on: [self-hosted, forge]
+    steps:
+      # NAMED, not default. `actions/checkout` with no `repository:` checks out
+      # `github.repository`, which for a reusable workflow is the CALLER -- home-stack-common,
+      # or tomorrow any other source repo -- and the engine is not there. That was failure 2
+      # in home-infra#368, and naming the repo is what retires it.
+      #
+      # `job_workflow_sha` is the commit THIS file was read from, so the engine can never be a
+      # different revision than the workflow driving it: a PR to this repo tests its own
+      # engine, not main's. On the paths where this workflow runs on its OWN events (the
+      # schedule, or a workflow_dispatch here in dev-common) it is not a reusable call and
+      # job_workflow_sha is empty -- then `github.sha` is this repo, this run, which is the
+      # same commit by another name.
+      #
+      # No token needed: dev-common is public, which is the whole point of the move.
+      - uses: actions/checkout@v4
+        with:
+          repository: bdh-org/dev-common
+          ref: ${{ github.job_workflow_sha || github.sha }}
+
+      # The 127 that started home-infra#368 was a missing file reported by `bash` in the
+      # middle of a sweep, three steps and two minted tokens after the mistake. Ask up front,
+      # and name what is missing and where it was looked for -- an absent input reported as a
+      # runtime error is the same class as an empty result reported as success
+      # (home-infra#343).
+      - name: The engine and the registry are in the workspace
+        shell: bash
+        run: |
+          set -uo pipefail
+          echo "caller repo:      ${GITHUB_REPOSITORY}"
+          echo "workspace holds:  bdh-org/dev-common @ ${CHECKED_OUT:-<no sha>}"
+          missing=0
+          for f in ./scripts/bump-submodule-pins.sh ./scripts/fleet-consumers.txt; do
+            if [ -r "$f" ]; then
+              echo "ok   ${f}"
+            else
+              echo "::error::${f} is not in the workspace. The checkout above did not deliver bdh-org/dev-common@${CHECKED_OUT:-?}, so the sweep has no engine to run."
+              missing=$((missing + 1))
+            fi
+          done
+          [ "$missing" -eq 0 ] || exit 1
+          echo "registry: $(grep -cvE '^[[:space:]]*(#|$)' ./scripts/fleet-consumers.txt) consumers"
+        env:
+          CHECKED_OUT: ${{ github.job_workflow_sha || github.sha }}
+
+      # Consumers live in BOTH orgs, so one installation token is never enough. Same
+      # credential path as the agent pipeline (home-infra#91) -- minted per run, ~1h TTL,
+      # attributed to bdh-org-coder[bot]; no PAT, no new credential.
+      - name: Mint coder App token (bdh-org)
+        id: bdh
+        env:
+          VAULT_ADDR: ${{ vars.VAULT_ADDR }}
+          CODER_TOKEN_OUTPUT_NAME: coder_token
+        run: /srv/github-runner/bin/mint-coder-app-token.sh bdh-org
+
+      - name: Mint coder App token (finzeug)
+        id: fin
+        env:
+          VAULT_ADDR: ${{ vars.VAULT_ADDR }}
+          CODER_TOKEN_OUTPUT_NAME: coder_token
+        run: /srv/github-runner/bin/mint-coder-app-token.sh finzeug
+
+      # Sweep. With no source (schedule / a bare dispatch) both are swept, dev-common
+      # FIRST: home-stack-common is itself a dev-common consumer, so its own bump/common PR
+      # should exist before anyone merges the stack-common PRs that would carry a nested
+      # dev-common along (home-infra#362 §4). The two are still independent PRs and a human
+      # still merges them in that order -- this only makes sure both are on the table.
+      #
+      # Both sweeps run even if the first fails, and the step fails if EITHER did: a sweep
+      # that covered one source and reported green is the false green in home-infra#343.
+      - name: Sweep consumers
+        env:
+          GH_TOKEN_bdh_org: ${{ steps.bdh.outputs.coder_token }}
+          GH_TOKEN_finzeug: ${{ steps.fin.outputs.coder_token }}
+          SOURCE: ${{ inputs.source }}
+          # Empty on the schedule path (no inputs context) -> a real sweep, which is the
+          # point of the backstop. workflow_dispatch defaults to true so a hand-run is
+          # safe by default; a caller passes false.
+          DRY: ${{ inputs.dry_run }}
+        shell: bash
+        run: |
+          # NOT -e: the exit code of each sweep is inspected, and the step must report the
+          # WORST of them rather than dying on the first. A sweep that covered one source
+          # and stopped would still have to fail, and does, below.
+          set +e -uo pipefail
+          args=""
+          [ "${DRY}" = "true" ] && args="--dry-run"
+          rc=0
+          if [ -n "${SOURCE}" ]; then
+            sources="${SOURCE}"
+          else
+            sources="bdh-org/dev-common bdh-org/home-stack-common"
+          fi
+          for s in ${sources}; do
+            echo "== sweeping consumers of ${s} ${args}"
+            ./scripts/bump-submodule-pins.sh --source "${s}" ${args} | tee -a "${RUNNER_TEMP}/sweep.log"
+            src_rc="${PIPESTATUS[0]}"
+            [ "${src_rc}" -eq 0 ] || rc="${src_rc}"
+          done
+          {
+            echo "## submodule-bump"
+            echo ""
+            echo '```'
+            cat "${RUNNER_TEMP}/sweep.log"
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY}"
+          exit "${rc}"

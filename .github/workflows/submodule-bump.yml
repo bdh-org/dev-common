@@ -3,13 +3,23 @@ name: submodule-bump (wrapper)
 # moves, sweep every repo that pins it and open (or force-refresh) one PR per consumer that
 # moves the pointer forward.
 #
-# The pipeline itself is home-infra's reusable -- same reusable-plus-wrapper shape as the
-# agent pipeline and tag-version, but pointing at home-infra rather than at this repo,
-# because the sweep is driven by an EXPECTED LIST of consumers
-# (home-infra/scripts/fleet-consumers.txt) and that list is home-site-stack membership.
-# dev-common is deliberately stack-AGNOSTIC -- the dev tooling every project across every
-# stack pins -- so it must not learn the names of one stack's repos. That is P3, applied
-# here rather than argued about later.
+# WHY THIS REPO HOLDS BOTH THE WRAPPER AND THE REUSABLE IT CALLS -- and why that is not
+# circular. They are two different things that happen to live in one repo:
+#
+#   * bump-submodule-pins.yml is the PIPELINE, `workflow_call`-shaped, called by every source
+#     repo that wants its consumers swept. home-stack-common calls it too.
+#   * this file is dev-common's own TRIGGER -- "my main moved, sweep my consumers" -- exactly
+#     the trigger home-stack-common carries for itself. dev-common is a source like any other,
+#     so it needs a caller like any other.
+#
+# Same split as issue-to-pr.yml (this repo's trigger) calling agent-issue-to-pr.yml (the
+# pipeline). The pipeline moved here from home-infra in home-infra#368: home-infra is private,
+# and a public repo can never call a private reusable -- so this wrapper could not have worked
+# from there, and did not.
+#
+# `./` and not `bdh-org/dev-common/...@main`: a same-repo reusable referenced by relative path
+# runs from the SAME commit as this file, so a PR that changes the pipeline is tested by the
+# PR that changes it, rather than by whatever is on main.
 #
 # WHY THE SOURCE AND NOT THE CONSUMER: the source is the only party that knows it changed.
 # A consumer cannot notice something it has not fetched, which is why `common` sat 1-3
@@ -19,12 +29,8 @@ name: submodule-bump (wrapper)
 # NOTHING IS MERGED. The sweep opens PRs and stops. Merging a bump is a deploy
 # (home-infra#348), so it stays a human act.
 #
-# The daily backstop schedule lives in home-infra's workflow, not here: it sweeps BOTH
-# sources, so it also covers a source repo whose wrapper was never installed.
-#
-# PREREQUISITE, one time: home-infra is private, so its Settings -> Actions -> General ->
-# Access must allow "Accessible from repositories in the bdh-org organization" or this
-# wrapper fails at workflow resolution.
+# The daily backstop schedule lives in the pipeline, not here: it sweeps BOTH sources, so it
+# also covers a source repo whose wrapper was never installed.
 on:
   push:
     branches: [main]
@@ -45,7 +51,7 @@ concurrency:
 
 jobs:
   sweep:
-    uses: bdh-org/home-infra/.github/workflows/submodule-bump.yml@main
+    uses: ./.github/workflows/bump-submodule-pins.yml
     with:
       source: bdh-org/dev-common
       dry_run: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}

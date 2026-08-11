@@ -78,7 +78,28 @@ The `github/` directory contains workflow templates for consumer repos — copy 
 Most of `.github/workflows/` is `workflow_call`-only — reusable implementations
 that fire on *other* repos' events. `shell-tests.yml` is the exception: it is
 dev-common's own PR gate over the shell it ships, and should not be copied into
-a consumer repo.
+a consumer repo. `issue-to-pr.yml`, `pr-revise.yml` and `submodule-bump.yml` are
+dev-common's own *wrappers*: this repo is a consumer of its own pipelines, so it
+carries a trigger for each, exactly like every other repo does.
+
+**A reusable workflow lives with the code it runs, and here that means public.**
+A public repo can never call a workflow from a private one, and a reusable's
+`actions/checkout` lands in the *caller's* workspace — so a script sitting
+beside a reusable in another repo is simply not on disk when the job runs. Both
+bit at once in bdh-org/home-infra#368, which is why `bump-submodule-pins.yml`
+and its engine live here rather than in the (private) architect repo. A
+reusable that needs code from this repo must name it:
+`repository: bdh-org/dev-common` with `ref: ${{ github.job_workflow_sha }}`.
+
+### scripts/
+
+Shell that dev-common's *own* workflows run — not consumer tooling, which is
+`make/` and `devcontainer/`.
+
+| File | Description |
+|------|-------------|
+| `bump-submodule-pins.sh` | The fleet pin sweep: one PR per consumer moving a stale submodule pin to the source's head. Never merges, never pushes to a consumer's `main` (bdh-org/home-infra#362) |
+| `fleet-consumers.txt` | The one expected list of repos carrying pins. Read by the sweep here, and by `audit-submodule-pins.sh` in home-infra through its `common/` submodule — the same file, not a copy |
 
 ### tests/
 
@@ -87,6 +108,7 @@ dev-common's own tests, run by `make test` and by `shell-tests.yml` on every PR.
 | File | Covers |
 |------|--------|
 | `setup-claude-identity.test.sh` | `devcontainer/setup-claude-identity.sh` — role naming per `PROJECT_NAME`, `user.email` left alone, the `~/.gitconfig-seat` → `~/.gitconfig-role` migration, and idempotency across repeated runs |
+| `submodule-bump.test.sh` | `scripts/bump-submodule-pins.sh` — driven end to end against a journalling stub API and real bare repos, asserting the negative space: no merge call, every consumer's `main` byte-identical after every case, and no version moved by anything but `make bump-patch` |
 
 Each case runs the real script against a throwaway `$HOME` — the script's only
 inputs are `$HOME` and `$PROJECT_NAME`, so nothing needs stubbing and nothing

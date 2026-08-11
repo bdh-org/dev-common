@@ -47,3 +47,13 @@ jobs:
 
       - name: setup-claude-identity.sh
         run: bash tests/setup-claude-identity.test.sh
+
+      # The fleet pin sweep opens PRs across fourteen repos in two orgs, unattended, daily
+      # (home-infra#362) -- and from this repo since home-infra#368. Its whole safety story is
+      # a set of things it must NEVER do -- merge, push to a consumer's main, sed a version,
+      # silently cover 8 of 10 -- and every one of them is invisible in a happy-path test. So
+      # this drives the real script against a journalling stub API and real bare repos, and
+      # asserts on the negative space: the journal holds no merge call, and every consumer's
+      # main sha is byte-identical after every case, failures included.
+      - name: the submodule bump never merges and never pushes to a consumer's main
+        run: bash tests/submodule-bump.test.sh
