@@ -374,11 +374,18 @@ mv="$(git_q -C "${REMOTES}/bdh-org/home-site.git" show main:Makefile | grep -m1 
   && ok "make bump-patch moved the version on the branch and only there" \
   || bad "make bump-patch moved the version on the branch and only there" "branch=$v main=$mv"
 
-{ git_q -C "${REMOTES}/bdh-org/home-site.git" log --format=%s bump/common | grep -q '^chore: bump version to 1.2.177$' \
-  && git_q -C "${REMOTES}/bdh-org/home-site.git" log --format=%s bump/common | grep -q '^chore: bump common to '; } \
+# Read the subjects ONCE into a variable and match with a here-string, rather than piping
+# `git log` into `grep -q`. This suite runs under `set -o pipefail`, and `grep -q` exits the
+# instant it matches -- if git has not finished writing by then it takes SIGPIPE (141), which
+# pipefail promotes to the pipeline's status and the case fails with the very lines it was
+# looking for printed underneath it. That is a race against the scheduler: it passed on the
+# forge runner and failed on ubuntu-latest, first run (home-infra#368).
+SUBJECTS="$(git_q -C "${REMOTES}/bdh-org/home-site.git" log --format=%s bump/common)"
+{ grep -q '^chore: bump version to 1.2.177$' <<<"$SUBJECTS" \
+  && grep -q '^chore: bump common to ' <<<"$SUBJECTS"; } \
   && ok "the branch carries the pointer commit AND bump-patch's own commit" \
   || bad "the branch carries the pointer commit AND bump-patch's own commit" \
-         "$(git_q -C "${REMOTES}/bdh-org/home-site.git" log --format=%s -3 bump/common)"
+         "$(printf '%s\n' "$SUBJECTS" | head -3)"
 
 has "does not pin" && bad "a consumer that pins the source is not reported as unrelated" \
   || ok "both registry entries were recognised as consumers of the source"
@@ -410,7 +417,13 @@ printf '%s' "$BODY_INFRA" | grep -qF 'No `VERSION=` in this Makefile' \
   || bad "a consumer with NO ci-build is not told a deploy it does not have" "$BODY_INFRA"
 
 # --- the negative space -------------------------------------------------------
-awk '{print $1, $2}' "${WORK}/journal.txt" | grep -qiE 'merge' \
+#
+# Not `awk ... | grep -qiE`: under pipefail an early-exiting `grep -q` can SIGPIPE the awk
+# feeding it, and here that lands on the WRONG side -- a 141 reads as "no merge found" and
+# this case goes green over a journal that holds one. The verbs are read into a variable and
+# matched with a here-string, so the only thing being asked about is the journal.
+VERBS="$(awk '{print $1, $2}' "${WORK}/journal.txt")"
+grep -qiE 'merge' <<<"$VERBS" \
   && bad "the sweep sent no merge request" "$(cat "${WORK}/journal.txt")" \
   || ok "the sweep sent no merge request of any kind"
 
