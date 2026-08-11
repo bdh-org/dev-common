@@ -1,5 +1,14 @@
 Update the `common` submodule to latest and bump patch version across all repos in /workspaces.
 
+**This is now the escape hatch, not the process.** Since bdh-org/home-infra#362 the
+`submodule-bump` workflow sweeps every consumer of `common` and `stack-common` on every push
+to the source's main, and daily as a backstop, opening one force-refreshed PR per repo. Use
+this skill when you want ONE repo bumped right now, or when the workflow cannot run. It walks
+`/workspaces/*`, so it only works in the architect devcontainer -- which is the other reason
+it could never be the process.
+
+It also does not cover `stack-common` at all.
+
 ## Instructions
 
 This skill operates across multiple repos. Run it from /workspaces (not inside a single repo).
@@ -50,15 +59,21 @@ git add common
 - `git push -u origin update-common`
 - Create PR with `gh pr create --title "chore: update common submodule" --body "Updates common submodule to latest and bumps patch version."`
 
-#### f. Squash merge
+#### f. Stop. Do not merge.
 
-- `gh pr merge --squash --delete-branch`
+Leave the PR open for a human.
+
+**Merging a bump is a deploy.** Merging to main runs `ci-build`, which ships an
+image and restarts that service — so running this skill across the fleet and
+merging as you go is a fleet deploy with nothing checking the fleet came back.
+That is exactly what happened in bdh-org/home-infra#348: a routine
+`update-common` restarted the reference database under ten services. This step
+used to read `gh pr merge --squash --delete-branch`, and that line is why.
 
 #### g. Cleanup
 
-- `git checkout main && git pull`
-- `git branch -d update-common 2>/dev/null`
-- `git remote prune origin`
+- `git checkout main`
+- Leave the `update-common` branch alone — the PR is still open on it.
 
 ### 3. Confirm
 
