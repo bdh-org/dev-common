@@ -201,7 +201,13 @@ jobs:
             mint "$org" || echo "::warning::could not mint a ${org} token -- falling back to the checkout credential"
           done
 
-          git ${CFG[@]+"${CFG[@]}"} submodule update --init -- "${WANT[@]}" || true
+          # --force is LOAD-BEARING (dev-common#176). Without it, `submodule update --init`
+          # is a NO-OP whenever the module HEAD already equals the pin -- it never looks at
+          # the working tree. On this persistent runner an earlier job can leave a submodule
+          # directory emptied of tracked files while .git and HEAD survive, and every later
+          # hydration then "succeeds" against an empty directory. --force checks the tree out
+          # regardless. Verified: plain update does not restore the files, --force does.
+          git ${CFG[@]+"${CFG[@]}"} submodule update --init --force -- "${WANT[@]}" || true
 
           # Fail LOUDLY, naming the submodule and the org it needed. A submodule this
           # workflow asked for and did not populate must never be handed on as an
@@ -210,7 +216,21 @@ jobs:
           # never initialised and '+' for one left at a commit other than the pin --
           # and '+' is how this bug hid, a stale checkout on the persistent runner
           # standing in for a fetch that never happened.
+          # `submodule status` is NOT sufficient on its own, which is how this got past the
+          # first version of this guard. It reports a path CLEAN when .git exists and HEAD
+          # matches the pin, even with every tracked file deleted -- reproduced directly:
+          # remove the files, keep .git, and status prints a leading space, not '-' or '+'.
+          # So ask the WORKING TREE whether it holds anything, which is the question pip and
+          # `make lint` are really asking two steps later.
           bad="$(git submodule status -- "${WANT[@]}" 2>/dev/null | grep -E '^[-+]' || true)"
+          for _p in "${WANT[@]}"; do
+            # Anything other than .git itself counts as populated.
+            if [ -z "$(ls -A "$_p" 2>/dev/null | grep -vx '.git' || true)" ]; then
+              bad="${bad}"$'\n'" ${_p}"
+              echo "::error::${_p} is checked out at its pin but its working tree is EMPTY"
+            fi
+          done
+          bad="$(printf '%s\n' "$bad" | sed '/^[[:space:]]*$/d')"
           if [ -n "$bad" ]; then
             echo "::error::submodule hydration incomplete -- refusing to run CI against a partial checkout"
             while read -r rev path _; do

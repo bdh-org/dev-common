@@ -100,7 +100,7 @@ assert_absent "$body" 'github.com/bdh-org/.insteadOf' \
   "no hardcoded bdh-org rewrite (that is the same bug inverted, panoptikon#700)"
 assert_absent "$body" 'update --init --recursive' \
   "still selective, not recursive -- #169's hydration must not be pasted in whole (heller#356)"
-assert_contains "$body" 'submodule update --init -- "${WANT[@]}"' \
+assert_contains "$body" 'submodule update --init --force -- "${WANT[@]}"' \
   "and the update is limited to the path list it built"
 
 # sm_map / sm_org are dev-common#169's, and their coverage lives in
@@ -238,6 +238,51 @@ if [ -f "$TMP/co-sel/vendor/unwanted/file" ]; then
   notok "vendor/unwanted survived -- an earlier job's checkout is still on disk (heller#356)"
 else ok "a submodule this run did not ask for is deinited, not inherited"; fi
 assert_eq "" "$(cat "$MINT_LOG")" "a local (non-GitHub) URL costs no mint attempt"
+
+CASE="e2e: emptied worktree, .git intact"
+# THE panoptikon/ratecraft SHAPE (dev-common#176), and the one the first version of this
+# guard could not see. On the persistent runner a submodule directory can lose every tracked
+# file while .git and HEAD survive. In that state:
+#
+#   * `git submodule status` prints a LEADING SPACE -- not '-' and not '+' -- because HEAD
+#     still equals the pin. The status-only guard therefore passes.
+#   * `git submodule update --init` is a NO-OP for the same reason: it compares HEAD to the
+#     pin and never looks at the working tree.
+#
+# So hydration reported OK and pip failed two steps later with "Directory lib/ratecraft is not
+# installable", which sends the reader to ratecraft's packaging -- a dead end, since the
+# pinned commit does contain pyproject.toml.
+mkrepo dev-common
+mkrepo ratecraft
+w="$TMP/build/empties"; mkdir -p "$w"; git init -q -b main "$w"
+git init -q --bare -b main "$TMP/remotes/empties.git"
+echo consumer > "$w/file"
+for s in "dev-common common" "ratecraft lib/ratecraft"; do
+  set -- $s
+  git -C "$w" submodule add -q "$TMP/remotes/$1.git" "$2" >/dev/null 2>&1
+done
+git -C "$w" add -A; git -C "$w" commit -qm init
+git -C "$w" push -q "$TMP/remotes/empties.git" main
+
+git clone -q "$TMP/remotes/empties.git" "$TMP/co-empty"
+git -C "$TMP/co-empty" submodule update --init -- lib/ratecraft >/dev/null 2>&1
+# Delete the tracked files but keep .git -- exactly what was on forge.
+find "$TMP/co-empty/lib/ratecraft" -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+# Prove the fixture really is the blind spot before asserting the fix handles it.
+if git -C "$TMP/co-empty" submodule status -- lib/ratecraft | grep -qE '^[-+]'; then
+  notok "fixture is wrong: status already flags this, so it is not the blind spot"
+else ok "fixture reproduces it: status reports the emptied submodule as clean"; fi
+
+if run_hydrate "$TMP/co-empty" "lib/ratecraft"; then
+  if [ -f "$TMP/co-empty/lib/ratecraft/file" ]; then
+    ok "--force re-checks-out an emptied worktree instead of no-opping"
+  else
+    notok "hydration reported success over an EMPTY directory -- the exact dev-common#176 bug"
+  fi
+else
+  # Failing loudly is also acceptable; silently succeeding is not.
+  assert_contains "$OUT" "EMPTY" "if it cannot restore it, it says the tree is empty"
+fi
 
 CASE="e2e: an unrequested path"
 if run_hydrate "$TMP/co-sel" "lib/nope"; then ok "an extra that is not a submodule does not fail the run"
