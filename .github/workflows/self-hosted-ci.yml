@@ -13,6 +13,11 @@ name: Self-hosted CI
 #
 # Per-repo differences live in the repo (its conda-packages.txt / ci-environment.yml
 # and the wrapper inputs), never as branches inside this file.
+#
+# The caller repo must set the VAULT_ADDR variable: EVERY submodule here is a
+# cross-repo fetch (`common` is bdh-org/dev-common whoever calls), and
+# GITHUB_TOKEN is scoped to the calling repo alone -- so hydration mints an org
+# App token per submodule org via Vault.
 on:
   workflow_call:
     inputs:
@@ -35,11 +40,11 @@ on:
         description: >
           Space-separated submodule paths to init and pip-install beyond `common`,
           e.g. "lib/ratecraft lib/ledger-io". ORDER MATTERS: they are installed
-          left to right, so a dependency comes before its dependent. Needs the
-          repo to set the VAULT_ADDR variable -- fetching them uses an org App
-          token, because GITHUB_TOKEN is scoped to this repo alone and cannot
-          read a sibling repo. Empty (the default) leaves every existing consumer
-          untouched.
+          left to right, so a dependency comes before its dependent. Empty (the
+          default) leaves every existing consumer untouched.
+
+          They may live in any org -- the hydration step mints a token per org
+          named in .gitmodules, not per caller org (dev-common#170).
         type: string
         default: ""
       ci-env-file:
@@ -65,8 +70,57 @@ jobs:
           fetch-depth: 0
           clean: true            # default: git reset --hard && git clean -ffdx
 
-      - name: Fetch dev-common submodule
+      # Hydrate `common` plus the caller's extras, each with a token minted for
+      # ITS OWN org, read out of its URL in .gitmodules -- never from the caller
+      # repo's org (dev-common#170). GITHUB_TOKEN is scoped to THIS repo, so it
+      # cannot read a sibling repo, which is what every cross-repo submodule is;
+      # the coder App is installed in every org and mints a ~1h installation
+      # token per org (home-infra#91).
+      #
+      # `common` is ALWAYS bdh-org/dev-common however finzeug the caller is, and
+      # panoptikon / heller / slingshot vendor finzeug's lib/ledger-io +
+      # lib/ratecraft alongside bdh-org's common + stack-common. So neither the
+      # caller's org nor a hardcoded bdh-org is the right signal for any of them
+      # -- only the URL is. dev-common#169 fixed exactly this in the agent
+      # workflows, where it pointed the other way; sm_map/sm_org below are that
+      # fix's functions, verbatim (tests/ci-submodules.test.sh enforces that).
+      #
+      # Deliberately NOT --recursive, and deliberately a SELECTED path list: the
+      # step below deinits everything else first, so a test guarded on "is this
+      # submodule checked out?" cannot silently run against whatever an earlier
+      # agent job left on the shared workspace (finzeug/heller#356).
+      - name: Hydrate the selected submodules (per-submodule org tokens)
+        env:
+          VAULT_ADDR: ${{ vars.VAULT_ADDR }}
+          EXTRA: ${{ inputs.extra-submodules }}
         run: |
+          set -euo pipefail
+          MINT="${MINT:-/srv/github-runner/bin/mint-coder-app-token.sh}"
+
+          # path<TAB>url for every submodule any .gitmodules on disk declares. Nested
+          # paths are printed parent-prefixed, exactly the way `git submodule status
+          # --recursive` reports them, so the check at the end can look a path up here.
+          sm_map() {
+            local f dir k p u
+            while IFS= read -r f; do
+              case "$f" in */.gitmodules) dir="${f%.gitmodules}";; *) dir="";; esac
+              while IFS= read -r k; do
+                p="$(git config -f "$f" --get "$k")" || continue
+                u="$(git config -f "$f" --get "${k%.path}.url")" || u=""
+                printf '%s\t%s\n' "${dir}${p}" "$u"
+              done < <(git config -f "$f" --name-only --get-regexp '^submodule\..*\.path$' 2>/dev/null || true)
+            done < <(find . -name .gitmodules -not -path './.git/*' -printf '%P\n' | sort)
+          }
+
+          # The GitHub org owning a submodule URL; empty for anything else -- a relative
+          # or non-GitHub URL needs no token of ours and must not cost a mint attempt.
+          sm_org() {
+            printf '%s\n' "$1" | sed -nE 's#^(https://github\.com/|git@github\.com:)([^/]+)/.*#\2#p'
+          }
+
+          # tests/ci-submodules.test.sh sources everything above and stops here.
+          if [ -n "${HYDRATE_LIB_ONLY:-}" ]; then return 0; fi
+
           # Drop any submodule an earlier job left behind, then init only what
           # this workflow wants.
           #
@@ -79,42 +133,100 @@ jobs:
           # forge's _work/<repo>/<repo> is shared by every workflow for that repo,
           # and agent-issue-to-pr / agent-pr-revise (also runs-on forge) init
           # `--recursive`. So one agent run leaves every submodule on disk, and
-          # every later CI job inherits them at an arbitrary commit. Any test
-          # guarded on "is this submodule checked out?" then runs against unknown
-          # code -- silently (finzeug/heller#356).
+          # every later CI job inherits them at an arbitrary commit.
           #
           # `common` is kept rather than deinited-and-refetched: it is wanted
           # anyway, and re-cloning it on every job across the fleet is pure cost.
-          keep="common ${{ inputs.extra-submodules }}"
+          keep="common ${EXTRA:-}"
           git submodule status 2>/dev/null | awk '{print $2}' \
             | grep -vxF -f <(printf '%s\n' $keep) \
             | xargs -r git submodule deinit -f -- 2>/dev/null || true
-          git submodule update --init common
 
-      # GITHUB_TOKEN is scoped to THIS repo, so it cannot read a sibling repo --
-      # which is what a cross-repo submodule is. The coder App is installed in
-      # every org and mints a ~1h installation token per org, the same mechanism
-      # the agent pipeline uses to hydrate submodules (home-infra#91).
-      - name: Mint an org token for the extra submodules
-        id: subtoken
-        if: inputs.extra-submodules != ''
-        env:
-          VAULT_ADDR: ${{ vars.VAULT_ADDR }}
-        run: /srv/github-runner/bin/mint-coder-app-token.sh ${{ github.repository_owner }}
+          # The map is read AFTER the deinit, so a nested .gitmodules belonging to
+          # a submodule this workflow does not want is gone before it can name an
+          # org nobody here needs a token for.
+          MAP="$(sm_map)"
 
-      - name: Fetch the extra submodules
-        if: inputs.extra-submodules != ''
-        env:
-          T: ${{ steps.subtoken.outputs.coder_token }}
-          OWNER: ${{ github.repository_owner }}
-        run: |
+          WANT=()
+          for p in $keep; do
+            if printf '%s\n' "$MAP" | cut -f1 | grep -qxF -- "$p"; then
+              WANT+=("$p")
+            else
+              echo "::warning::${p} is not a submodule of this repo -- skipping"
+            fi
+          done
+          if [ "${#WANT[@]}" -eq 0 ]; then
+            echo "no submodules to hydrate"
+            exit 0
+          fi
+
+          # Credential rewrites an earlier job on this persistent runner left behind
+          # (its token is long expired, and it would shadow the ones minted below).
+          for k in $(git config --local --name-only --get-regexp '^url\.' || true); do
+            git config --local --unset-all "$k" || true
+          done
           # sync FIRST: the persistent runner workspace keeps submodule URLs in
           # .git/modules/*/config and `submodule init` never overwrites them, so
           # a URL corrected in .gitmodules would otherwise stay broken forever
           # (bdh-org/dev-common#105).
-          git submodule sync -- ${{ inputs.extra-submodules }} || true
-          git -c "url.https://x-access-token:${T}@github.com/${OWNER}/.insteadOf=https://github.com/${OWNER}/" \
-            submodule update --init -- ${{ inputs.extra-submodules }}
+          git submodule sync -- "${WANT[@]}" || true
+
+          CFG=()
+          minted=""
+
+          mint() { # org -> append an insteadOf rewrite carrying a token for that org
+            local org="$1" out tok
+            out="$(mktemp "${RUNNER_TEMP:-/tmp}/hydrate-XXXXXX")"
+            # The mint script masks its token by printing ::add-mask:: on STDOUT, so
+            # stdout must reach the job log; the value itself only lands in $out, never
+            # in a step output (a hydration token is nobody else's business).
+            if ! GITHUB_OUTPUT="$out" CODER_TOKEN_ENV_NAME="" "$MINT" "$org"; then
+              rm -f "$out"; return 1
+            fi
+            tok="$(sed -n 's/^coder_token=//p' "$out" | head -1)"
+            rm -f "$out"
+            [ -n "$tok" ] || return 1
+            CFG+=(-c "url.https://x-access-token:${tok}@github.com/${org}/.insteadOf=https://github.com/${org}/")
+          }
+
+          for p in "${WANT[@]}"; do
+            url="$(printf '%s\n' "$MAP" | awk -F'\t' -v p="$p" '$1 == p {print $2; exit}')"
+            org="$(sm_org "$url")"
+            [ -n "$org" ] || continue
+            case " $minted " in *" $org "*) continue;; esac
+            minted="$minted $org"
+            # Tolerant: a repo whose VAULT_ADDR variable is unset cannot mint, and
+            # the checkout credential still covers a same-repo submodule. The check
+            # below is the only thing that decides this step.
+            mint "$org" || echo "::warning::could not mint a ${org} token -- falling back to the checkout credential"
+          done
+
+          git ${CFG[@]+"${CFG[@]}"} submodule update --init -- "${WANT[@]}" || true
+
+          # Fail LOUDLY, naming the submodule and the org it needed. A submodule this
+          # workflow asked for and did not populate must never be handed on as an
+          # empty directory for `make lint` to trip over 40 lines from the cause
+          # (home-infra#343, home-infra#359). `submodule status` prefixes '-' for one
+          # never initialised and '+' for one left at a commit other than the pin --
+          # and '+' is how this bug hid, a stale checkout on the persistent runner
+          # standing in for a fetch that never happened.
+          bad="$(git submodule status -- "${WANT[@]}" 2>/dev/null | grep -E '^[-+]' || true)"
+          if [ -n "$bad" ]; then
+            echo "::error::submodule hydration incomplete -- refusing to run CI against a partial checkout"
+            while read -r rev path _; do
+              [ -n "${path:-}" ] || continue
+              url="$(printf '%s\n' "$MAP" | awk -F'\t' -v p="$path" '$1 == p {print $2; exit}')"
+              org="$(sm_org "$url")"
+              case "$rev" in -*) why="never initialised";; *) why="not at the pinned commit";; esac
+              echo "::error::  ${path}: ${why} -- url ${url:-unknown}, org ${org:-unknown}"
+            done <<< "$bad"
+            echo "If the org is right, check that the bdh-org-coder App is installed there" >&2
+            echo "(Vault kv/ai/coder/github-app needs an install_<org> field for it)," >&2
+            echo "and that this repo sets the VAULT_ADDR variable." >&2
+            exit 1
+          fi
+          git submodule status -- "${WANT[@]}" | sed 's/^/  /'
+          echo "submodule hydration OK"
 
       # Point CONDA_ROOT at the runner's REAL home rather than a hardcoded path:
       # github-runner's home isn't the assumed /home/github-runner on forge (it's

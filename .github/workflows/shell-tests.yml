@@ -54,3 +54,9 @@ jobs:
       # by merging it and watching a consumer repo (dev-common#169).
       - name: hydrate-submodules.sh (embedded in the agent workflows)
         run: bash tests/hydrate-submodules.test.sh
+
+      # The same, for the hydration step embedded in self-hosted-ci.yml -- which
+      # resolves the org per submodule like the agent one, but over a SELECTED
+      # path list rather than --recursive (dev-common#170).
+      - name: ci-submodules.sh (embedded in self-hosted-ci.yml)
+        run: bash tests/ci-submodules.test.sh
