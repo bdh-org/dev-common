@@ -60,3 +60,10 @@ jobs:
       # path list rather than --recursive (dev-common#170).
       - name: ci-submodules.sh (embedded in self-hosted-ci.yml)
         run: bash tests/ci-submodules.test.sh
+
+      # The version gate embedded in ci.yml, which every Python repo in the
+      # stack merges through. It ships as workflow YAML, so nothing else can
+      # catch a change to it before it is enforcing the wrong rule everywhere
+      # at once (dev-common#180).
+      - name: Version bumped (embedded in ci.yml)
+        run: bash tests/version-bumped.test.sh

@@ -68,9 +68,32 @@ jobs:
             echo "no VERSION on $base -- nothing to compare, skipping"
             exit 0
           fi
-          if [ "$head_v" != "$base_v" ]; then
+          # STRICTLY GREATER, not merely different (dev-common#180).
+          #
+          # "Different" passes every branch in a parallel set: three panoptikon
+          # PRs each branched from 2.12.105 and each bumped to 2.12.106, so each
+          # differed from its base and each went green. The first merged and
+          # tagged 2.12.106; the other two then rode onto main under a version
+          # whose tag pointed two commits behind them, and Tag Version never
+          # fired again because VERSION had not changed
+          # (finzeug/panoptikon#728/#729/#730).
+          #
+          # Greater-than catches the second and third -- but only once their CI
+          # re-runs against the moved base, which is what "Require branches to
+          # be up to date before merging" (strict status checks) enforces. The
+          # guard and that setting are one mechanism in two halves;
+          # bdh-org/home-infra#414 covers the other.
+          if [ "$head_v" = "$base_v" ]; then
+            :   # unchanged -- fall through to the "did anything else change?" test
+          elif [ "$(printf '%s\n%s\n' "$base_v" "$head_v" | sort -V | tail -1)" = "$head_v" ]; then
             echo "version bumped: $base_v -> $head_v"
             exit 0
+          else
+            echo "::error::VERSION went BACKWARDS: $base_v on ${{ github.base_ref }}, $head_v here."
+            echo "::error::Rebase and run 'make bump-patch' -- a version that decreases"
+            echo "::error::cannot be tagged, and the image tag would collide with a build"
+            echo "::error::that already shipped."
+            exit 1
           fi
           # Unchanged. Only a complaint if the PR changed something else.
           changed=$(git diff --name-only "$base"...HEAD | grep -v '^Makefile$' || true)
