@@ -103,6 +103,45 @@ assert_absent "$body" 'update --init --recursive' \
 assert_contains "$body" 'submodule update --init --force -- "${WANT[@]}"' \
   "and the update is limited to the path list it built"
 
+# --- 1b. data-submodules: hydrated exactly like the rest, never installed ----
+
+# `extra-submodules` pip-installs everything it hydrates, so a sibling wanted for
+# its FILES -- a P2c data service's seed CSVs -- could not ride it: pip fails on a
+# repo with no pyproject.toml. slingshot vendored refdims' 47 seed CSVs and still
+# skipped every test that reads them (finzeug/slingshot#167). The two lists must
+# therefore stay merged for hydration and separate for the install.
+CASE="data-submodules"
+assert_contains "$body" 'keep="common ${EXTRA:-} ${DATA_ONLY:-}"' \
+  "hydration keeps the data-only paths alongside the installable ones"
+
+install_step="$(awk '/^      - name: Install the extra submodules into the env$/,/^      - name: Version consistency$/' "$WF_CI")"
+assert_contains "$install_step" 'pip install ${{ inputs.extra-submodules }}' \
+  "the install step still installs extra-submodules"
+assert_absent "$install_step" 'data-submodules' \
+  "and never pip-installs a data-only sibling -- the whole reason the input exists"
+
+# --- 1c. test-env ------------------------------------------------------------
+
+CASE="test-env"
+test_step="$(awk '/^      - name: Test$/,0' "$WF_CI")"
+assert_contains "$test_step" 'TEST_ENV: ${{ inputs.test-env }}' \
+  "the test step reads the test-env input"
+
+# The loop itself, run for real: a suite guarded on an env var this workflow can
+# now satisfy is the point, so "did the variable actually reach pytest" is the
+# assertion worth having.
+loop="$(awk '/while IFS= read -r line; do/,/done <<< "\$\{TEST_ENV:-\}"/' "$WF_CI")"
+if [ -n "$loop" ]; then ok "the export loop is extractable from the step"
+else notok "could not find the test-env export loop in the Test step"; fi
+got="$(TEST_ENV=$'REFDIMS_SEED_DIR=lib/refdims/seed\n\n# a comment\nTWO=a b' \
+         bash -c "$loop"'; echo "GOT [$REFDIMS_SEED_DIR] [$TWO]"' 2>&1 | tail -1)"
+assert_eq "GOT [lib/refdims/seed] [a b]" "$got" \
+  "each KEY=VALUE is exported; blank lines and comments are skipped"
+got_empty="$(TEST_ENV="" bash -c "$loop"'; echo EMPTY-OK' 2>&1 | tail -1)"
+assert_eq "EMPTY-OK" "$got_empty" "an unset test-env is a no-op, not an error"
+assert_contains "$test_step" 'echo "test env: ${line%%=*}"' \
+  "and the run log names the variables it set (a skip and a pass look alike)"
+
 # sm_map / sm_org are dev-common#169's, and their coverage lives in
 # tests/hydrate-submodules.test.sh. Keeping the two copies textually identical is
 # what lets that coverage stand for this one; a drifting copy is an untested one.
@@ -167,12 +206,14 @@ mkrepo() { # name
 }
 
 # Runs the REAL script in $1 with a stub minter, capturing everything.
-run_hydrate() { # workdir [extra-submodules] -> exit status; output in $OUT,
-                #   orgs minted in $MINT_LOG, every git command line in $GIT_LOG
+run_hydrate() { # workdir [extra-submodules] [data-submodules] -> exit status;
+                #   output in $OUT, orgs minted in $MINT_LOG, every git command
+                #   line in $GIT_LOG
   local d="$1" rc
   MINT_LOG="$TMP/minted.$(basename "$d")"; : > "$MINT_LOG"
   GIT_LOG="$TMP/gitcalls.$(basename "$d")";  : > "$GIT_LOG"
   OUT="$( cd "$d" && PATH="$TMP/shim:$PATH" MINT="$TMP/mint-stub.sh" EXTRA="${2:-}" \
+            DATA_ONLY="${3:-}" \
             MINT_LOG="$MINT_LOG" GIT_LOG="$GIT_LOG" bash "$SCRIPT" 2>&1 )"; rc=$?
   return $rc
 }
@@ -238,6 +279,21 @@ if [ -f "$TMP/co-sel/vendor/unwanted/file" ]; then
   notok "vendor/unwanted survived -- an earlier job's checkout is still on disk (heller#356)"
 else ok "a submodule this run did not ask for is deinited, not inherited"; fi
 assert_eq "" "$(cat "$MINT_LOG")" "a local (non-GitHub) URL costs no mint attempt"
+
+CASE="e2e: a data-only submodule"
+# The slingshot#167 shape: the path is named in data-submodules and nothing else.
+# It must be hydrated exactly as an extra would be -- and, just as important, the
+# deinit must not treat it as unwanted, which is what putting it in only one of
+# the two lists would have done.
+git clone -q "$TMP/remotes/consumer.git" "$TMP/co-data"
+if run_hydrate "$TMP/co-data" "" "lib/ledger-io"; then ok "hydrates a data-only path"
+else notok "hydration failed:"; printf '%s\n' "$OUT" | sed 's/^/         /'; fi
+if [ -f "$TMP/co-data/lib/ledger-io/file" ]; then ok "the data-only submodule is populated"
+else notok "lib/ledger-io is empty -- data-submodules did not reach the update"; fi
+if [ -f "$TMP/co-data/common/file" ]; then ok "and common is still hydrated beside it"
+else notok "common is empty"; fi
+assert_absent "$OUT" "::warning::lib/ledger-io is not a submodule" \
+  "a data-only path is looked up in .gitmodules like any other"
 
 CASE="e2e: emptied worktree, .git intact"
 # THE panoptikon/ratecraft SHAPE (dev-common#176), and the one the first version of this
