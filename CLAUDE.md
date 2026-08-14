@@ -1,6 +1,22 @@
 ## Workflow
 - Never commit directly to main. Always work on a feature branch.
 - Before starting work, find or create a GitHub issue for the change.
+- **Then check nobody is already on it**, in one command, before writing a line:
+
+  ```bash
+  gh pr list --repo <org>/<repo> --state open --search "<issue-number>"
+  ```
+
+  Work costs money whether or not it is merged. On 2026-08-14 five panoptikon
+  issues were implemented twice — once by the headless agent at 14:18, once by
+  the contractor session at 19:00 — because the second one never looked. Four of
+  the duplicates were closed unmerged; the fifth turned out to be the better
+  implementation and had to be ported back (panoptikon#732). Every token of that
+  was spent twice and refunded never.
+- **`agent-pr` on an issue means it is handed over.** A session that applies the
+  label has delegated the work and must not then do it itself; a session that
+  finds the label on an issue it is about to start should check for the agent's
+  PR first and review that instead of starting again.
 - Branch naming: `<issue-number>-<short-description>` (e.g., `42-fix-login-bug`).
 - Create the branch from main, do the work, commit to the branch.
 - When done, create a PR that links the issue (e.g., `Closes #42`).
