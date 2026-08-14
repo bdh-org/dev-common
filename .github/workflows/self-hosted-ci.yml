@@ -45,6 +45,40 @@ on:
 
           They may live in any org -- the hydration step mints a token per org
           named in .gitmodules, not per caller org (dev-common#170).
+
+          Every path here is pip-installed, so every path here must be an
+          installable Python package. For a sibling wanted only for the FILES it
+          carries, use `data-submodules`.
+        type: string
+        default: ""
+      data-submodules:
+        description: >
+          Space-separated submodule paths to hydrate and NOT install, e.g.
+          "lib/refdims". For a sibling whose value to the tests is its version-
+          controlled DATA rather than any importable code -- a P2c data service's
+          seed CSVs, a fixtures repo.
+
+          `extra-submodules` cannot do this: it pip-installs everything it
+          hydrates, and a repo with no pyproject.toml fails that install. So the
+          seed a repo already vendors stayed unreachable from CI, and every test
+          that reads it skipped (finzeug/slingshot#167).
+
+          Hydration is identical to `extra-submodules` -- same per-org tokens,
+          same emptied-worktree check, same deinit of everything unlisted. Only
+          the install differs, so order does not matter here.
+        type: string
+        default: ""
+      test-env:
+        description: >
+          Newline-separated KEY=VALUE pairs exported for the test step only, e.g.
+          "REFDIMS_SEED_DIR=lib/refdims/seed". For pointing a suite at data this
+          workflow hydrated: a test guarded on an env var it can now satisfy runs
+          instead of skipping.
+
+          Values are taken LITERALLY -- there is no shell expansion, so a
+          `$GITHUB_WORKSPACE` in one stays that text rather than becoming the
+          path. A relative path is what you want anyway: the test step runs in
+          the workspace root.
         type: string
         default: ""
       ci-env-file:
@@ -93,6 +127,7 @@ jobs:
         env:
           VAULT_ADDR: ${{ vars.VAULT_ADDR }}
           EXTRA: ${{ inputs.extra-submodules }}
+          DATA_ONLY: ${{ inputs.data-submodules }}
         run: |
           set -euo pipefail
           MINT="${MINT:-/srv/github-runner/bin/mint-coder-app-token.sh}"
@@ -137,7 +172,9 @@ jobs:
           #
           # `common` is kept rather than deinited-and-refetched: it is wanted
           # anyway, and re-cloning it on every job across the fleet is pure cost.
-          keep="common ${EXTRA:-}"
+          # Hydration does not care which of the two lists a path came from --
+          # only the install step below does.
+          keep="common ${EXTRA:-} ${DATA_ONLY:-}"
           git submodule status 2>/dev/null | awk '{print $2}' \
             | grep -vxF -f <(printf '%s\n' $keep) \
             | xargs -r git submodule deinit -f -- 2>/dev/null || true
@@ -366,7 +403,17 @@ jobs:
 
       - name: Test
         if: ${{ inputs.run-tests }}
+        env:
+          TEST_ENV: ${{ inputs.test-env }}
         run: |
           source "$CONDA_ROOT/etc/profile.d/conda.sh"
           conda activate "$CI_ENV"
+          # `test-env`, one KEY=VALUE per line. Echoed by NAME so the log says
+          # which variables the run had -- a suite that skips on a missing one
+          # otherwise reports the same green as a suite that ran it.
+          while IFS= read -r line; do
+            case "$line" in ''|'#'*) continue;; esac
+            export "$line"
+            echo "test env: ${line%%=*}"
+          done <<< "${TEST_ENV:-}"
           python -m pytest -vv "${{ inputs.test-path }}"
