@@ -176,9 +176,18 @@ jobs:
         if: inputs.run-lint
         run: ruff check .
 
+      # Excludes the VENDORED trees. `ruff format --check .` from the repo root
+      # walks the hydrated submodules too, so ferret's first gated run failed on
+      # two files belonging to dev-common -- a repo cannot be gated on its
+      # dependency's formatting, and the error names files the author of the PR
+      # does not own and cannot fix from there (finzeug/ferret#41).
+      #
+      # Named explicitly rather than added to each repo's ruff.toml: the set is a
+      # property of how this fleet vendors (common, stack-common, lib/*), not of
+      # any one repo's style, so it belongs with the workflow that walks them.
       - name: Format check
         if: inputs.check-format
-        run: ruff format --check .
+        run: ruff format --check --exclude common --exclude stack-common --exclude lib .
 
       - name: Test
         if: inputs.run-tests
