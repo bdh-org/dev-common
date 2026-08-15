@@ -89,6 +89,30 @@ on:
 permissions:
   contents: read
 
+# Cancel a PR's previous run when a new commit supersedes it.
+#
+# The forge runner is a SINGLE runner: one job at a time, fleet-wide. Measured
+# across 81 self-hosted jobs, they wait far longer than they run -- queue median
+# 70s and p90 471s against a duration median of 14s. A superseded run holds that
+# one slot to completion while the run that matters waits behind it.
+#
+# This got sharper the moment branch protection landed with `strict: true`
+# (bdh-org/home-infra#414): every merge to main makes every other open PR
+# out-of-date, so each one is re-pushed, and without this each re-push leaves its
+# predecessor occupying the runner. A sweep that opens fourteen bump PRs turns
+# one merge into fourteen doomed runs ahead of the fourteen real ones.
+#
+# `github.repository` is in the key on purpose: inside a reusable workflow these
+# context values are the CALLER's, so omitting it would let one repo's push cancel
+# another repo's run.
+#
+# Cancellation is limited to pull_request. A push to main is a BUILD AND DEPLOY
+# (P10), and cancelling one mid-flight can leave a service on a half-pulled image;
+# those must always run to completion, however many queue up.
+concurrency:
+  group: self-hosted-ci-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   ci:
     runs-on: [self-hosted, forge]

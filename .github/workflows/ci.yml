@@ -22,6 +22,16 @@ on:
         type: boolean
         default: true
 
+# Same rule as self-hosted-ci.yml, for the same reason. GitHub-hosted minutes are
+# metered rather than serialized, so the cost here is the bill instead of the
+# queue -- but a superseded run is waste either way, and keeping both reusables
+# identical means a repo's behaviour does not change when it moves between them.
+# See self-hosted-ci.yml for why `github.repository` is in the key and why
+# cancellation is confined to pull_request.
+concurrency:
+  group: hosted-ci-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   ci:
     runs-on: ubuntu-latest
