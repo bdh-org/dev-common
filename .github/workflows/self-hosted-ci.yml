@@ -359,7 +359,12 @@ jobs:
               # (finzeug/slingshot#211). Indistinguishable from real code being wrong.
               RUFF_V="$( [ -r common/RUFF_VERSION ] && tr -d '[:space:]' < common/RUFF_VERSION || echo "0.16.3" )"
               echo "pinned ruff ${RUFF_V}"
-              conda install -y -n "$CI_ENV" "ruff=${RUFF_V}" pytest pytest-cov
+              # ruff via PIP, not conda: conda-forge lags PyPI, and pinning conda to a
+              # version it does not carry yet fails env creation outright with
+              # PackagesNotFoundInChannelsError. pip is also what the hosted workflow and
+              # the devcontainer resolve from, so all three get the same binary.
+              conda install -y -n "$CI_ENV" pytest pytest-cov
+              conda run -n "$CI_ENV" pip install --quiet "ruff==${RUFF_V}"
               # Also pip-install prod requirements: conda-packages.txt is the dev
               # convenience list and can miss pip-only deps (e.g. fred-py-api,
               # not on conda-forge). requirements-prod.txt is the authoritative
