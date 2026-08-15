@@ -21,6 +21,22 @@ on:
       install-requirements:
         type: boolean
         default: true
+      check-format:
+        description: >
+          Fail if `ruff format` would change anything. Opt-in per repo, default
+          false, because every repo has its own formatting debt to pay first and a
+          central default would turn the whole fleet red at once
+          (bdh-org/home-infra#314).
+
+          This exists because the Makefile opt-in (`lint: format-check`) does NOT
+          reach this workflow. self-hosted-ci.yml runs `make lint`, so a Makefile
+          rule is enough there; THIS workflow runs `ruff check .` directly, because
+          python.mk's lint calls $(CONDA_PREFIX)/bin/ruff and there is no conda on a
+          hosted runner. A repo that added the Makefile rule and used this workflow
+          therefore had a format gate that ran locally and never in CI -- which
+          looks identical to having one.
+        type: boolean
+        default: false
 
 # Same rule as self-hosted-ci.yml, for the same reason. GitHub-hosted minutes are
 # metered rather than serialized, so the cost here is the bill instead of the
@@ -143,6 +159,10 @@ jobs:
       - name: Lint
         if: inputs.run-lint
         run: ruff check .
+
+      - name: Format check
+        if: inputs.check-format
+        run: ruff format --check .
 
       - name: Test
         if: inputs.run-tests
