@@ -346,7 +346,15 @@ jobs:
               if [ -f conda-packages.txt ]; then
                 conda install -y -n "$CI_ENV" --file conda-packages.txt
               fi
-              conda install -y -n "$CI_ENV" ruff pytest pytest-cov
+              # Ruff PINNED, third and last place it was not (bdh-org/dev-common#193).
+              # A conda env built on a different day gets a different ruff, and
+              # `ruff format` changes output between patch releases -- so slingshot's
+              # gate passed locally on 0.16.3 and failed here on ONE file: README.md,
+              # whose embedded python block one version reflows and another does not
+              # (finzeug/slingshot#211). Indistinguishable from real code being wrong.
+              RUFF_V="$( [ -r common/RUFF_VERSION ] && tr -d '[:space:]' < common/RUFF_VERSION || echo "0.16.3" )"
+              echo "pinned ruff ${RUFF_V}"
+              conda install -y -n "$CI_ENV" "ruff=${RUFF_V}" pytest pytest-cov
               # Also pip-install prod requirements: conda-packages.txt is the dev
               # convenience list and can miss pip-only deps (e.g. fred-py-api,
               # not on conda-forge). requirements-prod.txt is the authoritative
