@@ -43,6 +43,10 @@ echo "==> Installing Python dev tools..."
 RUFF_V="$(tr -d '[:space:]' < "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/RUFF_VERSION" 2>/dev/null || true)"
 [ -n "$RUFF_V" ] || { echo "!! RUFF_VERSION missing -- refusing to install an unpinned formatter" >&2; exit 1; }
 echo "==> pinned ruff: ${RUFF_V}"
-conda install -y "ruff=${RUFF_V}" pytest pytest-cov ipykernel jupyterlab pipreqs
+# ruff via PIP for the same reason CI does: conda-forge lags PyPI, so a pin conda
+# cannot satisfy fails outright, and all three environments must resolve the same
+# binary or a format gate is meaningless.
+conda install -y pytest pytest-cov ipykernel jupyterlab pipreqs
+pip install --quiet "ruff==${RUFF_V}"
 
 echo "==> Python dev setup complete"
