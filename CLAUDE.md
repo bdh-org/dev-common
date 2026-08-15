@@ -51,9 +51,21 @@ Two conventions:
   answer only if it happens to look. If the reply matters, **also put it on the
   GitHub issue or PR** — that is the record, it survives every session, and it
   is where a sweep will find it.
-- The inbox is a push channel between two **running** sessions. It does not
-  survive a container rebuild, is invisible to the headless agent and to
-  claude.ai/code sessions, and notifies nobody.
+- The inbox is a push channel between two **running** sessions. It is invisible
+  to the headless agent and to claude.ai/code sessions, and it notifies nobody.
+
+  It **does** survive a container rebuild, and this line used to say it did not.
+  `/workspaces/<repo>` is a bind mount of the host checkout — on twix,
+  `/dev/nvme0n1p2[/home/brian/dev/stack-home-site/<repo>]`, confirmed with
+  `findmnt` on 2026-08-15. The file is the host's; the container is the
+  disposable part. Believing otherwise, a session tells Brian his notes are
+  about to be lost and hurries to mirror them somewhere — which is wrong twice,
+  because the reason to put the important half on GitHub is that **nothing reads
+  this file**, not that it is fragile.
+
+  Same failure as the read-only claim in home-stack-common: a wrong line in a
+  file that loads into every session in the stack travels, and the correction
+  has to be written down rather than remembered.
 
 Delete a section once actioned. A stale inbox is worse than none — it gets
 skimmed, and then the next real message is skimmed too.
