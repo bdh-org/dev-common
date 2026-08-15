@@ -325,11 +325,16 @@ jobs:
           source "$CONDA_ROOT/etc/profile.d/conda.sh"
           envpath="$CONDA_ROOT/envs/$CI_ENV"
           # Bump CACHE_VERSION to force a rebuild of every CI env on disk.
-          CACHE_VERSION=v4
+          CACHE_VERSION=v5
+          # The pinned ruff is part of the key below. Pinning a tool INSIDE a cached
+          # env does nothing until the key changes: slingshot's format gate kept
+          # failing on README.md after the pin landed, because the env was a cache
+          # hit and the whole install block -- pin included -- was skipped
+          # (bdh-org/dev-common#193, finzeug/slingshot#211).
           if [ "${{ inputs.full-env }}" = "true" ]; then
-            key=$( { echo "$CACHE_VERSION"; cat conda-packages.txt requirements-prod.txt common/devcontainer/base-conda-packages.txt 2>/dev/null; } | sha256sum | cut -d' ' -f1)
+            key=$( { echo "$CACHE_VERSION"; cat common/RUFF_VERSION conda-packages.txt requirements-prod.txt common/devcontainer/base-conda-packages.txt 2>/dev/null; } | sha256sum | cut -d' ' -f1)
           else
-            key=$( { echo "$CACHE_VERSION"; cat "${{ inputs.ci-env-file }}"; } | sha256sum | cut -d' ' -f1)
+            key=$( { echo "$CACHE_VERSION"; cat common/RUFF_VERSION 2>/dev/null; cat "${{ inputs.ci-env-file }}"; } | sha256sum | cut -d' ' -f1)
           fi
           have=$(cat "$envpath/.envhash" 2>/dev/null || true)
           if [ ! -d "$envpath" ] || [ "$key" != "$have" ]; then
