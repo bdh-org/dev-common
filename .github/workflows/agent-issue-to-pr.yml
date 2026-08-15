@@ -114,7 +114,62 @@ on:
         default: claude-opus-5
 
 jobs:
+  # Decide whether the /agent verb was actually said, BEFORE anything expensive.
+  #
+  # The wrapper's `if:` cannot express the rule everyone assumes -- "a line that
+  # begins with /agent". GitHub expressions have startsWith (whole body) and
+  # contains (anywhere) and no way to write a newline, so `contains(body,'\n/agent')`
+  # matches a literal backslash-n and never fires. That is why
+  #
+  #     Option B
+  #     /agent
+  #
+  # did nothing, and produced a `skipped` run indistinguishable from no run at all
+  # (bdh-org/home-infra#361).
+  #
+  # So the wrappers now call this workflow for ANY issue comment from a trusted
+  # author, and the decision moves here where grep can state it exactly.
+  #
+  # ubuntu-latest deliberately: no secrets, no checkout, seconds. A comment without
+  # the verb must never occupy a forge slot -- forge is the serialized resource and
+  # this would otherwise put every issue comment in the queue with production
+  # deploys (bdh-org/home-infra#426, #357).
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      fire: ${{ steps.verb.outputs.fire }}
+    steps:
+      - name: Was /agent actually said?
+        id: verb
+        env:
+          BODY: ${{ github.event.comment.body }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -uo pipefail
+          # The label path has no comment and always fires; only issue_comment is gated.
+          if [ "$EVENT" != "issue_comment" ]; then
+            echo "fire=true" >> "$GITHUB_OUTPUT"
+            echo "event=${EVENT}: not a comment, proceeding"
+            exit 0
+          fi
+          if printf '%s\n' "$BODY" | grep -qE '^/agent([[:space:]]|$)'; then
+            echo "fire=true" >> "$GITHUB_OUTPUT"
+            echo "found a /agent line -- starting the agent"
+          else
+            echo "fire=false" >> "$GITHUB_OUTPUT"
+            # SAY SO. A silent no-op here is the original complaint: the operator
+            # sees a run and cannot tell whether the verb was wrong or the pipeline
+            # is broken.
+            echo "no line begins with /agent -- not starting the agent."
+            echo "The verb must be at the START of a line, on its own or followed by"
+            echo "directives, e.g.:"
+            echo "    Option B"
+            echo "    /agent"
+          fi
+
   agent:
+    needs: gate
+    if: needs.gate.outputs.fire == 'true'
     runs-on: [self-hosted, forge]
     steps:
       # Mint the running repo's org installation token for the bdh-org-coder App
@@ -354,7 +409,11 @@ jobs:
           # Only the first directive fits on the verb line; a second one still
           # needs a line of its own.
           if [ "$EVENT_NAME" = "issue_comment" ]; then
-            BODY="$(printf '%s\n' "$COMMENT_BODY" | sed -E '1s|^/agent[[:space:]]*||')"
+            # Strip the verb from whichever line carries it, not only line 1: the
+            # verb may now sit below an explanation (bdh-org/home-infra#361), and a
+            # line-1-only strip would leave `/agent agent-turns: 150` unparsed when
+            # written on line 3.
+            BODY="$(printf '%s\n' "$COMMENT_BODY" | sed -E 's|^/agent[[:space:]]*||')"
             echo "directive source: the /agent comment"
           else
             BODY="$ISSUE_BODY"
