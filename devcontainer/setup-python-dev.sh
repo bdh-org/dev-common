@@ -35,6 +35,14 @@ fi
 # Install dev tools via conda
 # -----------------------------------------------------------------------------
 echo "==> Installing Python dev tools..."
-conda install -y ruff pytest pytest-cov ipykernel jupyterlab pipreqs
+# Ruff is PINNED from RUFF_VERSION so a devcontainer and CI format identically.
+# `ruff format` output changes between patch releases, so an unpinned install makes
+# `make format-check` passing locally predict nothing about CI -- caught by
+# finzeug/ferret#41, where a locally-clean tree reported 2 files to reformat on its
+# first CI run (dev-common 0.16.0 vs CI 0.16.3).
+RUFF_V="$(tr -d '[:space:]' < "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/RUFF_VERSION" 2>/dev/null || true)"
+[ -n "$RUFF_V" ] || { echo "!! RUFF_VERSION missing -- refusing to install an unpinned formatter" >&2; exit 1; }
+echo "==> pinned ruff: ${RUFF_V}"
+conda install -y "ruff=${RUFF_V}" pytest pytest-cov ipykernel jupyterlab pipreqs
 
 echo "==> Python dev setup complete"

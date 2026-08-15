@@ -153,8 +153,24 @@ jobs:
         if: inputs.install-requirements
         run: pip install -r ${{ inputs.requirements-file }}
 
+      # Ruff is PINNED, and for the formatter that is not optional. `ruff format`
+      # changes its output between patch releases, so an unpinned CI installs
+      # whatever shipped that morning and a format gate can go red on a day nobody
+      # touched any code. It also guarantees CI and a devcontainer disagree: this
+      # step used to `pip install ruff` (0.16.3 on 2026-08-15) while devcontainers
+      # `conda install ruff` at build time (0.16.0 in mine) -- so `make format-check`
+      # passing locally predicted nothing about CI. Caught by finzeug/ferret#41,
+      # where the first CI run of a locally-clean tree reported 2 files to reformat.
+      #
+      # One source of truth: common/RUFF_VERSION, read here and by
+      # devcontainer/setup-python-dev.sh. Bump it in one place and both follow.
       - name: Install dev tools
-        run: pip install ruff pytest pytest-cov
+        run: |
+          set -eu
+          RUFF_V="$(tr -d '[:space:]' < common/RUFF_VERSION)"
+          [ -n "$RUFF_V" ] || { echo "::error::common/RUFF_VERSION is empty -- refusing to install an unpinned formatter"; exit 1; }
+          echo "pinned ruff: ${RUFF_V}"
+          pip install "ruff==${RUFF_V}" pytest pytest-cov
 
       - name: Lint
         if: inputs.run-lint
