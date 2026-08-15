@@ -1,0 +1,146 @@
+name: parse-checks
+
+# Reusable floor-level PR gate for repos with no test suite.
+#
+#   jobs:
+#     checks:
+#       uses: bdh-org/dev-common/.github/workflows/parse-checks.yml@main
+#
+# WHAT IT IS FOR
+#
+# Some repos in this fleet carry no Python package and no tests, but do carry code
+# that runs unattended: shell modules invoked before dawn, make fragments included
+# by every other repo, workflow YAML, Apache vhosts fronting production. Nothing
+# gated them, so a PR could merge with literally nothing run against it and the
+# first symptom was a missing section in a report or an edge that would not start.
+#
+# This is deliberately the FLOOR, not a substitute for tests: every tracked file of
+# a checked kind must PARSE. That catches the unbalanced-quote / unterminated-heredoc
+# class, which is exactly what breaks code that only executes when nobody is looking.
+#
+# WHY A REUSABLE. The same gate was wanted in brief, home-stack-common and home-site
+# within a week, and a third copy would have been the moment it started to drift.
+# Consumers keep only a trigger.
+#
+# WHERE IT RUNS. ubuntu-latest, and that is deliberate (bdh-org/home-infra#426):
+# this needs no registry, no Vault and no private submodule, and forge is the
+# serialized resource. Putting a 20-second syntax check in that queue would slow the
+# builds that genuinely need the host.
+
+on:
+  workflow_call:
+    inputs:
+      shell-glob:
+        description: >
+          Pathspec for shell files. Empty disables the shell step entirely -- use
+          that rather than pointing it at nothing, so "no shell here" is a stated
+          choice and not an accident that reads as a pass.
+        type: string
+        default: "*.sh"
+      python-glob:
+        description: "Pathspec for Python files. Empty disables the step."
+        type: string
+        default: "*.py"
+      yaml-glob:
+        description: >
+          Pathspec for YAML. Parsed for well-formedness only -- NOT schema-checked,
+          so a valid-YAML-but-wrong-keys workflow still passes. Empty disables.
+        type: string
+        default: "*.yml *.yaml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: parse-checks-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  parse:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Every step below asserts DISCOVERY as well as cleanliness, and the two
+      # failures exit differently on purpose:
+      #
+      #   exit 1  files were found and some do not parse   -- a real defect
+      #   exit 2  zero files were found for a non-empty glob -- the check looked at
+      #           nothing, which is NOT a pass (bdh-org/home-infra#343). A moved
+      #           tree or a bad pathspec would otherwise report the same green as a
+      #           clean repo, which is the exact false green this fleet keeps hitting.
+      #
+      # A glob set to "" skips the step and says so, which is different again from
+      # both: a stated absence rather than a silent one.
+      # `set -f` before every git ls-files: without it bash expands `*.sh` against
+      # the CWD first, git never sees the pattern, and only root-level files are
+      # checked. It reads as a pass over a subset -- the gate reports PASS on a
+      # count that quietly excludes every nested file. Found by counting: 3 YAML
+      # files matched where the repo has 13.
+      - name: shell scripts parse
+        env:
+          GLOB: ${{ inputs.shell-glob }}
+        run: |
+          set -uo pipefail
+          if [ -z "${GLOB}" ]; then echo "shell-glob empty -- step disabled by the caller"; exit 0; fi
+          n=0; bad=0
+          while IFS= read -r f; do
+            n=$((n + 1))
+            if ! bash -n "$f" 2>/tmp/e; then bad=$((bad + 1)); echo "== $f"; cat /tmp/e; fi
+          done < <(set -f; git ls-files -- ${GLOB})
+          if [ "$n" -eq 0 ]; then
+            echo "FAIL: discovered 0 tracked files matching '${GLOB}' under $(pwd)." >&2
+            echo "That is a broken pathspec or a moved tree, not a clean repo. Set the glob to \"\" to disable this step deliberately." >&2
+            exit 2
+          fi
+          [ "$bad" -eq 0 ] || { echo "FAIL: assessed ${n} tracked shell file(s) -- ${bad} do not parse" >&2; exit 1; }
+          echo "PASS: assessed ${n} tracked shell file(s) -- all parse clean"
+
+      - name: python scripts parse
+        env:
+          GLOB: ${{ inputs.python-glob }}
+        run: |
+          set -uo pipefail
+          if [ -z "${GLOB}" ]; then echo "python-glob empty -- step disabled by the caller"; exit 0; fi
+          n=0; bad=0
+          while IFS= read -r f; do
+            n=$((n + 1))
+            if ! python3 -c 'import ast,sys; ast.parse(open(sys.argv[1]).read(), sys.argv[1])' "$f" 2>/tmp/e; then
+              bad=$((bad + 1)); echo "== $f"; cat /tmp/e
+            fi
+          done < <(set -f; git ls-files -- ${GLOB})
+          if [ "$n" -eq 0 ]; then
+            echo "FAIL: discovered 0 tracked files matching '${GLOB}' under $(pwd)." >&2
+            echo "That is a broken pathspec or a moved tree, not a clean repo. Set the glob to \"\" to disable this step deliberately." >&2
+            exit 2
+          fi
+          [ "$bad" -eq 0 ] || { echo "FAIL: assessed ${n} tracked python file(s) -- ${bad} do not parse" >&2; exit 1; }
+          echo "PASS: assessed ${n} tracked python file(s) -- all parse clean"
+
+      - name: yaml parses
+        env:
+          GLOB: ${{ inputs.yaml-glob }}
+        run: |
+          set -uo pipefail
+          if [ -z "${GLOB}" ]; then echo "yaml-glob empty -- step disabled by the caller"; exit 0; fi
+          n=0; bad=0
+          while IFS= read -r f; do
+            n=$((n + 1))
+            # safe_load_all: a workflow is one document, but compose overlays and
+            # k8s manifests are often multi-document, and safe_load alone rejects
+            # those as invalid when they are not.
+            # add_multi_constructor: docker compose uses application-specific tags
+            # (!reset, !override) that SafeLoader rejects outright. Failing a CORRECT
+            # compose file would make the gate invent defects, so unknown tags resolve
+            # to None -- this checks well-formedness, not semantics.
+            if ! python3 -c 'import yaml,sys; yaml.SafeLoader.add_multi_constructor("!", lambda l,s,n: None); list(yaml.safe_load_all(open(sys.argv[1])))' "$f" 2>/tmp/e; then
+              bad=$((bad + 1)); echo "== $f"; cat /tmp/e
+            fi
+          done < <(set -f; git ls-files -- ${GLOB})
+          if [ "$n" -eq 0 ]; then
+            echo "FAIL: discovered 0 tracked files matching '${GLOB}' under $(pwd)." >&2
+            echo "That is a broken pathspec or a moved tree, not a clean repo. Set the glob to \"\" to disable this step deliberately." >&2
+            exit 2
+          fi
+          [ "$bad" -eq 0 ] || { echo "FAIL: assessed ${n} tracked YAML file(s) -- ${bad} do not parse" >&2; exit 1; }
+          echo "PASS: assessed ${n} tracked YAML file(s) -- all parse clean"
