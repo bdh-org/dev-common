@@ -311,8 +311,6 @@ Four sequential steps initialize the development environment:
 3. `setup-python-dev.sh` — conda dev tools (ruff, pytest, jupyter) + project
    packages from `conda-packages.txt`.
 4. `setup-claude.sh` — Claude Code CLI + shared skills (P14).
-5. `setup-waterbrother.sh` — waterbrother CLI (optional; projects that
-   don't need it simply don't source this script).
 
 Repos without a Python environment skip step 3:
 - P1 — orchestrator + Apache, no Python app code.
