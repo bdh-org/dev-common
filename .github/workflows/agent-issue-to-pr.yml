@@ -467,6 +467,8 @@ jobs:
 
             ${{ github.event.issue.body }}
 
+            ${{ github.event_name == 'issue_comment' && format('ALSO READ THIS -- the run was triggered by a comment, not a label, and the comment may carry a DECISION or instruction the issue body does not. An operator answering "pick A or B" writes the answer here, not in the body. Treat it as part of the task; where it conflicts with the body, the comment is newer and wins. Comment: {0}', github.event.comment.body) || '' }}
+
             Create a branch named `agent/issue-${{ github.event.issue.number }}`, commit
             with conventional-commit style, and PUSH it. Follow this repository's CLAUDE.md
             conventions. Never commit directly to main.
