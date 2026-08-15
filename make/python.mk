@@ -85,12 +85,23 @@ lint: ## lint with ruff
 lint-fix: ## lint with ruff and auto-fix
 	$(CONDA_PREFIX)/bin/ruff check --fix .
 
-format: ## format with ruff
-	$(CONDA_PREFIX)/bin/ruff format .
+# VENDORED trees are excluded from both format targets. `ruff format .` from a
+# repo root walks the hydrated submodules, so a repo would reformat -- or be
+# failed by -- its DEPENDENCIES' code. ferret's first gated CI run failed on two
+# files belonging to dev-common, which the PR author could not have fixed from
+# there (bdh-org/dev-common#191).
+#
+# The set is a property of how this fleet vendors, not of any repo's style, so it
+# lives here rather than in ten ruff.toml files that would be ten places to
+# forget. Kept identical to the workflow's exclusions in ci.yml.
+RUFF_VENDORED_EXCLUDES = --exclude common --exclude stack-common --exclude lib
+
+format: ## format with ruff (excludes vendored submodules)
+	$(CONDA_PREFIX)/bin/ruff format $(RUFF_VENDORED_EXCLUDES) .
 
 # Deliberately NOT a prerequisite of `lint`: every consumer carries its own
 # formatter debt, so wiring it in here turns them all red at once. A repo opts
 # in once its debt is paid by adding `lint: format-check` to its own Makefile —
 # a prerequisite with no recipe extends the rule above rather than overriding it.
-format-check: ## fail if ruff format would change anything
-	$(CONDA_PREFIX)/bin/ruff format --check .
+format-check: ## fail if ruff format would change anything (excludes vendored submodules)
+	$(CONDA_PREFIX)/bin/ruff format --check $(RUFF_VENDORED_EXCLUDES) .
