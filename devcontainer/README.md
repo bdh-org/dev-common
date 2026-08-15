@@ -21,9 +21,6 @@ source "$COMMON/setup-python-dev.sh" "conda-packages.txt"
 
 # Claude Code CLI (native installer)
 source "$COMMON/setup-claude.sh"
-
-# waterbrother CLI (optional — omit this line to skip)
-source "$COMMON/setup-waterbrother.sh"
 ```
 
 ## Scripts
@@ -101,13 +98,6 @@ Its only inputs are `$HOME` and `$PROJECT_NAME`. Because it runs in every
 devcontainer and writes to a gitconfig shared by all of them, it is gated by
 `tests/setup-claude-identity.test.sh` on every PR — run it with `make test`
 before changing this script (bdh-org/dev-common#157).
-
-### setup-waterbrother.sh
-
-waterbrother CLI setup:
-
-- Installs `@tritard/waterbrother` globally via npm
-- Optional — projects that don't want it simply don't source this script
 
 ## Package Files
 
