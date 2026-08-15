@@ -156,20 +156,31 @@ jobs:
       # Ruff is PINNED, and for the formatter that is not optional. `ruff format`
       # changes its output between patch releases, so an unpinned CI installs
       # whatever shipped that morning and a format gate can go red on a day nobody
-      # touched any code. It also guarantees CI and a devcontainer disagree: this
-      # step used to `pip install ruff` (0.16.3 on 2026-08-15) while devcontainers
-      # `conda install ruff` at build time (0.16.0 in mine) -- so `make format-check`
-      # passing locally predicted nothing about CI. Caught by finzeug/ferret#41,
-      # where the first CI run of a locally-clean tree reported 2 files to reformat.
+      # touched any code. It also guarantees CI and a devcontainer disagree.
       #
-      # One source of truth: common/RUFF_VERSION, read here and by
-      # devcontainer/setup-python-dev.sh. Bump it in one place and both follow.
+      # The version comes from common/RUFF_VERSION when the caller's pin is new
+      # enough to have it, and otherwise from RUFF_FALLBACK here.
+      #
+      # The fallback is NOT laziness -- it is the fix for a real ordering bug. This
+      # reusable is consumed at @main, but common/ is whatever revision the CALLER
+      # pins, which always lags. Requiring the file made every repo's CI fail the
+      # moment this step shipped, because no caller's pin had it yet
+      # (finzeug/ferret#41). Both paths are pinned, so neither is the condition this
+      # exists to remove; the file simply wins once pins catch up, and the two
+      # converge without a flag day.
       - name: Install dev tools
+        env:
+          RUFF_FALLBACK: "0.16.3"
         run: |
           set -eu
-          RUFF_V="$(tr -d '[:space:]' < common/RUFF_VERSION)"
-          [ -n "$RUFF_V" ] || { echo "::error::common/RUFF_VERSION is empty -- refusing to install an unpinned formatter"; exit 1; }
-          echo "pinned ruff: ${RUFF_V}"
+          if [ -r common/RUFF_VERSION ]; then
+            RUFF_V="$(tr -d '[:space:]' < common/RUFF_VERSION)"
+            echo "pinned ruff ${RUFF_V} (from common/RUFF_VERSION)"
+          else
+            RUFF_V="${RUFF_FALLBACK}"
+            echo "pinned ruff ${RUFF_V} (fallback -- this repo's common/ pin predates RUFF_VERSION)"
+          fi
+          [ -n "$RUFF_V" ] || { echo "::error::no ruff version resolved -- refusing to install an unpinned formatter"; exit 1; }
           pip install "ruff==${RUFF_V}" pytest pytest-cov
 
       - name: Lint
