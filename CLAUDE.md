@@ -110,12 +110,60 @@ the last comment. He cannot find it, and nothing surfaces it.
   time and a header does not travel with them), the literal commands, a
   **"Success looks like"** with real expected output, what to do if it fails, and
   one line pointing back for context.
+* **THE ACTION GOES FIRST -- above the reasoning, not after it.** The commands are
+  the first thing in the body. Above them goes at most one line saying what they
+  do; below them, after a `---`, one sentence stating that the rest is context and
+  requires no decision. Everything else -- why this exists, what it unblocks, what
+  you tried -- lives under that line.
+
+  Ordering is not cosmetic, because **position implies dependency.** Brian,
+  2026-08-16: *"When you show some simple command for me to run after pages and
+  pages of reading it implies I have to understand those and read them and decide
+  something based on them instead of copying and pasting a command."* Prose above a
+  command reads as a precondition for running it, so a well-researched preamble
+  silently converts a paste-able task into a comprehension exercise -- and an
+  operator who does not have time to read the essay reasonably concludes the item
+  is not yet actionable.
 * **Never write a command you have not run.** If you cannot execute it from here,
   mark it `UNVERIFIED` rather than presenting it as tested. A handoff that cannot
   work costs more than no handoff.
 * If it is a **decision** rather than commands: the question in one sentence, the
   options with their consequences, and **your recommendation**. Never an open
   question.
+
+### An update comment is a NEW handoff, and obeys the same order
+
+The rules above govern the body. **A comment that changes what is left to do is a
+handoff in its own right**, and is the more dangerous of the two: it is what a
+returning reader reads *most recently*, and it arrives with no title to signal
+that an action is buried in it.
+
+So a state-change comment opens with **what is still outstanding**, in the same
+shape as a body -- the remaining commands first, host and account beside each.
+Progress, corrections, apologies and announcements of work you did go **below**
+them. If nothing is left for him, say that in the first line.
+
+Three specific traps, all of which fired at once in issue `refdims#199`
+(2026-08-16), whose *body* complied with every rule above:
+
+* **Never put an optional command above the required one.** That issue's comment
+  offered a "if you still want to eyeball it" command at line 18 and the two
+  commands that actually mattered at lines 48 and 56.
+* **Never announce the fix above the remaining work.** A heading reading "The
+  durable fix is up: PR #201" at line 24, and "I built it rather than waiting" at
+  line 36, both read as *handled*. The section actually headed "What is actually
+  left for you" began at line 42 of 70.
+* **Merging a PR is not doing the work, and `Closes #N` cannot tell the
+  difference.** #201 carried `Closes #199`, so merging auto-closed the operator
+  issue while both its commands were unrun -- the host still had the old script
+  and no verified backup. **If an issue's remaining steps run on a host, the PR
+  that adds the tooling must NOT carry a closing trailer for it.** Deliver the
+  tooling and the operator task as separate issues, and let the operator issue
+  close when the host changed.
+
+That last one is the general case of a rule this repo already states elsewhere:
+merging changes a repo, and only running something changes a host. Anything
+delivered by `rsync`, `make`, or a provisioning script is inert until run.
 
 ### Link it with a real GitHub issue DEPENDENCY, not prose
 
