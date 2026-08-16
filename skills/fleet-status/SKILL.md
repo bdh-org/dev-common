@@ -1,6 +1,6 @@
 ---
 name: fleet-status
-description: Report what is open across the stack and WHO must act on each item — open PRs with CI and mergeability, issues that need a human, and the order to merge in. Produces linked tables, never a raw dump. Use for "where are we", "what's left", "review issue and PR status", "what are my to-do items". Read-only: it reports, it does not fix.
+description: Report what is open across the stack and WHO must act on each item. Leads with ONE ordered queue of everything waiting on Brian (issues and PRs together, ranked by what each releases, each row carrying the comment that makes it actionable), then open PRs with CI and mergeability, and the order to merge in. Produces linked tables, never a raw dump. Use for "where are we", "what's left", "review issue and PR status", "what are my to-do items", "what should I do next", "what is assigned to me". Read-only: it reports, it does not fix.
 # Reporting is a read. A status pass that starts merging, closing or pushing has
 # stopped being a status pass, and the human asked for a picture, not an edit.
 disallowed-tools: Edit, Write, NotebookEdit
@@ -11,6 +11,11 @@ disallowed-tools: Edit, Write, NotebookEdit
 The deliverable is a table a human can act on: every row links, says whether it
 is an issue or a PR, and names **who must do it**. A list of numbers is not a
 status report; neither is a wall of 188 open issues.
+
+**Lead with Brian's queue** -- one ordered table of everything waiting on him,
+issues and PRs together, each row carrying the comment that makes it actionable
+without opening it. That section is below; the rest of the report is context for
+it.
 
 This skill is read-only on purpose. Fixing what it finds is a separate decision,
 usually a separate turn, and often a different person's.
@@ -96,6 +101,7 @@ repo's visibility — do not conclude the tooling is broken when one repo works.
 | --- | --- | --- |
 | `clean` | ready | ready to merge |
 | `dirty` | **conflicts** | needs a rebase — or is superseded, see below |
+| `behind` | mergeable, but the base moved under it | needs an update-branch — **mine, not Brian's**; keep it out of his queue |
 | `unstable` | mergeable, a check failed or is still running | say which check |
 | `unknown` | GitHub has not computed it yet | **re-query after ~30s**; never report `unknown` |
 
@@ -149,7 +155,170 @@ Two failure modes, both real:
 - **Do not claim a devcontainer's work.** If a repo has a live session, its open
   PRs and dirty branches are theirs. Report them; do not touch them.
 
-## Ordering
+## Brian's queue -- lead the report with this
+
+**One ordered table, issues and PRs together.** Two lists is the failure mode: he
+reads the first, acts on it, and never learns the second existed. Brian,
+2026-08-16: *"show issues and prs assigned to me with comments, in order in which
+should be addressed."*
+
+Four columns -- `#` | `Item` | `Your move` | `Why here / last word` -- and the
+fourth is the point. A row he has to open to understand costs him a click, so
+carry the substance inline: the **recommendation** if it is a decision, the
+**command count** if it is a task, **what it releases**, or the **last comment**.
+
+### Gathering the candidates
+
+```bash
+for o in bdh-org finzeug; do
+  T=$([ "$o" = finzeug ] && echo "$TF" || echo "$TB")
+  for r in $(GH_TOKEN=$T gh repo list "$o" --limit 40 --json name -q '.[].name'); do
+    GH_TOKEN=$T gh api "repos/$o/$r/issues?state=open&assignee=brianholland&per_page=100" \
+      --jq ".[]|select(.pull_request==null)|\"$o/$r#\(.number)\t\(.updated_at[0:10])\tc=\(.comments)\t\([.labels[].name]|join(\",\"))\t\(.title[0:60])\"" 2>/dev/null
+  done
+done
+```
+
+Then three calls **per candidate only** -- it is two API round trips an issue, so
+do not run it over the whole fleet:
+
+```bash
+# what it RELEASES -- dependents that become actionable when he closes it
+GH_TOKEN=$T gh api "repos/$O/$R/issues/$N/dependencies/blocking" \
+  --jq 'if length==0 then "-" else [.[]|select(.state=="open")|"#\(.number)"]|join(",") end'
+# what still holds it DOWN -- an open blocker means it is not his move yet
+GH_TOKEN=$T gh api "repos/$O/$R/issues/$N/dependencies/blocked_by" \
+  --jq '[.[]|select(.state=="open")|"#\(.number)"]|join(",")'
+# the last word -- WHO spoke and WHAT they said
+GH_TOKEN=$T gh api "repos/$O/$R/issues/$N/comments?per_page=100" \
+  --jq 'if length==0 then "(none)" else .[-1] as $c|"\($c.user.login) \($c.created_at[0:10]): \($c.body|gsub("\\s+";" ")|.[0:140])" end'
+```
+
+`dependencies/blocking` is the **real graph**, not a prose claim in a body.
+Verified 2026-08-16: home-infra#464 -> #262, #433 -> #18, #456 -> #336,
+#350 -> #394. Two traps. `blocked_by` cheerfully returns **closed** issues
+(home-infra#48 lists closed #40), so filter `state=="open"` on both sides or you
+will invent blockers that are already gone. And an empty array is a 200 -- `[]`
+means "no dependencies", never "the call failed".
+
+### The order, and why it is that order
+
+Rank by **what the item releases**, cheapest first within a tier:
+
+1. **Deadlined or expiring** -- rises regardless of what it blocks, because the
+   cost only goes up. The `bdh-ai` PATs expire **2026-11-01**, so the App that
+   replaces them is time-boxed even though it releases a single issue.
+2. **Cheap and unblocking** -- a title saying `(N commands)` / `(N steps)` with a
+   non-empty `blocking` list. Minutes of his time, and a dependent goes green
+   when he closes it. This tier is why the graph call is worth making: it beats a
+   long decision that releases nothing.
+3. **A decision that already carries a recommendation** -- also cheap, usually a
+   one-word reply. Say so in the row and put the recommendation in the last
+   column, so he can answer without opening anything. Never file a bare open
+   question here: a decision handed back is work handed back (`issues/481`).
+4. **Costly but unblocking** -- long procedures that release something.
+5. **Releases nothing** -- last, if at all.
+
+Ties break on fewer commands. **Drop an item a tier** when its own `blocked_by`
+still holds an open issue: closing it releases nothing today, so it is not yet
+his move -- say what it waits on.
+
+### What must NOT be in it -- this matters as much as the order
+
+| Kept out | Test | Goes instead to |
+| --- | --- | --- |
+| **He answered last** | last comment author is `brianholland` | "Answered -- my move" |
+| **Standby** | body says there is nothing to do until a trigger fires | "Standby", trigger named |
+| **`maybe-stale`** | the label | one line: count + filter command |
+| **Machine-assigned** | `.user.login` ends `[bot]` | named once, out of the order |
+| **Ordinary engineering** | nothing in "Who must do it" makes it his | "Mis-assigned", offer to unassign |
+
+**He answered last** is `architect-sweep.sh` section 6's test, and it is
+deliberately convention-free -- he replies however he likes; the signal is that
+he spoke last. Live on 2026-08-16: the last comment on home-infra#459 is his,
+*"yes, 5 min"*. The decision is made, the work is mine, and listing it as his
+to-do asks him to answer twice. **Never drop these** -- give them their own short
+section, because an answer that reached nobody is the exact bug this closes.
+
+**Standby.** home-infra#456 opens *"Nothing to do right now. This is a standby
+runbook"* -- and it genuinely does block #336, so the dependency graph alone
+would rank it high. Read the body. List it, name the trigger, keep it out of the
+order.
+
+**Machine-assigned.** home-infra#384 is opened, commented and closed by
+`scripts/fleet-audit-report.sh`, which assigns `brianholland` by default -- so
+every morning's engineering findings land in his queue. That is an inversion of
+what the queue is for, not a to-do. Note it once, keep it out, and say the
+assignment should go.
+
+**Ordinary engineering.** Assigned to him because a repo defaulted that way years
+ago -- 17 such issues on 2026-08-16, oldest finzeug/augur#1 (2022-03-27), most of
+them in archived repos. Report as **mis-assigned**, one line with a count and an
+offer to unassign; do not list them as work. The long tail goes the same way:
+untouched for a year is backlog, not queue, and a row spent on it buries the two
+that are real.
+
+**The contradictory double-signal.** An issue carrying `maybe-stale` *and* an
+assignment to him says two opposite things -- "glance at this sometime" and "you
+must act". Report it as a **defect in the queue itself**, name the issue, and say
+which signal you think is wrong. Zero on 2026-08-16 (14 `maybe-stale` fleet-wide,
+none assigned), which is why it has to be checked rather than remembered:
+
+```bash
+GH_TOKEN=$T gh api "repos/$O/$R/issues?state=open&labels=maybe-stale&per_page=100" \
+  --jq '.[]|select(.pull_request==null)|"#\(.number) [\([.assignees[].login]|join(","))]"'
+```
+
+### PRs belong in the same table
+
+They are rarely assigned in this fleet -- they are simply open and waiting.
+Include one when the remaining action is **his**: an editorial or content
+judgement, a deploy-path merge, a change he asked to see. Exclude one whose next
+step is mine -- `dirty` (rebase), `behind` (update the branch), a red or
+never-started check, an unfinished agent PR.
+
+**Merging to main IS the production deploy here.** A merge row must say what it
+ships and where: "merge -> forge rebuilds -> `registry.home.arpa` -> minerva
+restarts `<svc>`". "Ready to merge" on its own hides that he is being asked to
+deploy.
+
+### Worked example
+
+Rows below are a verified 2026-08-16 snapshot, trimmed for length. They show the
+shape; re-query before you write.
+
+```markdown
+## Waiting on you -- in order
+
+Ordered by what each one releases, cheapest first; a deadline outranks that.
+
+| # | Item | Your move | Why here / last word |
+|---|---|---|---|
+| 1 | issue [home-infra#464](https://github.com/bdh-org/home-infra/issues/464) | register a GitHub App, 4 steps | Releases issue [#262](https://github.com/bdh-org/home-infra/issues/262). **Time-boxed: the `bdh-ai` PATs expire 2026-11-01** and nothing else replaces them. Last comment (me, 08-15): step 1's permission list was corrected in the body -- re-read it before registering. |
+| 2 | issue [home-infra#433](https://github.com/bdh-org/home-infra/issues/433) | run `set-ci-repo-vars --check`, 1 command | Releases issue [#18](https://github.com/bdh-org/home-infra/issues/18) (Vault renders the runtime env). No comments; `VAULT_ADDR` has never been provisioned from version control, so nobody knows which repos carry it. |
+| 3 | PR [brief#134](https://github.com/bdh-org/brief/pull/134) | read, then merge | Editorial call, yours: ranks the newsletter digest by standing interest. `clean`, CI green. Merging is the deploy -- it takes effect on the next digest run. |
+| 4 | issue [home-infra#350](https://github.com/bdh-org/home-infra/issues/350) | one word, yes or no | **Recommendation already written: accept the Actions-API fallback** (`scripts/pr-checks.sh`) and close. You established 08-15 that fine-grained PATs have no Checks category at all, so widening the PAT was never available. Closing releases issue [#394](https://github.com/bdh-org/home-infra/issues/394). |
+| 5 | issue [home-infra#48](https://github.com/bdh-org/home-infra/issues/48) | Vault KMS auto-unseal on control | Releases nothing open, `priority: low`, and still blocked by open issue [#467](https://github.com/bdh-org/home-infra/issues/467) (no AWS pass-through). Do #467 first; this is here for completeness. |
+
+## Answered -- my move, not yours
+
+| Item | You said | What I owe you |
+|---|---|---|
+| issue [home-infra#459](https://github.com/bdh-org/home-infra/issues/459) | 08-15: "yes, 5 min" | Build the liveness poll at a 5-minute interval and close it. Releases issue [#348](https://github.com/bdh-org/home-infra/issues/348). |
+
+## Standby -- nothing to do until it fires
+
+- issue [home-infra#456](https://github.com/bdh-org/home-infra/issues/456) -- recover a cgroup-wedged svc-prod container. **Trigger:** a container actually wedges. Blocks issue [#336](https://github.com/bdh-org/home-infra/issues/336) by design, so ignore its high graph rank.
+
+## Kept out of your queue
+
+- **Machine-assigned:** issue [home-infra#384](https://github.com/bdh-org/home-infra/issues/384) -- opened and self-assigned to you by `fleet-audit-report.sh`. Engineering output, mine to act on. The assignment should be dropped.
+- **Mis-assigned (ordinary work):** 17 issues, oldest issue [augur#1](https://github.com/finzeug/augur/issues/1) (2022-03-27); the only live ones are issue [freddyb#13](https://github.com/finzeug/freddyb/issues/13) and issue [panoptikon#40](https://github.com/finzeug/panoptikon/issues/40). Say the word and I unassign all 17.
+- **`maybe-stale`:** 14 open, none assigned to you -- browse when convenient, no action implied.
+- **Defects in this queue:** none today (no issue carries both `maybe-stale` and your name).
+```
+
+## Merge order -- ranking PRs against each other
 
 Give an explicit order when one exists, and say why:
 
@@ -162,9 +331,11 @@ Give an explicit order when one exists, and say why:
   set the same `VERSION`; merging one stales the rest. Say so, rather than letting
   a human discover it on the second merge.
 
-## Issues
+## Issues — everything outside Brian's queue
 
-Do not dump them. A fleet has hundreds open and the list is not the report.
+Do not dump them. A fleet has hundreds open and the list is not the report. Once
+the queue above is written, a **count table** by repo is enough, plus only those
+issues that need a *named* human, with `updated_at`:
 
 ```bash
 GH_TOKEN=$T gh api "repos/$spec/issues?state=open&per_page=100" \
@@ -172,11 +343,6 @@ GH_TOKEN=$T gh api "repos/$spec/issues?state=open&per_page=100" \
 GH_TOKEN=$T gh api "repos/$spec/issues?state=open&per_page=100" \
   --jq '.[]|select(.pull_request==null)|select(.assignees|length>0)|"#\(.number) \(.assignees[0].login)"'
 ```
-
-Report: a **count table** by repo, then only the issues that need a human, with
-`updated_at`. Age is the filter that matters — an issue assigned to Brian and
-untouched since last year is backlog, not queue, and listing it as a to-do
-buries the two that are real.
 
 ## Writing it
 
@@ -194,27 +360,31 @@ Org from `origin`: `bdh-org` (home-infra, home-site, dev-common, devtemplate,
 brief, roy, home-stack-common), `finzeug` (hog, oleo, canary, heller, panoptikon,
 refdims, ratecraft, ferret, freddyb, slingshot, ledger-io).
 
-Shape:
+Shape — Brian's queue first, always, because it is the only section written for
+him rather than about the fleet:
 
 ```markdown
-## Ready to merge — Brian
+## Waiting on you -- in order          <- the queue; see "Brian's queue" above
+## Answered -- my move, not yours
+## Standby -- nothing to do until it fires
+## Kept out of your queue
+
+## Ready to merge -- Brian
 
 | Order | PR | What | CI | Note |
 |---|---|---|---|---|
-| 1 | [heller#421](...) | lib/ledger-io, 11 behind | green | writer — merge first, the readers depend on this revision |
+| 1 | [heller#421](...) | lib/ledger-io, 11 behind | green | writer -- merge first, the readers depend on this revision |
 
-## Needs its author — panoptikon devcontainer
+## Needs its author -- panoptikon devcontainer
 
 | PR | State | Action |
 |---|---|---|
-| [panoptikon#724](...) | conflicts | **close it** — issue #719 closed, PR #730 shipped the same change |
+| [panoptikon#724](...) | conflicts | **close it** -- issue #719 closed, PR #730 shipped the same change |
 
 ## Open issues
 
 | Repo | Open | Repo | Open |
 |---|---|---|---|
-
-## Needs you specifically
 ```
 
 Include a **Comments** or **Note** column and use it for the thing a table cannot
