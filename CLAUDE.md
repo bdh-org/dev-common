@@ -70,6 +70,87 @@ Two conventions:
 Delete a section once actioned. A stale inbox is worse than none — it gets
 skimmed, and then the next real message is skimmed too.
 
+## When something needs Brian: break it out, assign it, and LINK it
+
+**First ask whether it is his at all.** It is his only if it needs something no
+session can obtain:
+
+* **root or physical access** -- installing on a host, re-registering a runner,
+  plugging in a disk
+* **a credential only he can create** -- a GitHub App, an AWS key, a paid account
+* **money** -- anything with a bill attached
+* **a fact only he holds** -- is that disk backed up, has a restore ever been tested
+* **priority or strategy** -- what to work on next, what to stop doing
+* **an irreversible or outward-facing act** -- something that cannot simply be reverted
+
+**Everything else is yours, including questions that feel weighty** -- security
+scoping, retry semantics, cadence defaults, which of three designs to build.
+Decide them, write down the reasoning and the trigger that would reverse the
+decision, and make it configurable where that is cheap. Brian, 2026-08-15, after
+six engineering calls were routed to him in one day: *"this is an engineering
+question. I need you to decide these things... the purpose of this work is being
+neglected"*, and *"if you, the engineer have a preference, then let's try it and
+you document it so we can have a record in case there is room for improvement
+later."* **The deliverable of a decision is a decision plus its record, never a
+question.** Handing back a judgement call is the same offload as handing back the
+work.
+
+### If it IS his, it gets its own issue
+
+Never append "and Brian needs to run X" to the end of a diagnostic or design
+issue, and never assign him a long technical thread hoping he finds the ask in
+the last comment. He cannot find it, and nothing surfaces it.
+
+* **Title it `BRIAN: <imperative>`** -- and `(N commands)` when it really is a
+  short sequence. It has to be findable in a list of twenty.
+* **Assign it to `brianholland`.** Never to `bdh-ai`, which every session shares
+  and so signals nothing.
+* **The body must be self-contained.** He must be able to act without opening the
+  parent issue: the host and account beside *each* step (steps get copied one at a
+  time and a header does not travel with them), the literal commands, a
+  **"Success looks like"** with real expected output, what to do if it fails, and
+  one line pointing back for context.
+* **Never write a command you have not run.** If you cannot execute it from here,
+  mark it `UNVERIFIED` rather than presenting it as tested. A handoff that cannot
+  work costs more than no handoff.
+* If it is a **decision** rather than commands: the question in one sentence, the
+  options with their consequences, and **your recommendation**. Never an open
+  question.
+
+### Link it with a real GitHub issue DEPENDENCY, not prose
+
+The operator task is not *part of* the engineering issue -- it **blocks** it. Say
+so in the way GitHub can act on, so the relationship survives being skimmed:
+
+```bash
+T="$(cat ~/.config/ai/claude/credentials/gh-<org>.token)"
+CHILD_ID=$(GH_TOKEN="$T" gh api repos/<org>/<repo>/issues/<CHILD> --jq .id)
+GH_TOKEN="$T" gh api -X POST \
+  repos/<org>/<repo>/issues/<PARENT>/dependencies/blocked_by \
+  -F issue_id=$CHILD_ID
+```
+
+Two things bite: it wants `-F` (a typed integer), not `-f`; and it wants the
+issue's **database id**, not its number. Verify with
+`gh api repos/<org>/<repo>/issues/<PARENT>/dependencies/blocked_by --jq '.[].number'`.
+
+GitHub **enforces acyclicity** server-side -- a cycle is refused with a 422 -- so
+the graph is a real DAG rather than decoration. Prefer dependencies over
+sub-issues: a sub-issue says *part of*, and this is *blocks*.
+
+Then **unassign yourself from the parent and leave its assignee empty**, and put a
+one-line pointer at the top of the parent body so a reader knows the operator half
+lives elsewhere.
+
+### Closing the loop
+
+Nothing watches GitHub on your behalf -- a session exists only while Brian is
+running one, so an answer he writes reaches nobody until someone looks.
+`home-infra`'s `make sweep` has a section that lists open issues assigned to him
+whose **last comment is his**; that is the signal that a decision is waiting on
+*you*. When you act on one, close the `BRIAN:` issue -- closing the blocker is what
+releases its dependents.
+
 ## Referring to issues and PRs
 
 **Every issue or PR number in text the user reads is a hyperlink, and says which
@@ -92,6 +173,16 @@ Two separate requirements, and both are needed:
 Org for the URL, from the repo's `origin`: `bdh-org` (home-infra, home-site,
 dev-common, devtemplate, brief, roy), `finzeug` (hog, oleo, canary, heller,
 panoptikon, refdims, ratecraft, ferret, freddyb, slingshot, ledger-io).
+
+**THE ONE EXCEPTION: a PR's closing trailer takes the BARE form.** `Closes #372`,
+on its own line -- never `Closes issue [home-infra#372](...)`. That line is a
+machine directive, not prose: GitHub parses the PR body for closing keywords and
+needs a bare reference, so the hyperlinked form matches nothing and the issue
+silently stays open. Measured 2026-08-15 across the last 60 merged home-infra PRs:
+53 used a closing keyword and **25 registered no closing reference at all**. It
+never looked broken because whoever noticed closed the issue by hand. Still
+hyperlink the issue wherever the body *discusses* it -- the two rules govern
+different lines.
 
 This is here rather than in a memory note because it kept regressing when it was
 only a note. Brian has asked for it repeatedly.
