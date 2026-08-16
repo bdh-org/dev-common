@@ -105,6 +105,22 @@ the last comment. He cannot find it, and nothing surfaces it.
   short sequence. It has to be findable in a list of twenty.
 * **Assign it to `brianholland`.** Never to `bdh-ai`, which every session shares
   and so signals nothing.
+* **A PR that needs him gets assigned too -- naming it in chat is not surfacing
+  it.** PRs in this fleet are conventionally left unassigned, so a PR waiting on
+  his merge sits in no queue he reads. Brian found this himself, 2026-08-16, after
+  being handed a prioritised list containing two of them: *"there are 2 prs you
+  have above for me: but they are not assigned to me."* Assign `brianholland`
+  **and** request his review, so it appears under both `assignee:@me` and
+  `review-requested:@me`:
+
+  ```bash
+  gh api -X POST repos/<org>/<repo>/issues/<PR>/assignees -f 'assignees[]=brianholland'
+  gh api -X POST repos/<org>/<repo>/pulls/<PR>/requested_reviewers -f 'reviewers[]=brianholland'
+  ```
+
+  The first call really is the **issues** endpoint -- PR assignees live there.
+  This is the same failure as burying an instruction: the work was visible to me
+  and invisible where he looks.
 * **The body must be self-contained.** He must be able to act without opening the
   parent issue: the host and account beside *each* step (steps get copied one at a
   time and a header does not travel with them), the literal commands, a
