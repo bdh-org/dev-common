@@ -142,6 +142,32 @@ Then **unassign yourself from the parent and leave its assignee empty**, and put
 one-line pointer at the top of the parent body so a reader knows the operator half
 lives elsewhere.
 
+### An issue you SUSPECT is dead is not an issue you may close
+
+Closing on a hunch is not tidying, it is deletion: a wrongly-closed issue is invisible
+forever, while a wrongly-flagged one costs ten seconds to dismiss. So the bar for
+closing is **proof, not confidence**.
+
+* **Provable** -- the function it asks for exists, the PR that did it is merged, the
+  host it refers to is decommissioned. Close it, and cite the specific evidence in the
+  closing comment so the next reader can check your work.
+* **Merely suspected** -- it *looks* superseded, or you doubt it still matters, but you
+  cannot prove it; or whether it matters is a judgement about Brian's priorities rather
+  than about the code. **Label it `maybe-stale`**, comment with what you checked, what
+  you found and why you are unsure, and leave it open.
+
+```bash
+gh issue list --repo <org>/<repo> --label maybe-stale     # his review queue, in one query
+```
+
+Brian, 2026-08-16: *"some issues might no longer be current and should maybe be closed.
+I suggest assigning those to me to review or labelling them with a category for me to
+review."*
+
+**Label rather than assign**, deliberately. Assignment is the signal for *"you must
+act"*; spending it on *"please glance at this"* dilutes the `BRIAN:` queue into noise,
+and that queue only works while everything in it is genuinely his to do.
+
 ### Closing the loop
 
 Nothing watches GitHub on your behalf -- a session exists only while Brian is
