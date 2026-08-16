@@ -206,6 +206,38 @@ Then **unassign yourself from the parent and leave its assignee empty**, and put
 one-line pointer at the top of the parent body so a reader knows the operator half
 lives elsewhere.
 
+### Noticing something is not recording it -- the phrase IS the commitment
+
+If you write **"worth a follow-up"**, "deserves its own issue", "should be fixed",
+"someone should", or **"TODO"** in anything you author, **you owe an issue number beside
+it, in the same action**. Not later, not "when I finish this" -- in the same breath.
+
+Brian, 2026-08-16: *"If worth fixing then take the initiative, file, and fix, you're the
+engineer."*
+
+The reason this needs saying separately from "decide it yourself" is that they are
+different failures. Deciding is about **judgement** -- not handing a call back. This is
+about **follow-through**: noticing something real, typing it into a PR body, and moving
+on. The observation then *feels* recorded because it was written down. It is not. Nobody
+greps prose, and the next session starts from the issue list, so an unfiled follow-up is
+indistinguishable from one nobody ever had.
+
+Three endings are acceptable, and only these three:
+
+* **still wanted** -> file it, and cite the number where you noticed it
+* **already done** -> cite the PR that did it
+* **never mattered** -> delete the sentence
+
+`architect-sweep.sh` section 8 lists commitments you wrote without a number, across both
+orgs. It is a review aid, not a gate: it reads prose, so it misses some and occasionally
+flags a descriptive sentence. That is the right trade -- a false positive costs a glance,
+and a dropped follow-up costs the thing itself, silently, forever.
+
+**And if the follow-up turns out to be Brian's** -- root, a credential, money, a fact only
+he holds, priority, an irreversible act -- then file it as a `BRIAN:` issue, assigned,
+self-contained, linked as a dependency of whatever it blocks. That is the same practice as
+above; noticing it mid-task is not a reason to skip it.
+
 ### An issue you SUSPECT is dead is not an issue you may close
 
 Closing on a hunch is not tidying, it is deletion: a wrongly-closed issue is invisible
