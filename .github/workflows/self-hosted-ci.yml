@@ -337,7 +337,24 @@ jobs:
             key=$( { echo "$CACHE_VERSION"; cat common/RUFF_VERSION 2>/dev/null; cat "${{ inputs.ci-env-file }}"; } | sha256sum | cut -d' ' -f1)
           fi
           have=$(cat "$envpath/.envhash" 2>/dev/null || true)
-          if [ ! -d "$envpath" ] || [ "$key" != "$have" ]; then
+
+          # A long-lived self-hosted runner accumulates a conda package cache, and
+          # that cache CORRUPTS. finzeug/slingshot#218 died here on:
+          #
+          #   CondaError: Cannot link a source that does not exist.
+          #     /srv/github-runner/miniforge3/envs/slingshot-ci/.condatmp/ff76c0d8-...
+          #   Running `conda clean --packages` may resolve your problem.
+          #
+          # It is STICKY and it is invisible until someone changes a dependency: the
+          # env only rebuilds when the key moves, so every other PR sails through on a
+          # cache hit while the one PR that touches conda-packages.txt looks like it
+          # broke CI. It also leaves a half-built env and never writes .envhash, so the
+          # next attempt repeats it forever.
+          #
+          # So the build is attempted, and on failure the cache is cleaned and it is
+          # tried ONCE more. Once, deliberately: a second failure is a real dependency
+          # problem and must surface as one rather than be retried into a timeout.
+          build_env() {
             if [ "${{ inputs.full-env }}" = "true" ]; then
               # Build the named env directly with `-n` (base conda binary, no
               # activation). We do NOT call `make env`: it's written for the
@@ -376,6 +393,17 @@ jobs:
             else
               echo "Building/updating minimal env $CI_ENV from ${{ inputs.ci-env-file }}"
               conda env update -n "$CI_ENV" -f "${{ inputs.ci-env-file }}" --prune
+            fi
+          }
+
+          if [ ! -d "$envpath" ] || [ "$key" != "$have" ]; then
+            if ! build_env; then
+              echo "::warning::conda env build failed -- cleaning the package cache and retrying once (bdh-org/dev-common: slingshot#218)"
+              conda clean -y --packages --tarballs || true
+              # The half-built env is part of the wreckage: linking failed partway, so
+              # what is on disk is neither the old env nor the new one.
+              conda env remove -y -n "$CI_ENV" || true
+              build_env
             fi
             echo "$key" > "$envpath/.envhash"
           else
