@@ -693,7 +693,25 @@ jobs:
       # the outcome should still reach the issue. Skipped only when the agent never ran at
       # all (Vault/checkout failure upstream).
       - name: Report the run's outcome (PR check + issue comment)
-        if: ${{ !cancelled() && steps.agent.outcome != 'skipped' }}
+        # `|| failure()` is load-bearing, and its absence cost six days once.
+        #
+        # A step that never ran reports `skipped`, and a step is skipped when an
+        # EARLIER step failed. So `steps.agent.outcome != 'skipped'` silently
+        # excluded every failure before the agent -- checkout, submodule
+        # hydration, env setup, token minting -- which is precisely when nobody
+        # is told anything. finzeug/heller#408 died at "Hydrate submodules",
+        # this step was skipped, the `agent-pr` label was never dropped and no
+        # comment was posted, and the issue sat looking handed-over for SIX DAYS
+        # while the underlying bug was fixed elsewhere (bdh-org/dev-common#211).
+        #
+        # The safety net was covering the failures that announce themselves and
+        # missing the ones that do not.
+        #
+        # `failure()` is true when any previous step failed, so the three cases
+        # separate cleanly: the agent ran (outcome is not skipped) -> report; the
+        # agent was skipped BECAUSE something earlier failed -> report; the agent
+        # was skipped with nothing failed, i.e. deliberately not run -> stay quiet.
+        if: ${{ !cancelled() && (steps.agent.outcome != 'skipped' || failure()) }}
         env:
           # The coder App token, NOT github.token: this step comments on the issue and
           # clears the trigger label, and the App installation carries issues:write across
