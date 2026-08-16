@@ -298,7 +298,7 @@ Ordered by what each one releases, cheapest first; a deadline outranks that.
 | 2 | issue [home-infra#433](https://github.com/bdh-org/home-infra/issues/433) | run `set-ci-repo-vars --check`, 1 command | Releases issue [#18](https://github.com/bdh-org/home-infra/issues/18) (Vault renders the runtime env). No comments; `VAULT_ADDR` has never been provisioned from version control, so nobody knows which repos carry it. |
 | 3 | PR [brief#134](https://github.com/bdh-org/brief/pull/134) | read, then merge | Editorial call, yours: ranks the newsletter digest by standing interest. `clean`, CI green. Merging is the deploy -- it takes effect on the next digest run. |
 | 4 | issue [home-infra#350](https://github.com/bdh-org/home-infra/issues/350) | one word, yes or no | **Recommendation already written: accept the Actions-API fallback** (`scripts/pr-checks.sh`) and close. You established 08-15 that fine-grained PATs have no Checks category at all, so widening the PAT was never available. Closing releases issue [#394](https://github.com/bdh-org/home-infra/issues/394). |
-| 5 | issue [home-infra#48](https://github.com/bdh-org/home-infra/issues/48) | Vault KMS auto-unseal on control | Releases nothing open, `priority: low`, and still blocked by open issue [#467](https://github.com/bdh-org/home-infra/issues/467) (no AWS pass-through). Do #467 first; this is here for completeness. |
+| 5 | issue [home-infra#48](https://github.com/bdh-org/home-infra/issues/48) | Vault KMS auto-unseal on control | Releases nothing open, `priority: low`, and still blocked by open issue [#467](https://github.com/bdh-org/home-infra/issues/467) (no AWS pass-through). That one has to land first; this row is here so you know it is not forgotten. |
 
 ## Answered -- my move, not yours
 
