@@ -323,6 +323,15 @@ that matches the repo's GitHub org. Tokens live at
 | --- | --- | --- |
 | `gh-bdh-org.token` | `bdh-org` | home-site, dev-common, devtemplate, actions-runner, brief, roy |
 | `gh-finzeug.token` | `finzeug` | hog, oleo, canary, heller, panoptikon, refdims, ratecraft, ferret, freddyb |
+| `gh-finriskanalytics.token` | `finriskanalytics` | fra-stack-common, hmdlib, billing, ASG-ALMT-Review |
+
+**There are THREE tokens, not two.** This table listed only the first two for
+months while the third sat in the same directory, working, so a session that
+consulted the table concluded finriskanalytics was unreachable — or, worse,
+reached for the finzeug token and got a 404 that reads exactly like a deleted
+repo. The org is not a leftover: it holds a second stack (`fra-stack-common` is
+the repo this file's own P3 section cites as the naming example) and four repos
+touched in the last year.
 
 Pick the token from the repo's origin org
 (`git remote get-url origin`), then prefix the command:
