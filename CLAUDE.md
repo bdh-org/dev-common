@@ -410,6 +410,43 @@ has been wrong more often than right, and the failures are not cheap: a
 prod, where it chowned what the Makefile still believed was the live Postgres
 data directory (bdh-org/dev-common#159, finzeug/refdims#177).
 
+### The SHAPE of a handoff breaks it as often as the content
+
+The rules above govern what a command says. These govern how it survives being
+copied. Two handoffs failed on 2026-08-20 for the same reason -- the chat
+message's formatting broke the command, twice, in opposite directions.
+
+* **One line at a time whenever anything prompts for input.** A block that
+  opens with `read -r R` to ask for a secret puts the *next* line into the
+  terminal's input buffer, so `read` consumes the following command as the
+  value. `curl` then ran with the command text as its credential. Hand such
+  blocks over as separate lines, and say to run them one at a time.
+
+* **Keep every line short enough not to wrap** -- roughly 70 characters. The
+  rewrite that collapsed the block into one long line wrapped in the reader's
+  terminal, and the copy carried the wraps as real newlines: `-d` lost its
+  parameter and the JSON body executed as a command. Once copied, a wrapped
+  line is indistinguishable from two lines.
+
+* **Never pipe a command's output straight into a parser.** Show the server's
+  own error. `KeyError: 'auth'` sent the operator nowhere; the
+  `{"errors":["permission denied"]}` it was hiding would have ended it in one
+  step. Same rule as making a 403 self-describing.
+
+* **Check whether the recipe already exists** before writing one. This command
+  was already documented in another repo -- four short lines using that
+  service's CLI, no parsing at all -- and was reinvented as a `curl` pipeline
+  to save one `ssh`. Every problem above was downstream of that invention.
+
+**And when a handoff fails, fix the handoff.** The reflex to escalate --
+script, make target, tests, PR -- produces something that works while putting
+a one-off procedure permanently into a repo that does not own it, duplicating
+the recipe of the repo that does. Brian, 2026-08-20, on merging exactly that:
+*"having a one-off make target there forever is also not ideal. You could just
+have said to paste the commands line by line."* Ask first whether the handoff
+was malformed, not whether the operation was under-tooled.
+See bdh-org/dev-common#218.
+
 ## Package Management
 - Install packages with `conda` (conda-forge) into the dev environment when possible.
 - Use `pip` only as a fallback when a package is not available on conda-forge.
