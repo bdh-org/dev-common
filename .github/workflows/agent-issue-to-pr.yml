@@ -504,6 +504,18 @@ jobs:
           # Echoed so a run's cost profile is readable after the fact, not inferred.
           echo "::notice::agent run budget -- model=$model max-turns=$turns (repo defaults: $DEFAULT_MODEL / $DEFAULT_TURNS)"
 
+      # Every runner unit on forge shares one service account, one HOME, and so
+      # one ~/.claude/downloads -- and the CLI installer hardcodes that path
+      # (CLAUDE_CONFIG_DIR is not read) with no locking of its own. Two agent
+      # runs installing at the same moment corrupt each other's download and
+      # both die on ETXTBSY, in a way that names neither issue and reads as an
+      # unrelated blip. See the action's lock.sh for the full account
+      # (bdh-org/home-infra#541).
+      - name: Wait for the Claude Code install lock
+        uses: bdh-org/dev-common/.github/actions/claude-install-lock@main
+        with:
+          mode: acquire
+
       - uses: anthropics/claude-code-action@v1
         id: agent
         env:
@@ -554,6 +566,16 @@ jobs:
             --model ${{ steps.budget.outputs.model }}
             --max-turns ${{ steps.budget.outputs.turns }}
             --allowedTools "Read,Write,Edit,Bash"
+
+      # always(), so a failed, skipped or CANCELLED agent step still hands the
+      # lock back. Without this every later run pays the full stale timeout
+      # before it can start, which would turn one bad run into an hour of
+      # fleet-wide delay.
+      - name: Release the Claude Code install lock
+        if: always()
+        uses: bdh-org/dev-common/.github/actions/claude-install-lock@main
+        with:
+          mode: release
 
       # Guarantee the issue link (home-site#266). The prompt above ASKS for
       # "Closes #<n>" in the PR body, and the model complies most of the time --
