@@ -192,6 +192,32 @@ That last one is the general case of a rule this repo already states elsewhere:
 merging changes a repo, and only running something changes a host. Anything
 delivered by `rsync`, `make`, or a provisioning script is inert until run.
 
+### A decision for him NEVER shares an issue with engineering work
+
+The rule above says a decision gets its own issue, and gives visibility as the
+reason. There is a second reason, and it is the one that actually bites:
+**they complete at different times.**
+
+A decision resolves the moment he answers. The work around it does not. Put
+both in one issue and answering the question closes the work -- silently, and
+correctly from his side, because from where he sits the issue *is* the
+question.
+
+That happened to the issue filed about this very problem (bdh-org/home-
+infra#551): it carried one question for Brian plus two pieces of engineering,
+he answered and closed it, and the engineering went with it. It had to be re-
+filed as #553. Brian, 2026-08-20: *"home-infra#551 was not assigned to me, but
+I answered and closed it done."*
+
+So: the question goes in its own issue, assigned. The work it unblocks stays
+in yours, unassigned, and is linked as blocked_by. Then his close ends only
+his part.
+
+**And if you ask the question in chat instead** -- which is often kinder,
+since a one-click answer beats a round trip -- the issue still has to exist
+and still has to be assigned. Chat is not a record: he may not be there, and
+neither will the answer be when the next session looks.
+
 ### Link it with a real GitHub issue DEPENDENCY, not prose
 
 The operator task is not *part of* the engineering issue -- it **blocks** it. Say
