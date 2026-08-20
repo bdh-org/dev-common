@@ -411,6 +411,20 @@ jobs:
           # Echoed so a run's cost profile is readable after the fact, not inferred.
           echo "::notice::revision run budget -- model=$model max-turns=$turns (repo defaults: $DEFAULT_MODEL / $DEFAULT_TURNS)"
 
+      # See agent-issue-to-pr.yml and the action's lock.sh: forge's runner units
+      # share one ~/.claude/downloads, the installer hardcodes it, and two
+      # concurrent installs kill both runs (bdh-org/home-infra#541). A revise
+      # run races an issue run just as readily as two issue runs race.
+      #
+      # Carries the SAME skip condition as the agent step below: a revision that
+      # is being skipped installs nothing, so it must not queue for the lock and
+      # hold up a run that has real work.
+      - name: Wait for the Claude Code install lock
+        if: steps.pr.outputs.skip != 'true'
+        uses: bdh-org/dev-common/.github/actions/claude-install-lock@main
+        with:
+          mode: acquire
+
       - uses: anthropics/claude-code-action@v1
         id: agent
         if: steps.pr.outputs.skip != 'true'
@@ -475,6 +489,16 @@ jobs:
             --model ${{ steps.budget.outputs.model }}
             --max-turns ${{ steps.budget.outputs.turns }}
             --allowedTools "Read,Write,Edit,Bash"
+
+      # always(), and deliberately NOT carrying the skip condition: a skipped
+      # run never acquired, and release is a no-op when there is no lock, so the
+      # unconditional form is both correct and one less condition to keep in
+      # sync. Owner-checked in the script, so it cannot free someone else's.
+      - name: Release the Claude Code install lock
+        if: always()
+        uses: bdh-org/dev-common/.github/actions/claude-install-lock@main
+        with:
+          mode: release
 
       # Deliverable check (dev-common#140) -- UNCONDITIONAL, unlike the gate below.
       # Here the deliverable is a pushed commit on the EXISTING PR, so compare the

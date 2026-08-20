@@ -1,0 +1,54 @@
+name: Claude Code install lock
+description: >
+  Serialize the Claude Code CLI install across every self-hosted runner unit
+  sharing one HOME, so two concurrent agent runs cannot corrupt each other's
+  download (bdh-org/home-infra#541). Call once with mode=acquire immediately
+  before anthropics/claude-code-action, and once with mode=release and
+  `if: always()` immediately after.
+
+# A COMPOSITE ACTION, deliberately -- not an embedded `run:` block.
+#
+# A reusable workflow's steps execute against the CALLER's checkout, so a
+# `run: bash .github/actions/.../lock.sh` would look for the script in the
+# calling repo, where it does not exist. That constraint is why the submodule
+# hydration step is pasted verbatim into both agent workflows and guarded by a
+# do-not-drift test (dev-common#169). A composite action has no such problem:
+# the runner fetches it from THIS repo by ref, independently of any checkout.
+# So the two call sites share one implementation and cannot drift.
+
+inputs:
+  mode:
+    description: "acquire or release"
+    required: true
+  owner:
+    description: >
+      Identity recorded in the lock and checked on release. Defaults to the
+      calling run, which is what makes a stolen-lock release detectable.
+    required: false
+    default: ""
+  wait-seconds:
+    description: "Give up waiting for the lock after this many seconds"
+    required: false
+    default: "1500"
+  stale-seconds:
+    description: "Steal a lock older than this (a job killed mid-run cannot release its own)"
+    required: false
+    default: "3600"
+  lock-dir:
+    description: "Override the lock path (tests use this; leave empty for $HOME/.claude/install.lock.d)"
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        LOCK_MODE: ${{ inputs.mode }}
+        # github.run_id is unique per run and github.job per job within it, so
+        # two jobs of ONE run still hold distinguishable locks.
+        LOCK_OWNER: ${{ inputs.owner != '' && inputs.owner || format('{0}#{1} ({2})', github.repository, github.run_id, github.job) }}
+        LOCK_WAIT_SECONDS: ${{ inputs.wait-seconds }}
+        LOCK_STALE_SECONDS: ${{ inputs.stale-seconds }}
+        LOCK_DIR: ${{ inputs.lock-dir }}
+      run: bash "${{ github.action_path }}/lock.sh"
