@@ -433,6 +433,17 @@ message's formatting broke the command, twice, in opposite directions.
   `{"errors":["permission denied"]}` it was hiding would have ended it in one
   step. Same rule as making a 403 self-describing.
 
+* **A secret NEVER appears in a command the operator types.** Not as `export
+  TOKEN='...'`, not as a flag, not interpolated into a curl. It lands in shell
+  history and stays there. Prompt for it instead -- `read -rs`, `getpass`,
+  `stty -echo` -- or read it from a mode-600 file. Passing `$VAR` is fine:
+  history records the name, not the value. Where a tool already prompts, say
+  so and tell the operator NOT to set the variable, because helpfully
+  exporting it first is the exact mistake this prevents. Brian, 2026-08-20, on
+  being handed `export VAULT_TOKEN='<paste the new token>'`: *"Never have a
+  script asking me to paste a token into the command that will appear in the
+  shell history."*
+
 * **Check whether the recipe already exists** before writing one. This command
   was already documented in another repo -- four short lines using that
   service's CLI, no parsing at all -- and was reinvented as a `curl` pipeline
