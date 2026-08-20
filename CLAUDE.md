@@ -140,6 +140,17 @@ the last comment. He cannot find it, and nothing surfaces it.
   silently converts a paste-able task into a comprehension exercise -- and an
   operator who does not have time to read the essay reasonably concludes the item
   is not yet actionable.
+* **Say whether the steps are idempotent, at the top.** An operator who cannot
+  remember which half of a list he already ran will either redo it or skip it,
+  and both are avoidable with one line. Where re-running is safe, say so
+  plainly -- "re-run any or all of these freely" -- and let the verification
+  step establish the true state, which beats asking him to reconstruct it from
+  memory. Where a step is NOT safe to repeat (minting a credential, anything
+  that CREATES rather than converges), mark that step specifically and put a
+  CHECK in front of it so the default action is to look before acting. Brian,
+  2026-08-20, having minted the same token twice because nothing said the mint
+  was the one non-repeatable step: *"are instructions in home-infra 550 and
+  548 idempotent? I'm not sure which I ran."*
 * **Never write a command you have not run.** If you cannot execute it from here,
   mark it `UNVERIFIED` rather than presenting it as tested. A handoff that cannot
   work costs more than no handoff.
