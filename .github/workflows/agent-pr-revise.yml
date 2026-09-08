@@ -92,7 +92,22 @@ on:
 
 jobs:
   revise:
-    runs-on: [self-hosted, forge]
+    # `forge-agent`, NOT `forge` -- this is the priority mechanism, not decoration.
+    #
+    # Actions has no priority queue. On 2026-08-10 a batch of 19 agent runs filled the
+    # pool and a PRODUCTION DEPLOY sat at queue position 13 for over an hour; the only
+    # symptom was that a merged fix was not live (bdh-org/home-infra#357). Forge runner
+    # instance 1 carries `forge` ONLY and instances 2..N also carry `forge-agent`, so
+    # asking for `forge-agent` here reserves instance 1 for `ci-build` -- a deploy always
+    # has a free unit no matter how much speculative agent work is queued.
+    #
+    # The label is VERIFIED OFFERED, not assumed: bdh-org/home-infra run 34220075413
+    # dispatched a job requesting `[self-hosted, forge-agent]` and `forge-bdh-org-2` took
+    # it. That check matters because the failure here is SILENT -- a `runs-on` naming a
+    # label no runner offers does not error, it queues forever with `runner_name: null`,
+    # which is indistinguishable from a busy fleet (finzeug/ratecraft sat 22h that way).
+    # Re-run that probe (`forge-runner-labels.yml`) before changing this line again.
+    runs-on: [self-hosted, forge-agent]
     steps:
       # issue_comment carries the PR number (github.event.issue.number) but NOT its
       # head branch -- resolve it from the API (curl+python3; gh is not on every org
