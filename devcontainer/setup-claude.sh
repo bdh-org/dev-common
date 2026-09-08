@@ -101,6 +101,23 @@ if [[ "$#" -eq 0 ]]; then
   exit 2
 fi
 
+# An UNSET CLAUDE_PROD_HOST whose fallback does not resolve is a missing
+# SETTING, not missing access -- and ssh reports it as "Could not resolve
+# hostname prod", which reads as "production is unreachable from here".
+# A session believed exactly that for a full day and routed every prod check
+# through a human by hand; the scoped account had been usable throughout.
+# Only diagnose when the variable is unset, so a configured host still goes
+# straight to ssh and nothing that works today can regress.
+if [[ -z "${CLAUDE_PROD_HOST:-}" ]] && ! getent hosts "$HOST" >/dev/null 2>&1; then
+  echo "claude-prod: CLAUDE_PROD_HOST is not set and the default host '$HOST' does not resolve." >&2
+  echo "claude-prod: this is a MISSING SETTING, not missing access -- prod is probably reachable." >&2
+  echo "claude-prod: that variable is written under /etc/profile.d by stack-common's" >&2
+  echo "claude-prod:   devcontainer/setup-stack-hosts.sh, which runs only in repos that carry the" >&2
+  echo "claude-prod:   stack-common submodule. This repo appears not to." >&2
+  echo "claude-prod: for one command:  CLAUDE_PROD_HOST=<prod-host> claude-prod $*" >&2
+  exit 2
+fi
+
 exec ssh \
   -i "$KEY" \
   -o IdentitiesOnly=yes \
@@ -136,6 +153,20 @@ fi
 if [[ "$#" -eq 0 ]]; then
   echo "claude-dev: usage: claude-dev <verb> [args...]" >&2
   echo "claude-dev: e.g. claude-dev docker-logs hog --tail 200" >&2
+  exit 2
+fi
+
+# Same as claude-prod above: name the unset variable rather than letting ssh
+# report a hostname that was never meant to be used literally. claude-dev has
+# only ever been luckier, not more correct -- its fallback happens to be a real
+# host on this stack, so the identical defect stays hidden here until it isn't.
+if [[ -z "${CLAUDE_DEV_HOST:-}" ]] && ! getent hosts "$HOST" >/dev/null 2>&1; then
+  echo "claude-dev: CLAUDE_DEV_HOST is not set and the default host '$HOST' does not resolve." >&2
+  echo "claude-dev: this is a MISSING SETTING, not missing access -- dev is probably reachable." >&2
+  echo "claude-dev: that variable is written under /etc/profile.d by stack-common's" >&2
+  echo "claude-dev:   devcontainer/setup-stack-hosts.sh, which runs only in repos that carry the" >&2
+  echo "claude-dev:   stack-common submodule. This repo appears not to." >&2
+  echo "claude-dev: for one command:  CLAUDE_DEV_HOST=<dev-host> claude-dev $*" >&2
   exit 2
 fi
 
