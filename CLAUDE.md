@@ -154,6 +154,28 @@ the last comment. He cannot find it, and nothing surfaces it.
 * **Never write a command you have not run.** If you cannot execute it from here,
   mark it `UNVERIFIED` rather than presenting it as tested. A handoff that cannot
   work costs more than no handoff.
+* **Never RENUMBER a handoff that is already in flight.** The step number is the
+  operator's only bookmark. Editing the body is right -- these rules say to edit
+  rather than append -- but *renumbering* silently invalidates the one piece of
+  state the operator is holding, and does it without any signal, because the new
+  body reads perfectly coherently to a fresh reader. Append a step, letter it
+  (`3a`), or renumber and say so in the FIRST line of the update comment with an
+  explicit old -> new mapping. Brian, 2026-09-11, partway through a six-step
+  handoff that had gained a new step 1: *"I was partway through the prior issue
+  and don't know where I was."*
+* **A handoff of more than about three steps opens with a step 0 that DISCOVERS
+  the state.** Read-only checks, one per host, and a short table mapping their
+  output to where the operator is. Ask the HOST what is true; never ask a human
+  to remember what he ran. This is the same discipline as every detector in this
+  fleet, pointed at the operator's own position, and it is what makes an
+  idempotence claim checkable rather than merely asserted.
+* **A step that appends to a file is not idempotent until it removes its own
+  previous line first.** Back up, delete by a marker the step itself controls (a
+  key comment, a sentinel), then append. A bare `>>` or `tee -a` on a retry
+  leaves a live stale entry beside the correct one -- and for `authorized_keys`
+  that means a credential you believed you had replaced is still valid. This
+  one shipped: a rewritten handoff claimed "every step is safe to re-run" at the
+  top while its step 5 was a bare `tee -a`.
 * If it is a **decision** rather than commands: the question in one sentence, the
   options with their consequences, and **your recommendation**. Never an open
   question.
