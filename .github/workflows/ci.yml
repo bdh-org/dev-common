@@ -62,6 +62,75 @@ jobs:
       - name: Clone dev-common submodule
         run: git submodule update --init common
 
+      # `make init` is step 3 of creating a repo from devtemplate, and NOTHING
+      # notices when it is skipped. GitHub's "Create from template" produces a
+      # repo that builds, tests, merges and deploys perfectly normally while
+      # still carrying the TEMPLATE's identity, so the omission never surfaces
+      # as itself.
+      #
+      # bdh-org/travel ran that way from creation: PROJECT_NAME=devtemplate and
+      # VERSION=0.8.13, devtemplate's own number rather than a new lineage. Its
+      # first PR hit the "Version bumped" gate below, `make bump-patch` did as it
+      # was told, and the repo is now tagged 0.8.14 -- two commits old, claiming
+      # fourteen patch releases, one ahead of the template it was copied from
+      # (bdh-org/dev-common#242, bdh-org/travel#3).
+      #
+      # THIS RUNS BEFORE THE VERSION STEPS DELIBERATELY. The version gate fired
+      # first and reported a missing bump. That was true and useless: the repo
+      # did not need a bump, it needed initialising. A root cause that reports as
+      # a symptom sends you off fixing the symptom, which is how the meaningless
+      # tag got written.
+      #
+      # PROJECT_NAME is the signal, not VERSION. The template's version moves, so
+      # "equals devtemplate's current version" is not a stable test; the name is
+      # rewritten by `make init` and by nothing else.
+      #
+      # NOT confined to pull_request, unlike the version gate. This is a property
+      # of the repository rather than of a diff, so a push to main must fail too
+      # -- otherwise the commit that most needs to be identifiable is the one
+      # that escapes the check.
+      - name: Template initialised
+        run: |
+          set -eu
+          repo="${GITHUB_REPOSITORY:-}"
+          if [ -z "$repo" ]; then
+            echo "::error::GITHUB_REPOSITORY is unset -- cannot tell whether this is"
+            echo "::error::devtemplate itself, and guessing would either false-fail the"
+            echo "::error::template or wave through an uninitialised clone."
+            exit 1
+          fi
+          if [ "${repo##*/}" = "devtemplate" ]; then
+            echo "this is devtemplate itself -- nothing to check"
+            exit 0
+          fi
+          if [ ! -f Makefile ]; then
+            echo "no Makefile -- nothing to check"
+            exit 0
+          fi
+          stale=""
+          for var in PROJECT_NAME CONTAINER_NAME; do
+            val=$(grep -m1 -E "^${var}[[:space:]]*=" Makefile 2>/dev/null | sed -E "s/^${var}[[:space:]]*=[[:space:]]*//" | tr -d ' \r' || true)
+            if [ "$val" = "devtemplate" ]; then
+              stale="$stale $var"
+            fi
+          done
+          if [ -z "$stale" ]; then
+            echo "template initialised -- PROJECT_NAME is not 'devtemplate'"
+            exit 0
+          fi
+          echo "::error::This repo still carries the TEMPLATE's identity:$stale = devtemplate."
+          echo "::error::'make init' was never run, so VERSION is devtemplate's too and this"
+          echo "::error::repo's tags continue the template's lineage instead of starting its own."
+          echo "::error::"
+          echo "::error::Fresh repo, nothing worth keeping yet:"
+          echo "::error::    make init        # renames, resets VERSION to 0.0.1, commits"
+          echo "::error::"
+          echo "::error::Already has commits or tags? Do NOT run 'make init' -- it resets"
+          echo "::error::VERSION to 0.0.1, which moves BACKWARDS past a tag you already have."
+          echo "::error::Set PROJECT_NAME and CONTAINER_NAME in the Makefile by hand and decide"
+          echo "::error::the version separately (bdh-org/travel#3)."
+          exit 1
+
       - name: Version consistency
         run: make version-check
 

@@ -68,6 +68,14 @@ jobs:
       - name: ci-submodules.sh (embedded in self-hosted-ci.yml)
         run: bash tests/ci-submodules.test.sh
 
+      # The template-identity gate embedded in ci.yml and self-hosted-ci.yml.
+      # It is the check that would have caught bdh-org/travel being created from
+      # devtemplate without `make init` -- an omission that went unnoticed
+      # through two PRs and a tag because every OTHER check passed
+      # (dev-common#242).
+      - name: Template initialised (embedded in ci.yml AND self-hosted-ci.yml)
+        run: bash tests/template-initialised.test.sh
+
       # The version gate embedded in ci.yml, which every Python repo in the
       # stack merges through. It ships as workflow YAML, so nothing else can
       # catch a change to it before it is enforcing the wrong rule everywhere
