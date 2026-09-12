@@ -1,4 +1,4 @@
-VERSION=0.10.85
+VERSION=0.10.86
 
 # Include our own shared targets
 include make/version.mk
