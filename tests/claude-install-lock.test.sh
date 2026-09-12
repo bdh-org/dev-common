@@ -59,8 +59,9 @@ trap 'rm -rf "$TMP"' EXIT
 LOCK="$TMP/install.lock.d"
 
 # Run lock.sh with a throwaway lock dir and impatient timings, so the whole
-# suite stays sub-second. The defaults it ships with (25min wait, 1h stale) are
-# for a real forge run and would make this test useless as a gate.
+# suite stays sub-second. The defaults it ships with (110min wait, 100min stale)
+# are for a real forge run and would make this test useless as a gate. The
+# shipped values are asserted separately, below, as an ORDERING.
 run_lock() { # mode owner [extra env assignments...]
   local mode="$1" owner="$2"; shift 2
   env LOCK_MODE="$mode" LOCK_OWNER="$owner" LOCK_DIR="$LOCK" \
@@ -183,6 +184,72 @@ for wf in "$WF_ISSUE" "$WF_REVISE"; do
   else
     rel_block="$(sed -n "${rel_name},\$p" "$wf" | head -8)"
     assert_contains "$rel_block" "always()" "the release runs even when the agent step failed"
+  fi
+done
+
+# --- the ordering invariant: job timeout < stale < wait ---------------------
+#
+# These three numbers are only correct as a SET, and the first version had them
+# in the wrong order (wait 1500 under stale 3600). Nothing was red: the lock
+# worked, the tests passed, and the defect only showed as agent runs failing
+# after 25 minutes about issues they had never touched (home-infra#881). So the
+# ordering is asserted here rather than left as a comment, and the two places
+# the numbers live are checked against each other -- action.yml is what callers
+# get, lock.sh's fallback is what a direct `bash lock.sh` gets, and a fix
+# applied to one of them only is the drift this suite exists to catch.
+
+CASE="timings"
+
+# First `default:` after an input's key. The descriptions are folded blocks, so
+# the value never sits on the key's own line.
+yaml_default() { # file key
+  awk -v key="$2" '
+    $0 ~ "^  " key ":" { found = 1; next }
+    found && /^[[:space:]]*default:/ {
+      sub(/^[[:space:]]*default:[[:space:]]*/, ""); gsub(/"/, ""); print; exit
+    }
+    found && /^  [a-z][a-z-]*:/ { exit }
+  ' "$1"
+}
+
+WAIT_YML="$(yaml_default "$ACTION_YML" wait-seconds)"
+STALE_YML="$(yaml_default "$ACTION_YML" stale-seconds)"
+WAIT_SH="$(sed -n 's/^WAIT="\${LOCK_WAIT_SECONDS:-\([0-9]*\)}"/\1/p' "$LOCK_SH")"
+STALE_SH="$(sed -n 's/^STALE="\${LOCK_STALE_SECONDS:-\([0-9]*\)}"/\1/p' "$LOCK_SH")"
+
+if [ -z "$WAIT_YML" ] || [ -z "$STALE_YML" ] || [ -z "$WAIT_SH" ] || [ -z "$STALE_SH" ]; then
+  notok "could not read the shipped timings (yml: '$WAIT_YML'/'$STALE_YML', sh: '$WAIT_SH'/'$STALE_SH')"
+else
+  ok "read the shipped timings"
+  assert_eq "$WAIT_YML" "$WAIT_SH" "action.yml and lock.sh agree on the wait default"
+  assert_eq "$STALE_YML" "$STALE_SH" "action.yml and lock.sh agree on the stale default"
+
+  # THE load-bearing one. With wait <= stale a waiter can only reach the steal
+  # path by arriving when the lock is already (stale - wait) seconds old, so the
+  # ordinary arrival times out instead -- the stale case becomes decoration.
+  if [ "$WAIT_YML" -gt "$STALE_YML" ]; then
+    ok "wait ($WAIT_YML) is above stale ($STALE_YML), so a waiter can reach the steal path"
+  else
+    notok "wait ($WAIT_YML) must exceed stale ($STALE_YML) or a waiter dies before it can steal"
+  fi
+fi
+
+# The agent jobs must bound their own hold, and bound it below the steal window,
+# so a hung holder is killed (releasing on `if: always()`) while a slow-but-alive
+# one is never stolen from. No timeout at all means GitHub's 6-hour default.
+for wf in "$WF_ISSUE" "$WF_REVISE"; do
+  CASE="timings $(basename "$wf")"
+  if [ ! -f "$wf" ]; then notok "workflow is missing at $wf"; continue; fi
+  tmo="$(sed -n 's/^    timeout-minutes:[[:space:]]*\([0-9]*\).*/\1/p' "$wf" | head -1)"
+  if [ -z "$tmo" ]; then
+    notok "the agent job sets no timeout-minutes, so it can hold the lock for GitHub's 6h default"
+  else
+    ok "the agent job bounds its own runtime (${tmo}m)"
+    if [ -n "${STALE_YML:-}" ] && [ "$(( tmo * 60 ))" -lt "$STALE_YML" ]; then
+      ok "that timeout (${tmo}m) is below the steal window (${STALE_YML}s)"
+    else
+      notok "timeout ${tmo}m must be below stale ${STALE_YML:-?}s, or a live holder gets stolen from"
+    fi
   fi
 done
 
