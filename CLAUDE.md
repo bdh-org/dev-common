@@ -454,9 +454,50 @@ On Minerva, as brian:
 
 For a multi-step sequence, put host and account beside **each** step rather than
 once at the top: steps get copied one at a time, and the header does not travel
-with them. Where a command internally switches account — `sudo machinectl shell
-svc-prod@ ...`, `sudo -u ...`, an `ssh` inside a make target — say both which
-account the human types it as and which one it ends up running as.
+with them. **The working directory is part of that rule, and is the half that
+keeps getting missed:** a `cd` stated in a heading is exactly as lost as a
+hostname stated in a heading. Put it inside the command — `cd ~/dev/home-infra
+&& ...` — never as "in `~/dev/home-infra`" above the block, and never as "same
+directory" on the step after. Where a command internally switches account —
+`sudo machinectl shell svc-prod@ ...`, `sudo -u ...`, an `ssh` inside a make
+target — say both which account the human types it as and which one it ends up
+running as.
+
+### Prefer ONE chained command to a numbered list
+
+Brian, 2026-09-12, on a three-step handoff: *"the first two steps and the first
+header should have been one line, cd ~/dev/home-infra && etc etc"* — and, when
+the rewrite still split them: *"is there a reason not to? You're making multiple
+commands for me."*
+
+Usually there is no reason. Numbering is for steps that genuinely cannot join: a
+different machine, or a decision in between. Everything else chains.
+
+```
+cd ~/dev/home-infra && git pull && ./scripts/twix/sync-claude-access.sh && make brief-redeploy
+```
+
+`&&` also fails closed, which a numbered list does not — a failed `git pull`
+stops the chain instead of rsyncing a stale tree onto a host.
+
+**A second host is often not a second step.** Check the Makefile before
+splitting by machine: that example's last word does the rsync to forge *and*
+runs the provisioner there over `ssh -t`, so what had been written as "run this
+on twix, then that on forge" was one target. Same for verification blocks —
+inline the variables (`FOO=1 BAR=1 /path/to/script`) instead of an `export` line
+pasted separately, which also leaves nothing set in the operator's shell
+afterwards.
+
+This does **not** conflict with "one line at a time whenever anything prompts"
+below. That hazard is a `read` swallowing the NEXT PASTED LINE; a single `&&`
+chain has no next line, and `sudo` / `ssh` prompts read from the tty and are
+fine mid-chain.
+
+**And re-check a success test whenever the thing it inspects changes.** A
+handoff that promised `grep -c '...'` would print `2` was left behind by a fix
+that changed what the file contains; the true answer became `6`, so a correct
+delivery would have read to the operator as a failure. Render or run the thing
+and count — never carry the old number forward.
 
 The rule extends to make targets, which are the easiest thing to get wrong: a
 `prod-*` target usually runs on a DEV host and ssh's *into* prod, so "run `make
