@@ -108,6 +108,15 @@ jobs:
     # which is indistinguishable from a busy fleet (finzeug/ratecraft sat 22h that way).
     # Re-run that probe (`forge-runner-labels.yml`) before changing this line again.
     runs-on: [self-hosted, forge-agent]
+    # Bounds how long this job can hold the Claude Code install lock. Without it the
+    # ceiling is GitHub's 6-hour default, so ONE hung run blocks every agent run in
+    # the fleet for six hours -- the lock is held across the whole agent step, and a
+    # hung holder never reaches its release. 90 minutes is set above the longest
+    # observed healthy run (45min, bdh-org/home-infra#874 on 2026-09-12) with room to
+    # spare; a run that exceeds it is killed, and `if: always()` on the release step
+    # hands the lock straight back. Must stay BELOW the lock's stale-seconds, so a
+    # slow-but-alive holder is never stolen from (bdh-org/home-infra#881).
+    timeout-minutes: 90
     steps:
       # issue_comment carries the PR number (github.event.issue.number) but NOT its
       # head branch -- resolve it from the API (curl+python3; gh is not on every org

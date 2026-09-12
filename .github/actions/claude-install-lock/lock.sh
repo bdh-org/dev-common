@@ -52,12 +52,44 @@
 #   original holder returning late cannot delete the thief's lock and leave two
 #   runs installing at once -- which would be this bug again, harder to see.
 #
+# THE ORDERING INVARIANT: job timeout < STALE < WAIT
+#
+#   These three numbers only work as a set, and the first version got the order
+#   backwards: WAIT was 1500 (25min) under STALE 3600 (1h). A waiter therefore
+#   had to arrive when the lock was ALREADY older than 2100s to reach the steal
+#   path at all -- any waiter arriving in the first 35 minutes of a long hold
+#   died instead. The steal case above was, for the common arrival, unreachable.
+#
+#   Measured on 2026-09-12 (bdh-org/home-infra#881): a healthy agent run held
+#   the lock from 19:12:05 while it worked issue #874. The next run waited
+#   19:12:54 -> 19:37:56, exactly 1500s, and FAILED with claude-code-action
+#   skipped -- a red run about an issue it never touched. A `/revise` on PR #821
+#   queued behind it would have given up at 20:11:32, when the lock became
+#   stealable at 20:12:05. It missed by 33 seconds.
+#
+#   Ordered the other way the failure mode disappears, because each number now
+#   guards the next one down:
+#
+#     * the agent job's `timeout-minutes` bounds how long ANY holder can hold;
+#     * STALE sits above that, so a slow-but-alive holder is never stolen from
+#       -- only one that outlived the job that created it (a runner crash,
+#       where no release step ever ran);
+#     * WAIT sits above STALE, so a waiter always reaches the steal path rather
+#       than timing out first.
+#
+#   The cost is that a waiter can occupy a runner unit for up to WAIT. That is
+#   the right trade while the lock is held across the whole agent run: the
+#   fleet's agent throughput is 1 either way, so a waiting unit is not work
+#   being displaced, and a wait ends in the PR being revised instead of a red
+#   run. Rescoping the lock to the install alone -- which is what it is named
+#   for, and which would restore real parallelism -- is home-infra#881.
+#
 # ENV:
 #   LOCK_MODE           acquire | release          (required)
 #   LOCK_OWNER          identity written into the lock (required for acquire)
 #   LOCK_DIR            default "$HOME/.claude/install.lock.d"
-#   LOCK_WAIT_SECONDS   give up waiting after this (default 1500 = 25min)
-#   LOCK_STALE_SECONDS  steal a lock older than this (default 3600)
+#   LOCK_WAIT_SECONDS   give up waiting after this (default 6600 = 110min)
+#   LOCK_STALE_SECONDS  steal a lock older than this (default 6000 = 100min)
 #   LOCK_POLL_SECONDS   how often to retry (default 10)
 #
 # EXIT: 0 acquired/released (or nothing to release); 1 timed out or misused.
@@ -67,8 +99,8 @@ set -uo pipefail
 MODE="${LOCK_MODE:-}"
 LOCK="${LOCK_DIR:-${HOME:?HOME is unset and LOCK_DIR was not given}/.claude/install.lock.d}"
 OWNER_FILE="$LOCK/owner"
-WAIT="${LOCK_WAIT_SECONDS:-1500}"
-STALE="${LOCK_STALE_SECONDS:-3600}"
+WAIT="${LOCK_WAIT_SECONDS:-6600}"
+STALE="${LOCK_STALE_SECONDS:-6000}"
 POLL="${LOCK_POLL_SECONDS:-10}"
 
 # Actions renders ::error:: / ::warning:: as annotations; elsewhere they are

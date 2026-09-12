@@ -27,13 +27,20 @@ inputs:
     required: false
     default: ""
   wait-seconds:
-    description: "Give up waiting for the lock after this many seconds"
+    description: >
+      Give up waiting for the lock after this many seconds. MUST be greater
+      than stale-seconds, or the steal path is unreachable to a waiter and it
+      fails instead of using it (bdh-org/home-infra#881).
     required: false
-    default: "1500"
+    default: "6600"
   stale-seconds:
-    description: "Steal a lock older than this (a job killed mid-run cannot release its own)"
+    description: >
+      Steal a lock older than this (a job killed mid-run cannot release its
+      own). MUST be greater than the agent job's timeout-minutes, so a holder
+      that is merely SLOW is never stolen from -- only one that has outlived
+      the job that created it.
     required: false
-    default: "3600"
+    default: "6000"
   lock-dir:
     description: "Override the lock path (tests use this; leave empty for $HOME/.claude/install.lock.d)"
     required: false
