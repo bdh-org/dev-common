@@ -475,6 +475,13 @@ jobs:
         with:
           claude_code_oauth_token: ${{ steps.vault.outputs.oauth_token }}
           github_token: ${{ steps.coder.outputs.coder_token }}
+          # Same reasoning as agent-issue-to-pr.yml -- see the full note there.
+          # The action's default bot_id (41898282) is `github-actions[bot]` behind a
+          # `claude[bot]` display name, and attribution keys on the number, so the
+          # default credits every revision commit to CI (bdh-org/home-infra#875).
+          # 305014630 is `bdh-org-coder[bot]`, the App whose token actually pushes.
+          bot_id: "305014630"
+          bot_name: "bdh-org-coder[bot]"
           prompt: |
             A reviewer requested changes on an OPEN pull request in this repository.
             The PR's branch `${{ steps.pr.outputs.ref }}` is already checked out.

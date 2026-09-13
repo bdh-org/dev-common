@@ -555,6 +555,28 @@ jobs:
         with:
           claude_code_oauth_token: ${{ steps.vault.outputs.oauth_token }}
           github_token: ${{ steps.coder.outputs.coder_token }}
+          # Attribute the commit to the App whose token actually made it.
+          #
+          # The action's DEFAULT bot_id is 41898282, which is `github-actions[bot]` --
+          # not anything Claude-shaped -- carried behind the display name `claude[bot]`.
+          # Attribution keys on the NUMBER, so the default silently credits every agent
+          # commit in the fleet to CI (bdh-org/home-infra#875). Upstream has had this on
+          # file since 2025-12-20 (anthropics/claude-code-action#759) and contradicts
+          # itself about it: the same checkout carries 41898282 in src/github/constants.ts
+          # and 209825114 in create-initial.ts. Waiting for it is not a plan.
+          #
+          # 305014630 is `bdh-org-coder[bot]`, whose installation token checks out, pushes
+          # the branch and opens the PR -- so author == pusher == PR author, and
+          # `git log --author='bdh-org-coder\[bot\]'` answers "which commits did the
+          # headless agent write" with no false positives. NOT `claude[bot]` (209825114):
+          # that App is installed in none of our orgs and never touched the run. The model
+          # keeps its own line in the Co-Authored-By trailer.
+          #
+          # Setting it explicitly also means an upstream fix to their default cannot
+          # silently move our attribution again. Decision + reversal triggers:
+          # home-infra `issues/862-agent-commit-identity.md`.
+          bot_id: "305014630"
+          bot_name: "bdh-org-coder[bot]"
           prompt: |
             Implement GitHub issue #${{ github.event.issue.number }} in this repository.
 

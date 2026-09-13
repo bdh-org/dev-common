@@ -48,6 +48,24 @@ jobs:
       - name: setup-claude-identity.sh
         run: bash tests/setup-claude-identity.test.sh
 
+      # The four below were on disk and ran in NO job -- only when a human typed
+      # `make test`, which globs tests/*.test.sh and so hid the gap entirely. A test
+      # that is never invoked cannot fail, which is the same shape as a detector
+      # nobody reads: bdh-org/home-infra#764 found exactly this and that repo now
+      # has a guard for it (tests/test-ci-covers-tests.sh). Filed for here as
+      # bdh-org/dev-common#247. Each verified passing before being wired in.
+      - name: Agent commits name the App that made them, not CI
+        run: bash tests/agent-commit-identity.test.sh
+
+      - name: The Claude Code install lock blocks, steals only what is stale, and is ordered
+        run: bash tests/claude-install-lock.test.sh
+
+      - name: claude-prod / claude-dev host shims
+        run: bash tests/claude-host-shim.test.sh
+
+      - name: PATH de-duplication
+        run: bash tests/path-dedup.test.sh
+
       # Same reason as setup-claude-identity.sh above: it runs at postCreate in
       # every repo that sources it, and every one of its failure modes is quiet
       # -- a container that comes up without the CLI, or with a credential that
