@@ -474,11 +474,39 @@ Usually there is no reason. Numbering is for steps that genuinely cannot join: a
 different machine, or a decision in between. Everything else chains.
 
 ```
-cd ~/dev/home-infra && git pull && ./scripts/twix/sync-claude-access.sh && make brief-redeploy
+cd ~/dev/home-infra && ./scripts/twix/sync-claude-access.sh && make brief-redeploy
 ```
 
-`&&` also fails closed, which a numbered list does not — a failed `git pull`
-stops the chain instead of rsyncing a stale tree onto a host.
+`&&` also fails closed, which a numbered list does not — a failed step stops the
+chain instead of rsyncing a stale tree onto a host.
+
+**THE PULL IS NOT IN THAT CHAIN, AND MUST NOT BE.** This example carried
+`&& git pull &&` until 2026-09-14, and it was teaching the exact thing another
+rule here forbids: *update the checkout YOURSELF, then hand over only the step
+that needs him*. `/workspaces/<repo>` IS that checkout, bind-mounted, so a pull
+needs no root, no credential he alone holds and no judgement — and he has
+several sessions live in that directory, so pulling it is a risk that belongs to
+whoever can see who else is working there.
+
+It recurred twice within three days BECAUSE the worked example showed it, which
+is what a worked example does. Brian, 2026-09-14, having run one anyway:
+*"the CLAUDE memory says don't pull in main but you keep asking me to do it"* —
+and, three days earlier: *"You know I have several sessions using that directory
+- I am uncomfortable pulling it but I did it anyway."*
+
+**The tell is the prefix `cd ~/dev/<repo> && git pull`.** Seeing yourself type it
+is the signal to stop, do the pull from your own seat after checking with the
+live sessions, and hand over what is left. Chaining is still right; chaining in
+work that was never his is not.
+
+**But the test is CUSTODY, not runnability, and `git pull` is only its commonest
+instance.** That pull is perfectly runnable where it was handed over — twix is
+the one host with checkouts and credentials — so "would it work?" never catches
+it. The question to ask of every clause you chain is **whose is this?** A clause
+needing no root, no credential only he holds, and no judgement is yours by that
+test, whatever it happens to be: a `make` target that only rsyncs, a `git
+fetch`, a file you could have written. Chain only the clauses that are actually
+his, and do the rest before you hand anything over.
 
 **A second host is often not a second step.** Check the Makefile before
 splitting by machine: that example's last word does the rsync to forge *and*
