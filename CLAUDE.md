@@ -214,6 +214,45 @@ That last one is the general case of a rule this repo already states elsewhere:
 merging changes a repo, and only running something changes a host. Anything
 delivered by `rsync`, `make`, or a provisioning script is inert until run.
 
+### ...but a comment does NOT retire the body
+
+The rule above says how to write the comment. It does not say to go back and fix
+the **body**, and that gap is what actually bites: a body is what the issue *says
+it is about*, so it outranks its own comments for anyone opening the issue cold.
+
+**When the remaining action changes, EDIT THE BODY so it carries only what is
+left.** Commenting is necessary and not sufficient.
+
+* **Say in the first line that the body was rewritten, and what the step count
+  went from and to.** This is the other half of "never renumber a handoff in
+  flight": the operator's bookmark is protected by *announcing* the change, not
+  by refusing to make one. A body that quietly becomes a different set of steps
+  is worse than one that is openly re-cut.
+* **Mark the finished step DONE and not to be repeated -- do not silently delete
+  it.** An operator who half-remembers running something needs to see that it was
+  expected, or he will run it again, or skip the new one believing it is the same.
+* **Remove the INSTRUCTION, keep what it ESTABLISHED** -- one line, below the
+  fold. A completed step usually produced the finding the remaining work rests on,
+  and deleting the step deletes the evidence with it. Optimising the body for
+  tidiness alone makes the fix read, later, as though it arrived from nowhere.
+
+**The tell is not "this body is old"**, which nobody can assess and so nobody
+checks. It is **"this body still describes a step that is DONE"**, which is
+checkable in one pass.
+
+**And the operator is not the only reader of a body. The second reader is another
+session** -- which cannot ask a clarifying question, and will act on what it
+reads. That is what makes this more than tidiness. On 2026-09-14 a `BRIAN:` issue
+(bdh-org/home-infra#919) asked for a command on **forge**; it was run, it timed
+out, and *that timeout was the diagnosis*. The remaining work became a different
+command on **twix**, and that change lived only in comments -- four of them, each
+individually compliant with the rule above. A second session then opened the issue
+cold, read the body, correctly applied the rule that *a `BRIAN:` title names the
+host the command is TYPED ON* (bdh-org/home-infra#569), and on the strength of the
+stale body **re-titled it "RUN ON FORGE"** -- pointing the operator at a machine
+where the command does not exist, while production was unwatched. Correct rule,
+stale input, wrong handoff. Neither session was careless; the body was.
+
 ### A decision for him NEVER shares an issue with engineering work
 
 The rule above says a decision gets its own issue, and gives visibility as the
