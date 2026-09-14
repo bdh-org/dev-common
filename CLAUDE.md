@@ -499,6 +499,15 @@ is the signal to stop, do the pull from your own seat after checking with the
 live sessions, and hand over what is left. Chaining is still right; chaining in
 work that was never his is not.
 
+**But the test is CUSTODY, not runnability, and `git pull` is only its commonest
+instance.** That pull is perfectly runnable where it was handed over — twix is
+the one host with checkouts and credentials — so "would it work?" never catches
+it. The question to ask of every clause you chain is **whose is this?** A clause
+needing no root, no credential only he holds, and no judgement is yours by that
+test, whatever it happens to be: a `make` target that only rsyncs, a `git
+fetch`, a file you could have written. Chain only the clauses that are actually
+his, and do the rest before you hand anything over.
+
 **A second host is often not a second step.** Check the Makefile before
 splitting by machine: that example's last word does the rsync to forge *and*
 runs the provisioner there over `ssh -t`, so what had been written as "run this
