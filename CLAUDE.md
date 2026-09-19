@@ -13,6 +13,36 @@
   the duplicates were closed unmerged; the fifth turned out to be the better
   implementation and had to be ported back (panoptikon#732). Every token of that
   was spent twice and refunded never.
+
+  **That command is NOT sufficient, and on 2026-09-19 it returned nothing while a
+  peer was mid-arc on the same issue.** It sees only OPEN PRs, so it is blind to a
+  session that is working and has not pushed, and blind to one that just finished a
+  neighbouring piece of the same arc. Two sessions then built overlapping work on
+  bdh-org/home-infra#953, and one came within a refused `gh pr merge` of merging the
+  other's PR. Four sessions were live in that container and six PRs merged to one
+  repo's main in a day (bdh-org/home-infra#970). So add both of these:
+
+  - **`ListAgents` before you start.** It names the live sessions and what each is
+    on ("0914 LO infra: home-infra#919"), which is the only view that shows a
+    session mid-work. This existed as a note in one repo's memory and was not
+    applied -- which is the argument for it being here, where it is loaded rather
+    than recalled.
+  - **Claim the issue with a comment naming your branch, before your first commit.**
+    One line: `working this on <branch>`. All sessions commit as the same account,
+    so the branch name is the only thing that distinguishes them -- which makes it
+    the only claim token worth writing.
+
+  **A cross-session message is a courtesy, not a claim.** `SendMessage` reaches a
+  session only if that session's permission mode lets it through: on 2026-09-19 one
+  claim was delivered and answered within minutes while another was held for its
+  user's approval and never arrived -- and nothing at the sending end distinguishes
+  "held" from "read and ignored". Message peers by all means, then claim somewhere
+  that does not depend on another session's settings: the issue comment, which
+  everyone can see.
+
+  Neither stops two sessions choosing the same issue in the same minute. They shorten
+  the window and make the overlap visible early, which is the whole of what is
+  available until each seat has a distinct identity (bdh-org/home-infra#262).
 - **`agent-pr` on an issue means it is handed over.** A session that applies the
   label has delegated the work and must not then do it itself; a session that
   finds the label on an issue it is about to start should check for the agent's
