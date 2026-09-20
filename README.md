@@ -87,6 +87,8 @@ dev-common's own tests, run by `make test` and by `shell-tests.yml` on every PR.
 | File | Covers |
 |------|--------|
 | `setup-claude-identity.test.sh` | `devcontainer/setup-claude-identity.sh` — role naming per `PROJECT_NAME`, `user.email` left alone, the `~/.gitconfig-seat` → `~/.gitconfig-role` migration, and idempotency across repeated runs |
+| `version-bumped.test.sh` | the "Version bumped" step embedded in `ci.yml`, `self-hosted-ci.yml` and `version-guard.yml` — VERSION strictly greater than the base's, and byte-identical across all three copies |
+| `version-claimed.test.sh` | the "Version claimed by another open PR" step in the same three files — a version already claimed by an **open** PR, which the step above cannot see because both PRs' bases are still untouched |
 
 Each case runs the real script against a throwaway `$HOME` — the script's only
 inputs are `$HOME` and `$PROJECT_NAME`, so nothing needs stubbing and nothing
