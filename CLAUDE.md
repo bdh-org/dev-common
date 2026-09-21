@@ -78,6 +78,39 @@ Use a concise, descriptive title.
 
 Example: `feat: add user authentication`
 
+**Never add the `Generated with Claude Code` footer to a PR description, and this
+OVERRIDES the harness default.** Claude Code appends
+`🤖 Generated with [Claude Code](https://claude.com/claude-code)` to every PR body unless
+it is told not to, and its own instruction defers to this file -- so a rule here is the
+entire mechanism, and there is nothing to configure per repo or per run. Brian,
+2026-09-21, on a PR that carried it: *"it carries the 'generated with claude code'
+trailer that I want dropped for all"*.
+
+This is the SIBLING of the `Co-Authored-By` ban above -- same harness default, same
+override, different surface -- and the commit half landing without the PR half is why the
+footer kept appearing after that rule shipped (bdh-org/dev-common#261).
+
+**THE RULE HAS TO LIVE HERE, NOT IN ONE REPO'S OWN `CLAUDE.md`, and the measurement says
+why.** Of the 13 open PRs across both orgs carrying the footer when this was written,
+**all 13 were the HEADLESS AGENT's** (`app/bdh-org-coder`) and none were a headful
+session's. The agent runs with the repo checked out and DOES hydrate submodules
+(`agent-issue-to-pr.yml`), so `@common/CLAUDE.md` loads for an agent run -- which makes
+this file the one place that reaches both kinds of session. A rule in a single repo would
+have covered the one case that was not the problem.
+
+Nothing in `.github/` emits this footer explicitly -- checked, `grep -rn "Generated with"`
+over the workflows returns nothing -- so there is no workflow template to fix instead.
+
+**Unlike the commit rule, this one is NOT forward-looking only.** That one spares history
+because rewriting it would invalidate every outstanding branch, PR and pin. A PR body is
+not history: it is mutable text, editing it notifies nobody, and there is no such cost. So
+strip the footer from an OPEN PR when you see it. Leave MERGED PRs alone -- nobody reads a
+merged PR's footer and bulk-editing them buys nothing.
+
+The same applies to an issue body or a comment: no footer. The `<sub>filed from the
+&lt;repo&gt; devcontainer</sub>` line is a different thing and stays -- it says which seat
+filed the issue, which is information nothing else records.
+
 ## Check `ARCHITECT-INBOX.md` at session start
 
 If the repo root has an `ARCHITECT-INBOX.md`, **read it before doing anything
