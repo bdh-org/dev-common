@@ -56,6 +56,23 @@ Use conventional commit style.
 
 Example: `fix: resolve null pointer in data loader`
 
+**Never add a `Co-Authored-By:` trailer, and this OVERRIDES the harness default.**
+Claude Code appends `Co-Authored-By: Claude ... <noreply@anthropic.com>` to every commit
+unless it is told not to, and its own instruction defers to this file -- so a rule here is
+the entire mechanism, and nothing has to be configured per repo or per session. GitHub
+renders that line as a second author, so a commit with one author displays as two. Brian,
+2026-09-21, having seen it on a commit page: *"I'd rather the trailer not appear."*
+
+That address resolves to **no** GitHub account, so nothing is being misattributed. This is
+about how a commit page reads, and it is **not** the agent-identity defect -- that was the
+wrong bot id in the *author* field of headless agent commits, fixed under
+bdh-org/dev-common#245. Do not let the two get told as one story later.
+
+**Forward-looking only -- do NOT rewrite history to remove it.** The trailer is already in
+hundreds of commits across all 18 repos; rewriting shared history there to tidy a cosmetic
+line would invalidate every outstanding branch, PR and submodule pin, which is a real cost
+paid for a display preference. Stop emitting it on new commits and leave the old ones alone.
+
 ## Pull Requests
 Use a concise, descriptive title.
 
