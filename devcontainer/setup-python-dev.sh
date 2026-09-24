@@ -49,4 +49,11 @@ echo "==> pinned ruff: ${RUFF_V}"
 conda install -y pytest pytest-cov ipykernel jupyterlab pipreqs
 pip install --quiet "ruff==${RUFF_V}"
 
+# Drop the package cache: every tarball and extracted package above stays in
+# ~/miniforge3/pkgs otherwise -- 1.49 GB measured in the home-infra container.
+# `-a` removes only packages no env links to, so installed envs are untouched; a
+# later install re-downloads instead (bdh-org/dev-common#263).
+echo "==> Cleaning conda package cache..."
+conda clean -a -y --quiet
+
 echo "==> Python dev setup complete"
