@@ -110,6 +110,12 @@ jobs:
       - name: Version bumped (embedded in ci.yml, self-hosted-ci.yml AND version-guard.yml)
         run: bash tests/version-bumped.test.sh
 
+      # Its sibling, and the half the gate above cannot see: a version claimed
+      # by an OPEN PR rather than by the base branch. Same three files, same
+      # byte-identity requirement, so it gets the same treatment (dev-common#255).
+      - name: Version claimed by another open PR (embedded in all three)
+        run: bash tests/version-claimed.test.sh
+
       # Same shape, same reason: the step is duplicated across the two tagging
       # workflows, so the suite runs against BOTH rather than picking one.
       - name: Tag collision (embedded in tag-version.yml AND tag-version-self-hosted.yml)
