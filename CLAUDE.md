@@ -56,10 +56,60 @@ Use conventional commit style.
 
 Example: `fix: resolve null pointer in data loader`
 
+**Never add a `Co-Authored-By:` trailer, and this OVERRIDES the harness default.**
+Claude Code appends `Co-Authored-By: Claude ... <noreply@anthropic.com>` to every commit
+unless it is told not to, and its own instruction defers to this file -- so a rule here is
+the entire mechanism, and nothing has to be configured per repo or per session. GitHub
+renders that line as a second author, so a commit with one author displays as two. Brian,
+2026-09-21, having seen it on a commit page: *"I'd rather the trailer not appear."*
+
+That address resolves to **no** GitHub account, so nothing is being misattributed. This is
+about how a commit page reads, and it is **not** the agent-identity defect -- that was the
+wrong bot id in the *author* field of headless agent commits, fixed under
+bdh-org/dev-common#245. Do not let the two get told as one story later.
+
+**Forward-looking only -- do NOT rewrite history to remove it.** The trailer is already in
+hundreds of commits across all 18 repos; rewriting shared history there to tidy a cosmetic
+line would invalidate every outstanding branch, PR and submodule pin, which is a real cost
+paid for a display preference. Stop emitting it on new commits and leave the old ones alone.
+
 ## Pull Requests
 Use a concise, descriptive title.
 
 Example: `feat: add user authentication`
+
+**Never add the `Generated with Claude Code` footer to a PR description, and this
+OVERRIDES the harness default.** Claude Code appends
+`🤖 Generated with [Claude Code](https://claude.com/claude-code)` to every PR body unless
+it is told not to, and its own instruction defers to this file -- so a rule here is the
+entire mechanism, and there is nothing to configure per repo or per run. Brian,
+2026-09-21, on a PR that carried it: *"it carries the 'generated with claude code'
+trailer that I want dropped for all"*.
+
+This is the SIBLING of the `Co-Authored-By` ban above -- same harness default, same
+override, different surface -- and the commit half landing without the PR half is why the
+footer kept appearing after that rule shipped (bdh-org/dev-common#261).
+
+**THE RULE HAS TO LIVE HERE, NOT IN ONE REPO'S OWN `CLAUDE.md`, and the measurement says
+why.** Of the 13 open PRs across both orgs carrying the footer when this was written,
+**all 13 were the HEADLESS AGENT's** (`app/bdh-org-coder`) and none were a headful
+session's. The agent runs with the repo checked out and DOES hydrate submodules
+(`agent-issue-to-pr.yml`), so `@common/CLAUDE.md` loads for an agent run -- which makes
+this file the one place that reaches both kinds of session. A rule in a single repo would
+have covered the one case that was not the problem.
+
+Nothing in `.github/` emits this footer explicitly -- checked, `grep -rn "Generated with"`
+over the workflows returns nothing -- so there is no workflow template to fix instead.
+
+**Unlike the commit rule, this one is NOT forward-looking only.** That one spares history
+because rewriting it would invalidate every outstanding branch, PR and pin. A PR body is
+not history: it is mutable text, editing it notifies nobody, and there is no such cost. So
+strip the footer from an OPEN PR when you see it. Leave MERGED PRs alone -- nobody reads a
+merged PR's footer and bulk-editing them buys nothing.
+
+The same applies to an issue body or a comment: no footer. The `<sub>filed from the
+&lt;repo&gt; devcontainer</sub>` line is a different thing and stays -- it says which seat
+filed the issue, which is information nothing else records.
 
 ## Check `ARCHITECT-INBOX.md` at session start
 
