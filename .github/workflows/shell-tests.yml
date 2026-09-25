@@ -75,6 +75,12 @@ jobs:
       - name: PATH de-duplication
         run: bash tests/path-dedup.test.sh
 
+      # The only GitHub credential a devcontainer session has once the PATs are gone:
+      # REPOS narrowing, naming a vanished repo, and --check refusing a zero-repo token
+      # (bdh-org/dev-common#269).
+      - name: gh-app-token mints, narrows, and names what is gone
+        run: bash tests/gh-app-token.test.sh
+
       # Same reason as setup-claude-identity.sh above: it runs at postCreate in
       # every repo that sources it, and every one of its failure modes is quiet
       # -- a container that comes up without the CLI, or with a credential that

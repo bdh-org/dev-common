@@ -532,18 +532,24 @@ comments made this way are authored by `bdh-org-headful[bot]`, not `bdh-ai`.
 Commits are unchanged -- their author comes from the git identity, not the
 token.
 
-**Fallback -- a seat where `gh-app-token` is not found** (a repo's own
-devcontainer, which does not install it): use the PAT for that org, until the
-PATs are revoked:
+**There is no PAT fallback any more.** The three `bdh-ai` PATs were revoked
+on 2026-09-25 (bdh-org/home-infra#1089); a `gh-<org>.token` file that still
+exists anywhere is dead and returns 401.
 
-```bash
-GH_TOKEN="$(cat ~/.config/ai/claude/credentials/gh-bdh-org.token)" gh pr create ...
-```
+**`gh-app-token` not found** means the devcontainer was built from a `common`
+older than bdh-org/dev-common#269, which is where `setup-claude.sh` started
+linking it into `/usr/local/bin`. Bump `common` and rebuild. Until then it can
+be run by path: `common/devcontainer/gh-app-token.sh` -- once `common` carries
+it.
 
-A `gh-app-token` that IS found but fails prints GitHub's own reason and exits
-non-zero; `gh` then fails "not logged in". Fix the cause it names -- do not
-silently fall back to the PAT, which hides a broken App until the day the
-PATs are gone.
+**`gh-app-token: no App config`** means this host has not been given the App's
+key: `bdh-org-headful.{pem,conf}` must sit in the host's
+`~/.config/ai/claude/credentials/`. Copying them there is a host step for
+Brian (bdh-org/home-infra#1090 did it for cosmo), never something to route
+around.
+
+Any other failure prints GitHub's own reason and exits non-zero; `gh` then
+fails "not logged in". Fix the cause it names.
 
 The same applies to `git push` over HTTPS and any other `gh`/API call that
 writes. The ambient git identity (a personal token) must not be used for

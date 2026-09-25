@@ -179,3 +179,10 @@ exec ssh \
 CLAUDE_DEV_EOF
 sudo chmod 0755 /usr/local/bin/claude-dev
 echo "    claude-dev shim installed at /usr/local/bin/claude-dev"
+
+# gh-app-token: the per-command GitHub credential (CLAUDE.md -> "GitHub Authentication",
+# bdh-org/dev-common#269). A SYMLINK into this repo's common/ checkout, not a copy, so a
+# `common` bump updates it with no rebuild. It needs the App key+conf in the bind-mounted
+# ~/.config/ai/claude/credentials/; a seat without them gets a clear "no App config" error.
+sudo ln -sfn "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/gh-app-token.sh" /usr/local/bin/gh-app-token
+echo "    gh-app-token linked at /usr/local/bin/gh-app-token"
