@@ -137,7 +137,7 @@ fi
 #
 # The working idiom needs no URL at all: the credential stanza above routes
 # github.com to `gh auth git-credential`, which honours GH_TOKEN --
-#   GH_TOKEN="$(cat ~/.config/ai/claude/credentials/gh-<org>.token)" git pull
+#   GH_TOKEN="$(gh-app-token <org>)" git pull
 # Ensured idempotently because the bootstrap heredoc only runs on a fresh host.
 if [ "$(git config --file "$GITCONFIG" --get transfer.credentialsInUrl 2>/dev/null)" != "die" ]; then
   git config --file "$GITCONFIG" transfer.credentialsInUrl die
