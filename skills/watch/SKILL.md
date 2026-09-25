@@ -50,12 +50,12 @@ command:
 | `<org>/<repo> prs` | `gh pr list --repo <org>/<repo> --json number,title,updatedAt` |
 | anything else | derive the single probe from the target string. If it genuinely cannot be resolved, say so in one line and end the tick -- never ask |
 
-`gh` has no ambient auth here — pass the org-scoped token inline (see
-`CLAUDE.md`): `bdh-org` → `gh-bdh-org.token`, `finzeug` → `gh-finzeug.token`.
-Never run `gh auth login`.
+`gh` has no ambient auth here — mint an org-scoped App token inline (see
+`CLAUDE.md` → "GitHub Authentication"): `gh-app-token bdh-org`,
+`gh-app-token finzeug`. Never run `gh auth login`.
 
 ```bash
-GH_TOKEN="$(cat ~/.config/ai/claude/credentials/gh-bdh-org.token)" \
+GH_TOKEN="$(gh-app-token bdh-org)" \
   gh run list --repo bdh-org/home-site --branch main --limit 1 \
   --json databaseId,workflowName,status,conclusion,headSha,displayTitle,url
 ```

@@ -365,7 +365,7 @@ The operator task is not *part of* the engineering issue -- it **blocks** it. Sa
 so in the way GitHub can act on, so the relationship survives being skimmed:
 
 ```bash
-T="$(cat ~/.config/ai/claude/credentials/gh-<org>.token)"
+T="$(gh-app-token <org>)"
 CHILD_ID=$(GH_TOKEN="$T" gh api repos/<org>/<repo>/issues/<CHILD> --jq .id)
 GH_TOKEN="$T" gh api -X POST \
   repos/<org>/<repo>/issues/<PARENT>/dependencies/blocked_by \
@@ -493,35 +493,61 @@ misconfiguration. `GITHUB_TOKEN` is intentionally empty and `gh`'s
 `config.yml` carries no auth state, so a bare `gh ...` or `gh auth status`
 fails. Do NOT run `gh auth login` to "fix" this.
 
-Instead, authenticate **per command** with the org-scoped fine-grained PAT
-that matches the repo's GitHub org. Tokens live at
-`~/.config/ai/claude/credentials/`:
+Instead, authenticate **per command** with a short-lived token from the
+**`bdh-org-headful` GitHub App**, minted for the repo's GitHub org:
 
-| Token file | GitHub org | Used by |
-| --- | --- | --- |
-| `gh-bdh-org.token` | `bdh-org` | home-site, dev-common, devtemplate, actions-runner, brief, roy |
-| `gh-finzeug.token` | `finzeug` | hog, oleo, canary, heller, panoptikon, refdims, ratecraft, ferret, freddyb |
-| `gh-finriskanalytics.token` | `finriskanalytics` | fra-stack-common, hmdlib, billing, ASG-ALMT-Review |
+```bash
+GH_TOKEN="$(gh-app-token bdh-org)" gh pr create ...
+```
 
-**There are THREE tokens, not two.** This table listed only the first two for
-months while the third sat in the same directory, working, so a session that
-consulted the table concluded finriskanalytics was unreachable — or, worse,
-reached for the finzeug token and got a 404 that reads exactly like a deleted
-repo. The org is not a leftover: it holds a second stack (`fra-stack-common` is
-the repo this file's own P3 section cites as the naming example) and four repos
-touched in the last year.
+`gh-app-token <org>` prints a ~1h installation token and nothing else; the
+App's key and install map live at `~/.config/ai/claude/credentials/
+bdh-org-headful.{pem,conf}` (bdh-org/home-infra#262). Mint per command --
+never export the token or save it to a file, which is how a secret ends up
+in shell history or a reflog. `gh-app-token --check` proves every org
+works without printing a token.
 
-Pick the token from the repo's origin org
-(`git remote get-url origin`), then prefix the command:
+Pick the org from the repo's origin (`git remote get-url origin`):
+
+| GitHub org | Used by |
+| --- | --- |
+| `bdh-org` | home-infra, home-site, dev-common, devtemplate, home-stack-common, brief, roy |
+| `finzeug` | hog, oleo, canary, heller, panoptikon, refdims, ratecraft, ferret, freddyb, slingshot, ledger-io |
+| `finriskanalytics` | fra-stack-common, hmdlib, billing, ASG-ALMT-Review |
+
+**There are THREE orgs, not two.** An earlier table listed only two for months,
+so a session concluded finriskanalytics was unreachable -- or, worse, used the
+finzeug credential and got a 404 that reads exactly like a deleted repo. The
+org holds a second stack (`fra-stack-common` is the repo this file's own P3
+section cites as the naming example). The App's finriskanalytics tokens are
+deliberately narrowed to those stack repos, not the org's other private work.
+
+**Why the App and not the PATs this section used to prescribe.** The three
+fine-grained PATs (`gh-<org>.token`) expire every 90 days, all on one date,
+and once lapsed silently mid-session. They also cannot read check runs at all
+-- fine-grained PATs have no Checks permission -- so `gh pr checks` and a PR's
+`statusCheckRollup` returned 403 while the App reads both
+(bdh-org/home-infra#350). What GitHub records changes too: PRs, issues and
+comments made this way are authored by `bdh-org-headful[bot]`, not `bdh-ai`.
+Commits are unchanged -- their author comes from the git identity, not the
+token.
+
+**Fallback -- a seat where `gh-app-token` is not found** (a repo's own
+devcontainer, which does not install it): use the PAT for that org, until the
+PATs are revoked:
 
 ```bash
 GH_TOKEN="$(cat ~/.config/ai/claude/credentials/gh-bdh-org.token)" gh pr create ...
 ```
 
+A `gh-app-token` that IS found but fails prints GitHub's own reason and exits
+non-zero; `gh` then fails "not logged in". Fix the cause it names -- do not
+silently fall back to the PAT, which hides a broken App until the day the
+PATs are gone.
+
 The same applies to `git push` over HTTPS and any other `gh`/API call that
-writes. These PATs authenticate as the `bdh-ai` service account; the
-ambient git identity (a personal token) must not be used for automated
-writes.
+writes. The ambient git identity (a personal token) must not be used for
+automated writes.
 
 **For `git` itself, the prefix is the WHOLE recipe -- never put a token in
 the URL.** The Claude gitconfig routes `https://github.com` to
@@ -529,7 +555,7 @@ the URL.** The Claude gitconfig routes `https://github.com` to
 private repo with nothing else:
 
 ```bash
-GH_TOKEN="$(cat ~/.config/ai/claude/credentials/gh-finzeug.token)" git pull --ff-only
+GH_TOKEN="$(gh-app-token finzeug)" git pull --ff-only
 ```
 
 `git pull https://x-access-token:<token>@github.com/...` also authenticates,
@@ -552,9 +578,10 @@ one; a **role** is what that session acts as -- **architect** or
 **contractor**. The role follows the devcontainer, so naming the devcontainer
 names the role.
 
-Every session authenticates as the same `bdh-ai` account, so nothing GitHub
-records distinguishes them: an issue filed from any devcontainer reads
-`login: bdh-ai`, `type: User`, `performed_via_github_app: null`. Two
+Every session authenticates as the same identity, so nothing GitHub records
+distinguishes them: an issue filed from any devcontainer reads
+`login: bdh-org-headful[bot]` (or `login: bdh-ai`, `type: User` from a seat
+still on the PATs). Either way it is one account for every seat. Two
 mechanisms close that gap, one automatic and one yours to remember.
 
 **Commits and PRs — automatic, nothing to do.** `setup-claude-identity.sh`

@@ -49,11 +49,12 @@ writing is where it creeps in, so close the gap.
 
 ## Auth
 
-No ambient `gh` auth. One token per org, chosen from the repo's `origin`:
+No ambient `gh` auth. One App token per org, chosen from the repo's `origin`
+(see `CLAUDE.md` → "GitHub Authentication"; each lasts ~1h, ample for one report):
 
 ```bash
-TB="$(cat ~/.config/ai/claude/credentials/gh-bdh-org.token)"
-TF="$(cat ~/.config/ai/claude/credentials/gh-finzeug.token)"
+TB="$(gh-app-token bdh-org)"
+TF="$(gh-app-token finzeug)"
 GH_TOKEN=$TB gh api repos/bdh-org/home-infra/pulls?state=open
 ```
 
