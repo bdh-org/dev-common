@@ -523,6 +523,27 @@ writes. These PATs authenticate as the `bdh-ai` service account; the
 ambient git identity (a personal token) must not be used for automated
 writes.
 
+**For `git` itself, the prefix is the WHOLE recipe -- never put a token in
+the URL.** The Claude gitconfig routes `https://github.com` to
+`gh auth git-credential`, which honours `GH_TOKEN`, so this works against a
+private repo with nothing else:
+
+```bash
+GH_TOKEN="$(cat ~/.config/ai/claude/credentials/gh-finzeug.token)" git pull --ff-only
+```
+
+`git pull https://x-access-token:<token>@github.com/...` also authenticates,
+and git writes that URL, token included, into the **reflog**. On 2026-09-25
+two PATs were found in cleartext in 20+ reflog files across the bind-mounted
+checkouts -- readable by every container on the host -- and both had to be
+regenerated (bdh-org/home-infra#1075). The Claude gitconfig now carries
+`transfer.credentialsInUrl = die`, so git refuses such a URL before
+connecting (bdh-org/dev-common#265); if you see `uses plaintext credentials`,
+that is the guard working, and the fix is the prefix above, not a workaround.
+**Never `git config --show-origin` or `--get-regexp` a `credential.*` key**
+either: it prints the value. `make git-credential-audit` in home-infra reads
+configs and history files without printing anything.
+
 ## Saying which devcontainer you are
 
 Vocabulary, because these get conflated: a **devcontainer** is the environment

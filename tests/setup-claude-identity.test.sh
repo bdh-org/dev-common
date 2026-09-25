@@ -129,6 +129,23 @@ assert_invariants() { # home
   else
     ok "~/.gitconfig-role sets no user.email"
   fi
+
+  # dev-common#265: tokens in git URLs are refused, on a fresh host AND on one
+  # whose gitconfig predates the setting -- asserted by BEHAVIOUR, not only by
+  # reading the key back, because the point is what git does with such a URL.
+  assert_eq "die" "$(effective "$home" transfer.credentialsInUrl)" \
+    "transfer.credentialsInUrl resolves to die"
+  local refused
+  refused=$(env -i HOME="$home" PATH="$PATH" GIT_CONFIG_NOSYSTEM=1 GIT_TERMINAL_PROMPT=0 \
+    git ls-remote "https://x-access-token:synthetic0notatoken0value@example.invalid/o/r.git" 2>&1)
+  case "$refused" in
+    *"plaintext credentials"*) ok "git refuses a URL with an embedded credential" ;;
+    *) notok "git must refuse a credential URL before connecting (got: ${refused:0:120})" ;;
+  esac
+  case "$refused" in
+    *synthetic0notatoken0value*) notok "git's refusal must not echo the credential" ;;
+    *) ok "and its refusal redacts the value" ;;
+  esac
 }
 
 # --- case 1: fresh host, architect workspace -------------------------------
