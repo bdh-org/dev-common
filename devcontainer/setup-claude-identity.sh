@@ -48,6 +48,8 @@ if [ ! -f "$GITCONFIG" ]; then
 [credential "https://gist.github.com"]
 	helper =
 	helper = !/usr/bin/gh auth git-credential
+[transfer]
+	credentialsInUrl = die
 [include]
 	path = ~/.gitconfig-role
 EOF
@@ -117,6 +119,28 @@ rm -f "$HOME/.gitconfig-seat"
 if ! git config --file "$GITCONFIG" --get-all include.path 2>/dev/null \
      | grep -qx '~/.gitconfig-role'; then
   git config --file "$GITCONFIG" --add include.path '~/.gitconfig-role'
+fi
+
+# --- Refuse credentials in git URLs (bdh-org/dev-common#265) -----------------
+#
+# `git pull https://x-access-token:<token>@github.com/...` authenticates -- and
+# git writes that URL, token included, into the REFLOG message. On 2026-09-25
+# two PATs were found in cleartext in 20+ reflog files across the bind-mounted
+# checkouts (home-infra#1075/#1076), readable by every container on the host.
+# With `die`, git refuses pull/fetch/clone/push to such a URL, and a remote
+# configured with one, BEFORE any network call -- so nothing is recorded -- and
+# its error redacts the value. Verified on git 2.55.
+#
+# Set here, in the SHARED gitconfig, on purpose: one setting covers every
+# Claude devcontainer on the host, where a per-repo hook would need installing
+# 18 times and would miss a pull anyway (no hook fires before a reflog write).
+#
+# The working idiom needs no URL at all: the credential stanza above routes
+# github.com to `gh auth git-credential`, which honours GH_TOKEN --
+#   GH_TOKEN="$(cat ~/.config/ai/claude/credentials/gh-<org>.token)" git pull
+# Ensured idempotently because the bootstrap heredoc only runs on a fresh host.
+if [ "$(git config --file "$GITCONFIG" --get transfer.credentialsInUrl 2>/dev/null)" != "die" ]; then
+  git config --file "$GITCONFIG" transfer.credentialsInUrl die
 fi
 
 # PROJECT_NAME is exported by each repo's .devcontainer/env.sh, derived from
