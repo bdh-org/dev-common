@@ -33,9 +33,13 @@ jobs:
   revise:
     # PR comments only, starting with `/revise`, from a trusted author. The prefix
     # also excludes the bot's own status comments, so there is no self-trigger loop.
+    # 333881240 is bdh-org-headful[bot], the App headful sessions act as. Its comments
+    # are author_association NONE, so without this line a session's verb is skipped
+    # (bdh-org/dev-common#271). Keyed on the ID, which survives an App rename.
     if: >
       github.event.issue.pull_request != null &&
       startsWith(github.event.comment.body, '/revise') &&
-      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
+      (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) ||
+      github.event.comment.user.id == 333881240)
     uses: bdh-org/dev-common/.github/workflows/agent-pr-revise.yml@main
     secrets: inherit
