@@ -561,6 +561,8 @@ jobs:
           # initiated by non-human actor" -- which silently cut sessions off from the
           # agent (bdh-org/dev-common#271). Named, never '*': this repo is public, and
           # bdh-org-coder must NOT be listed, or its own status comments could re-trigger.
+          # This input matches by NAME (the action offers no id form): an App rename
+          # must update it, while the wrapper gates key on the id and survive one.
           allowed_bots: "bdh-org-headful"
           # Attribute the commit to the App whose token actually made it.
           #

@@ -55,6 +55,9 @@ jobs:
     # `/revise`, whose wrapper requires `!= null` -- so `/agent` on a PR does
     # nothing and `/revise` is untouched. The `/agent` prefix also excludes the
     # bot's own status comments, so a completion comment cannot self-trigger.
+    # 333881240 is bdh-org-headful[bot], the App headful sessions act as. Its comments
+    # are author_association NONE, so without this line a session's verb is skipped
+    # (bdh-org/dev-common#271). Keyed on the ID, which survives an App rename.
     if: >
       (github.event_name == 'issues' &&
       (github.event.label.name == 'agent-pr' || github.event.label.name == 'agent-deploy'))
@@ -63,7 +66,7 @@ jobs:
       github.event.issue.pull_request == null &&
       startsWith(github.event.comment.body, '/agent') &&
       (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) ||
-      github.event.comment.user.login == 'bdh-org-headful[bot]'))
+      github.event.comment.user.id == 333881240))
     uses: bdh-org/dev-common/.github/workflows/agent-issue-to-pr.yml@main
     with:
       # no deployable dev tier -> no gate, no agent-deploy auto-merge
