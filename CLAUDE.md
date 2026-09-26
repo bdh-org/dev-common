@@ -1,369 +1,127 @@
+## About this file
+It loads into every Claude Code session in every consumer repo, and into every headless agent
+run, alongside the repo's own `CLAUDE.md` and `stack-common/CLAUDE.md` — against Claude Code's
+150k-character total. **Keep it under ~30k.** A correction REPLACES the wrong line; it does not
+sit beside it as "this line used to say…". Keep each rule to the rule, one line of why, and the
+issue that holds the story. Reference material goes in `docs/`, linked by path and never
+`@`-imported (bdh-org/dev-common#273).
+
 ## Workflow
 - Never commit directly to main. Always work on a feature branch.
 - Before starting work, find or create a GitHub issue for the change.
-- **Then check nobody is already on it**, in one command, before writing a line:
-
-  ```bash
-  gh pr list --repo <org>/<repo> --state open --search "<issue-number>"
-  ```
-
-  Work costs money whether or not it is merged. On 2026-08-14 five panoptikon
-  issues were implemented twice — once by the headless agent at 14:18, once by
-  the contractor session at 19:00 — because the second one never looked. Four of
-  the duplicates were closed unmerged; the fifth turned out to be the better
-  implementation and had to be ported back (panoptikon#732). Every token of that
-  was spent twice and refunded never.
-
-  **That command is NOT sufficient, and on 2026-09-19 it returned nothing while a
-  peer was mid-arc on the same issue.** It sees only OPEN PRs, so it is blind to a
-  session that is working and has not pushed, and blind to one that just finished a
-  neighbouring piece of the same arc. Two sessions then built overlapping work on
-  bdh-org/home-infra#953, and one came within a refused `gh pr merge` of merging the
-  other's PR. Four sessions were live in that container and six PRs merged to one
-  repo's main in a day (bdh-org/home-infra#970). So add both of these:
-
-  - **`ListAgents` before you start.** It names the live sessions and what each is
-    on ("0914 LO infra: home-infra#919"), which is the only view that shows a
-    session mid-work. This existed as a note in one repo's memory and was not
-    applied -- which is the argument for it being here, where it is loaded rather
-    than recalled.
-  - **Claim the issue with a comment naming your branch, before your first commit.**
-    One line: `working this on <branch>`. All sessions commit as the same account,
-    so the branch name is the only thing that distinguishes them -- which makes it
-    the only claim token worth writing.
-
-  **A cross-session message is a courtesy, not a claim.** `SendMessage` reaches a
-  session only if that session's permission mode lets it through: on 2026-09-19 one
-  claim was delivered and answered within minutes while another was held for its
-  user's approval and never arrived -- and nothing at the sending end distinguishes
-  "held" from "read and ignored". Message peers by all means, then claim somewhere
-  that does not depend on another session's settings: the issue comment, which
-  everyone can see.
-
-  Neither stops two sessions choosing the same issue in the same minute. They shorten
-  the window and make the overlap visible early, which is the whole of what is
-  available until each seat has a distinct identity (bdh-org/home-infra#262).
-- **`agent-pr` on an issue means it is handed over.** A session that applies the
-  label has delegated the work and must not then do it itself; a session that
-  finds the label on an issue it is about to start should check for the agent's
-  PR first and review that instead of starting again.
+- **Then check nobody is already on it, before writing a line.** Duplicated work is paid for
+  twice (five panoptikon issues were implemented twice on 2026-08-14). Do all three:
+  - `gh pr list --repo <org>/<repo> --state open --search "<issue-number>"` — sees only OPEN
+    PRs, so it is blind to a session mid-work (bdh-org/home-infra#970).
+  - **`ListAgents`** — names the live sessions and what each is on; the only view of unpushed work.
+  - **Claim the issue with a comment, `working this on <branch>`, before your first commit.** All
+    sessions share one account, so the branch name is the only claim token that distinguishes them.
+  **A `SendMessage` is a courtesy, not a claim**: it reaches a peer only if that peer's
+  permission mode lets it through, and "held" looks like "read and ignored" from the sending
+  end. Claim on the issue, where everyone can see it (bdh-org/home-infra#262 is the durable fix).
+- **`agent-pr` on an issue means it is handed over.** Having applied it, do not do the work
+  yourself; finding it, review the agent's PR instead of starting again.
 - Branch naming: `<issue-number>-<short-description>` (e.g., `42-fix-login-bug`).
 - Create the branch from main, do the work, commit to the branch.
 - When done, create a PR that links the issue (e.g., `Closes #42`).
 
 ## Git Commits
-Use conventional commit style.
+Use conventional commit style, e.g. `fix: resolve null pointer in data loader`.
 
-Example: `fix: resolve null pointer in data loader`
-
-**Never add a `Co-Authored-By:` trailer, and this OVERRIDES the harness default.**
-Claude Code appends `Co-Authored-By: Claude ... <noreply@anthropic.com>` to every commit
-unless it is told not to, and its own instruction defers to this file -- so a rule here is
-the entire mechanism, and nothing has to be configured per repo or per session. GitHub
-renders that line as a second author, so a commit with one author displays as two. Brian,
-2026-09-21, having seen it on a commit page: *"I'd rather the trailer not appear."*
-
-That address resolves to **no** GitHub account, so nothing is being misattributed. This is
-about how a commit page reads, and it is **not** the agent-identity defect -- that was the
-wrong bot id in the *author* field of headless agent commits, fixed under
-bdh-org/dev-common#245. Do not let the two get told as one story later.
-
-**Forward-looking only -- do NOT rewrite history to remove it.** The trailer is already in
-hundreds of commits across all 18 repos; rewriting shared history there to tidy a cosmetic
-line would invalidate every outstanding branch, PR and submodule pin, which is a real cost
-paid for a display preference. Stop emitting it on new commits and leave the old ones alone.
+**Never add a `Co-Authored-By:` trailer — this OVERRIDES the harness default**, and a rule here
+is the whole mechanism. GitHub renders it as a second author (Brian, 2026-09-21: *"I'd rather the
+trailer not appear."*). It misattributes nothing, and it is not the agent-identity defect
+(bdh-org/dev-common#245). **Forward-looking only — never rewrite history to strip it**; that would
+invalidate every branch, PR and pin across the fleet.
 
 ## Pull Requests
-Use a concise, descriptive title.
+Use a concise, descriptive title, e.g. `feat: add user authentication`.
 
-Example: `feat: add user authentication`
-
-**Never add the `Generated with Claude Code` footer to a PR description, and this
-OVERRIDES the harness default.** Claude Code appends
-`🤖 Generated with [Claude Code](https://claude.com/claude-code)` to every PR body unless
-it is told not to, and its own instruction defers to this file -- so a rule here is the
-entire mechanism, and there is nothing to configure per repo or per run. Brian,
-2026-09-21, on a PR that carried it: *"it carries the 'generated with claude code'
-trailer that I want dropped for all"*.
-
-This is the SIBLING of the `Co-Authored-By` ban above -- same harness default, same
-override, different surface -- and the commit half landing without the PR half is why the
-footer kept appearing after that rule shipped (bdh-org/dev-common#261).
-
-**THE RULE HAS TO LIVE HERE, NOT IN ONE REPO'S OWN `CLAUDE.md`, and the measurement says
-why.** Of the 13 open PRs across both orgs carrying the footer when this was written,
-**all 13 were the HEADLESS AGENT's** (`app/bdh-org-coder`) and none were a headful
-session's. The agent runs with the repo checked out and DOES hydrate submodules
-(`agent-issue-to-pr.yml`), so `@common/CLAUDE.md` loads for an agent run -- which makes
-this file the one place that reaches both kinds of session. A rule in a single repo would
-have covered the one case that was not the problem.
-
-Nothing in `.github/` emits this footer explicitly -- checked, `grep -rn "Generated with"`
-over the workflows returns nothing -- so there is no workflow template to fix instead.
-
-**Unlike the commit rule, this one is NOT forward-looking only.** That one spares history
-because rewriting it would invalidate every outstanding branch, PR and pin. A PR body is
-not history: it is mutable text, editing it notifies nobody, and there is no such cost. So
-strip the footer from an OPEN PR when you see it. Leave MERGED PRs alone -- nobody reads a
-merged PR's footer and bulk-editing them buys nothing.
-
-The same applies to an issue body or a comment: no footer. The `<sub>filed from the
-&lt;repo&gt; devcontainer</sub>` line is a different thing and stays -- it says which seat
-filed the issue, which is information nothing else records.
+**Never add the `🤖 Generated with [Claude Code]` footer — this OVERRIDES the harness default**,
+in PR bodies, issue bodies and comments alike (Brian, 2026-09-21: *"I want dropped for all"*;
+bdh-org/dev-common#261). It lives here, not in one repo, because the headless agent — which wrote
+all 13 open offenders — loads this file too. **Unlike the commit rule, strip it from an OPEN PR**
+when you see one: a body is mutable text. Leave merged PRs alone. The `<sub>filed from the
+&lt;repo&gt; devcontainer</sub>` line is different and stays.
 
 ## Check `ARCHITECT-INBOX.md` at session start
-
-If the repo root has an `ARCHITECT-INBOX.md`, **read it before doing anything
-else.** It is how the architect session passes context to this one: what
-changed elsewhere that affects your work, what a review concluded, what not to
-start because it is about to be superseded.
-
-It is **gitignored**, so it will not appear in `git status` and nothing will
-prompt you. That is why this line exists.
-
-Two conventions:
-
-- **Reply in the same file** when asked to. Append; do not rewrite someone
-  else's section.
-- **But do not expect the reply to be seen on its own.** NOTHING monitors this
-  file, or GitHub, on the architect's behalf. There is no background process:
-  an architect session exists only while Brian is running one, and it sees an
-  answer only if it happens to look. If the reply matters, **also put it on the
-  GitHub issue or PR** — that is the record, it survives every session, and it
-  is where a sweep will find it.
-- The inbox is a push channel between two **running** sessions. It is invisible
-  to the headless agent and to claude.ai/code sessions, and it notifies nobody.
-
-  It **does** survive a container rebuild, and this line used to say it did not.
-  `/workspaces/<repo>` is a bind mount of the host checkout — on twix,
-  `/dev/nvme0n1p2[/home/brian/dev/stack-home-site/<repo>]`, confirmed with
-  `findmnt` on 2026-08-15. The file is the host's; the container is the
-  disposable part. Believing otherwise, a session tells Brian his notes are
-  about to be lost and hurries to mirror them somewhere — which is wrong twice,
-  because the reason to put the important half on GitHub is that **nothing reads
-  this file**, not that it is fragile.
-
-  Same failure as the read-only claim in home-stack-common: a wrong line in a
-  file that loads into every session in the stack travels, and the correction
-  has to be written down rather than remembered.
-
-Delete a section once actioned. A stale inbox is worse than none — it gets
-skimmed, and then the next real message is skimmed too.
+If the repo root has one, **read it before anything else** — it is gitignored, so nothing will
+prompt you. Reply in the same file when asked (append; do not rewrite another's section), **and
+put anything that matters on the GitHub issue or PR too**: nothing monitors the inbox, it is
+invisible to the headless agent, and it notifies nobody. (It does survive a container rebuild —
+`/workspaces/<repo>` is a bind mount of the host checkout.) Delete a section once actioned.
 
 ## When something needs Brian: break it out, assign it, and LINK it
 
-**First ask whether it is his at all.** It is his only if it needs something no
-session can obtain:
+**First ask whether it is his at all.** It is his only if it needs what no session can obtain:
+**root or physical access**; **a credential only he can create** (a GitHub App, an AWS key, a
+paid account); **money**; **a fact only he holds** (is that disk backed up); **priority or
+strategy**; or **an irreversible or outward-facing act**.
 
-* **root or physical access** -- installing on a host, re-registering a runner,
-  plugging in a disk
-* **a credential only he can create** -- a GitHub App, an AWS key, a paid account
-* **money** -- anything with a bill attached
-* **a fact only he holds** -- is that disk backed up, has a restore ever been tested
-* **priority or strategy** -- what to work on next, what to stop doing
-* **an irreversible or outward-facing act** -- something that cannot simply be reverted
-
-**Everything else is yours, including questions that feel weighty** -- security
-scoping, retry semantics, cadence defaults, which of three designs to build.
-Decide them, write down the reasoning and the trigger that would reverse the
-decision, and make it configurable where that is cheap. Brian, 2026-08-15, after
-six engineering calls were routed to him in one day: *"this is an engineering
-question. I need you to decide these things... the purpose of this work is being
-neglected"*, and *"if you, the engineer have a preference, then let's try it and
-you document it so we can have a record in case there is room for improvement
-later."* **The deliverable of a decision is a decision plus its record, never a
-question.** Handing back a judgement call is the same offload as handing back the
-work.
+**Everything else is yours, including questions that feel weighty** — security scoping, retry
+semantics, cadence defaults, which of three designs to build. Decide, write down the reasoning
+and the trigger that would reverse it, and make it configurable where cheap. **The deliverable of
+a decision is a decision plus its record, never a question** (Brian, 2026-08-15: *"this is an
+engineering question. I need you to decide these things"*).
 
 ### If it IS his, it gets its own issue
-
-Never append "and Brian needs to run X" to the end of a diagnostic or design
-issue, and never assign him a long technical thread hoping he finds the ask in
-the last comment. He cannot find it, and nothing surfaces it.
-
-* **Title it `BRIAN: <imperative>`** -- and `(N commands)` when it really is a
-  short sequence. It has to be findable in a list of twenty.
-* **Assign it to `brianholland`.** Never to `bdh-ai`, which every session shares
-  and so signals nothing.
-* **A PR that needs him gets assigned too -- naming it in chat is not surfacing
-  it.** PRs in this fleet are conventionally left unassigned, so a PR waiting on
-  his merge sits in no queue he reads. Brian found this himself, 2026-08-16, after
-  being handed a prioritised list containing two of them: *"there are 2 prs you
-  have above for me: but they are not assigned to me."* Assign `brianholland`
-  **and** request his review, so it appears under both `assignee:@me` and
-  `review-requested:@me`:
-
+Never append "and Brian needs to run X" to a diagnostic issue, or assign him a long thread
+hoping he finds the ask in the last comment.
+- **Title it `BRIAN: <imperative>`**, plus `(N commands)` when it is a short sequence.
+- **Assign it to `brianholland`** — never `bdh-ai` or a bot, which every session shares.
+- **A PR that needs him gets assigned too, and his review requested** — PRs are conventionally
+  unassigned, so otherwise it sits in no queue he reads. The first call is the **issues** endpoint:
   ```bash
   gh api -X POST repos/<org>/<repo>/issues/<PR>/assignees -f 'assignees[]=brianholland'
   gh api -X POST repos/<org>/<repo>/pulls/<PR>/requested_reviewers -f 'reviewers[]=brianholland'
   ```
-
-  The first call really is the **issues** endpoint -- PR assignees live there.
-  This is the same failure as burying an instruction: the work was visible to me
-  and invisible where he looks.
-* **The body must be self-contained.** He must be able to act without opening the
-  parent issue: the host and account beside *each* step (steps get copied one at a
-  time and a header does not travel with them), the literal commands, a
-  **"Success looks like"** with real expected output, what to do if it fails, and
-  one line pointing back for context.
-* **THE ACTION GOES FIRST -- above the reasoning, not after it.** The commands are
-  the first thing in the body. Above them goes at most one line saying what they
-  do; below them, after a `---`, one sentence stating that the rest is context and
-  requires no decision. Everything else -- why this exists, what it unblocks, what
-  you tried -- lives under that line.
-
-  Ordering is not cosmetic, because **position implies dependency.** Brian,
-  2026-08-16: *"When you show some simple command for me to run after pages and
-  pages of reading it implies I have to understand those and read them and decide
-  something based on them instead of copying and pasting a command."* Prose above a
-  command reads as a precondition for running it, so a well-researched preamble
-  silently converts a paste-able task into a comprehension exercise -- and an
-  operator who does not have time to read the essay reasonably concludes the item
-  is not yet actionable.
-* **Say whether the steps are idempotent, at the top.** An operator who cannot
-  remember which half of a list he already ran will either redo it or skip it,
-  and both are avoidable with one line. Where re-running is safe, say so
-  plainly -- "re-run any or all of these freely" -- and let the verification
-  step establish the true state, which beats asking him to reconstruct it from
-  memory. Where a step is NOT safe to repeat (minting a credential, anything
-  that CREATES rather than converges), mark that step specifically and put a
-  CHECK in front of it so the default action is to look before acting. Brian,
-  2026-08-20, having minted the same token twice because nothing said the mint
-  was the one non-repeatable step: *"are instructions in home-infra 550 and
-  548 idempotent? I'm not sure which I ran."*
-* **Never write a command you have not run.** If you cannot execute it from here,
-  mark it `UNVERIFIED` rather than presenting it as tested. A handoff that cannot
-  work costs more than no handoff.
-* **Never RENUMBER a handoff that is already in flight.** The step number is the
-  operator's only bookmark. Editing the body is right -- these rules say to edit
-  rather than append -- but *renumbering* silently invalidates the one piece of
-  state the operator is holding, and does it without any signal, because the new
-  body reads perfectly coherently to a fresh reader. Append a step, letter it
-  (`3a`), or renumber and say so in the FIRST line of the update comment with an
-  explicit old -> new mapping. Brian, 2026-09-11, partway through a six-step
-  handoff that had gained a new step 1: *"I was partway through the prior issue
-  and don't know where I was."*
-* **A handoff of more than about three steps opens with a step 0 that DISCOVERS
-  the state.** Read-only checks, one per host, and a short table mapping their
-  output to where the operator is. Ask the HOST what is true; never ask a human
-  to remember what he ran. This is the same discipline as every detector in this
-  fleet, pointed at the operator's own position, and it is what makes an
-  idempotence claim checkable rather than merely asserted.
-* **A step that appends to a file is not idempotent until it removes its own
-  previous line first.** Back up, delete by a marker the step itself controls (a
-  key comment, a sentinel), then append. A bare `>>` or `tee -a` on a retry
-  leaves a live stale entry beside the correct one -- and for `authorized_keys`
-  that means a credential you believed you had replaced is still valid. This
-  one shipped: a rewritten handoff claimed "every step is safe to re-run" at the
-  top while its step 5 was a bare `tee -a`.
-* If it is a **decision** rather than commands: the question in one sentence, the
-  options with their consequences, and **your recommendation**. Never an open
-  question.
+- **Self-contained body**: host and account beside *each* step, the literal commands, a
+  **"Success looks like"** with real expected output, what to do on failure, one line pointing
+  back for context.
+- **THE ACTION GOES FIRST.** Commands at the top with at most one line above them; below, after a
+  `---`, one sentence saying the rest is context needing no decision. **Position implies
+  dependency**: prose above a command reads as a precondition (Brian, 2026-08-16: *"after pages
+  and pages of reading it implies I have to understand those … instead of copying and pasting"*).
+- **Say at the top whether the steps are idempotent.** Where re-running is safe, say so and let
+  the verification step establish state. Mark any step that CREATES rather than converges
+  (minting a credential) and put a CHECK in front of it.
+- **Never write a command you have not run** — mark it `UNVERIFIED` otherwise.
+- **Never RENUMBER a handoff in flight** — the step number is the operator's only bookmark.
+  Append, letter it (`3a`), or state an explicit old → new mapping in the first line.
+- **More than ~three steps opens with a step 0 that DISCOVERS the state**: read-only checks per
+  host and a table mapping output to where he is. Ask the host, never his memory.
+- **An appending step is not idempotent until it removes its own previous line** (back up,
+  delete by a marker it controls, then append). A bare `tee -a` on `authorized_keys` leaves the
+  credential you meant to replace still valid.
+- **A decision** rather than commands: the question in one sentence, the options with
+  consequences, and **your recommendation**. Never an open question.
 
 ### An update comment is a NEW handoff, and obeys the same order
+A comment that changes what is left to do opens with **what is still outstanding** — remaining
+commands first, host and account beside each; progress and announcements below. If nothing is
+left for him, say so in the first line. Never put an optional command above a required one, and
+never announce a fix above the remaining work (issue `refdims#199`).
 
-The rules above govern the body. **A comment that changes what is left to do is a
-handoff in its own right**, and is the more dangerous of the two: it is what a
-returning reader reads *most recently*, and it arrives with no title to signal
-that an action is buried in it.
+**Merging is not doing the work, and `Closes #N` cannot tell the difference.** If an issue's
+remaining steps run on a host, the PR adding the tooling must NOT carry a closing trailer for it
+— use `Refs #N`, and let the operator issue close when the host changed. Anything delivered by
+`rsync`, `make` or a provisioning script is inert until run.
 
-So a state-change comment opens with **what is still outstanding**, in the same
-shape as a body -- the remaining commands first, host and account beside each.
-Progress, corrections, apologies and announcements of work you did go **below**
-them. If nothing is left for him, say that in the first line.
-
-Three specific traps, all of which fired at once in issue `refdims#199`
-(2026-08-16), whose *body* complied with every rule above:
-
-* **Never put an optional command above the required one.** That issue's comment
-  offered a "if you still want to eyeball it" command at line 18 and the two
-  commands that actually mattered at lines 48 and 56.
-* **Never announce the fix above the remaining work.** A heading reading "The
-  durable fix is up: PR #201" at line 24, and "I built it rather than waiting" at
-  line 36, both read as *handled*. The section actually headed "What is actually
-  left for you" began at line 42 of 70.
-* **Merging a PR is not doing the work, and `Closes #N` cannot tell the
-  difference.** #201 carried `Closes #199`, so merging auto-closed the operator
-  issue while both its commands were unrun -- the host still had the old script
-  and no verified backup. **If an issue's remaining steps run on a host, the PR
-  that adds the tooling must NOT carry a closing trailer for it.** Deliver the
-  tooling and the operator task as separate issues, and let the operator issue
-  close when the host changed.
-
-That last one is the general case of a rule this repo already states elsewhere:
-merging changes a repo, and only running something changes a host. Anything
-delivered by `rsync`, `make`, or a provisioning script is inert until run.
-
-### ...but a comment does NOT retire the body
-
-The rule above says how to write the comment. It does not say to go back and fix
-the **body**, and that gap is what actually bites: a body is what the issue *says
-it is about*, so it outranks its own comments for anyone opening the issue cold.
-
-**When the remaining action changes, EDIT THE BODY so it carries only what is
-left.** Commenting is necessary and not sufficient.
-
-* **Say in the first line that the body was rewritten, and what the step count
-  went from and to.** This is the other half of "never renumber a handoff in
-  flight": the operator's bookmark is protected by *announcing* the change, not
-  by refusing to make one. A body that quietly becomes a different set of steps
-  is worse than one that is openly re-cut.
-* **Mark the finished step DONE and not to be repeated -- do not silently delete
-  it.** An operator who half-remembers running something needs to see that it was
-  expected, or he will run it again, or skip the new one believing it is the same.
-* **Remove the INSTRUCTION, keep what it ESTABLISHED** -- one line, below the
-  fold. A completed step usually produced the finding the remaining work rests on,
-  and deleting the step deletes the evidence with it. Optimising the body for
-  tidiness alone makes the fix read, later, as though it arrived from nowhere.
-
-**The tell is not "this body is old"**, which nobody can assess and so nobody
-checks. It is **"this body still describes a step that is DONE"**, which is
-checkable in one pass.
-
-**And the operator is not the only reader of a body. The second reader is another
-session** -- which cannot ask a clarifying question, and will act on what it
-reads. That is what makes this more than tidiness. On 2026-09-14 a `BRIAN:` issue
-(bdh-org/home-infra#919) asked for a command on **forge**; it was run, it timed
-out, and *that timeout was the diagnosis*. The remaining work became a different
-command on **twix**, and that change lived only in comments -- four of them, each
-individually compliant with the rule above. A second session then opened the issue
-cold, read the body, correctly applied the rule that *a `BRIAN:` title names the
-host the command is TYPED ON* (bdh-org/home-infra#569), and on the strength of the
-stale body **re-titled it "RUN ON FORGE"** -- pointing the operator at a machine
-where the command does not exist, while production was unwatched. Correct rule,
-stale input, wrong handoff. Neither session was careless; the body was.
+### …but a comment does NOT retire the body
+**When the remaining action changes, EDIT THE BODY** so it carries only what is left — the body
+outranks its comments for anyone opening the issue cold, **including another session**, which
+cannot ask and will act on it (bdh-org/home-infra#919 was re-titled to the wrong host from a
+stale body). Say in the first line that the body was rewritten and the step count from → to;
+mark finished steps DONE rather than silently deleting them; remove the instruction but keep one
+line of what it established. The tell is **"this body still describes a step that is DONE"**.
 
 ### A decision for him NEVER shares an issue with engineering work
-
-The rule above says a decision gets its own issue, and gives visibility as the
-reason. There is a second reason, and it is the one that actually bites:
-**they complete at different times.**
-
-A decision resolves the moment he answers. The work around it does not. Put
-both in one issue and answering the question closes the work -- silently, and
-correctly from his side, because from where he sits the issue *is* the
-question.
-
-That happened to the issue filed about this very problem (bdh-org/home-
-infra#551): it carried one question for Brian plus two pieces of engineering,
-he answered and closed it, and the engineering went with it. It had to be re-
-filed as #553. Brian, 2026-08-20: *"home-infra#551 was not assigned to me, but
-I answered and closed it done."*
-
-So: the question goes in its own issue, assigned. The work it unblocks stays
-in yours, unassigned, and is linked as blocked_by. Then his close ends only
-his part.
-
-**And if you ask the question in chat instead** -- which is often kinder,
-since a one-click answer beats a round trip -- the issue still has to exist
-and still has to be assigned. Chat is not a record: he may not be there, and
-neither will the answer be when the next session looks.
+They complete at different times: his answer closes the issue, and the engineering goes with it
+(bdh-org/home-infra#551). The question gets its own assigned issue; the work stays in yours,
+unassigned, linked as blocked_by. Asking in chat is fine, but the issue must still exist.
 
 ### Link it with a real GitHub issue DEPENDENCY, not prose
-
-The operator task is not *part of* the engineering issue -- it **blocks** it. Say
-so in the way GitHub can act on, so the relationship survives being skimmed:
-
+The operator task **blocks** the engineering issue — it is not a sub-issue:
 ```bash
 T="$(gh-app-token <org>)"
 CHILD_ID=$(GH_TOKEN="$T" gh api repos/<org>/<repo>/issues/<CHILD> --jq .id)
@@ -371,143 +129,56 @@ GH_TOKEN="$T" gh api -X POST \
   repos/<org>/<repo>/issues/<PARENT>/dependencies/blocked_by \
   -F issue_id=$CHILD_ID
 ```
-
-Two things bite: it wants `-F` (a typed integer), not `-f`; and it wants the
-issue's **database id**, not its number. Verify with
+It wants `-F` (typed integer) and the **database id**, not the number. Verify with
 `gh api repos/<org>/<repo>/issues/<PARENT>/dependencies/blocked_by --jq '.[].number'`.
+Then unassign yourself from the parent, leave it empty, and put a one-line pointer at the top of
+its body.
 
-GitHub **enforces acyclicity** server-side -- a cycle is refused with a 422 -- so
-the graph is a real DAG rather than decoration. Prefer dependencies over
-sub-issues: a sub-issue says *part of*, and this is *blocks*.
-
-Then **unassign yourself from the parent and leave its assignee empty**, and put a
-one-line pointer at the top of the parent body so a reader knows the operator half
-lives elsewhere.
-
-### Noticing something is not recording it -- the phrase IS the commitment
-
-If you write **"worth a follow-up"**, "deserves its own issue", "should be fixed",
-"someone should", or **"TODO"** in anything you author, **you owe an issue number beside
-it, in the same action**. Not later, not "when I finish this" -- in the same breath.
-
-Brian, 2026-08-16: *"If worth fixing then take the initiative, file, and fix, you're the
-engineer."*
-
-The reason this needs saying separately from "decide it yourself" is that they are
-different failures. Deciding is about **judgement** -- not handing a call back. This is
-about **follow-through**: noticing something real, typing it into a PR body, and moving
-on. The observation then *feels* recorded because it was written down. It is not. Nobody
-greps prose, and the next session starts from the issue list, so an unfiled follow-up is
-indistinguishable from one nobody ever had.
-
-Three endings are acceptable, and only these three:
-
-* **still wanted** -> file it, and cite the number where you noticed it
-* **already done** -> cite the PR that did it
-* **never mattered** -> delete the sentence
-
-`architect-sweep.sh` section 8 lists commitments you wrote without a number, across both
-orgs. It is a review aid, not a gate: it reads prose, so it misses some and occasionally
-flags a descriptive sentence. That is the right trade -- a false positive costs a glance,
-and a dropped follow-up costs the thing itself, silently, forever.
-
-**And if the follow-up turns out to be Brian's** -- root, a credential, money, a fact only
-he holds, priority, an irreversible act -- then file it as a `BRIAN:` issue, assigned,
-self-contained, linked as a dependency of whatever it blocks. That is the same practice as
-above; noticing it mid-task is not a reason to skip it.
+### Noticing something is not recording it — the phrase IS the commitment
+If you write **"worth a follow-up"**, "should be fixed", "someone should" or **"TODO"**, put an
+issue number beside it **in the same action** (Brian, 2026-08-16: *"If worth fixing then take the
+initiative, file, and fix, you're the engineer."*). Only three endings: **still wanted** → file it
+and cite it; **already done** → cite the PR; **never mattered** → delete the sentence.
+home-infra's `architect-sweep.sh` section 8 lists unnumbered commitments. If the follow-up is his,
+it is a `BRIAN:` issue as above.
 
 ### An issue you SUSPECT is dead is not an issue you may close
-
-Closing on a hunch is not tidying, it is deletion: a wrongly-closed issue is invisible
-forever, while a wrongly-flagged one costs ten seconds to dismiss. So the bar for
-closing is **proof, not confidence**.
-
-* **Provable** -- the function it asks for exists, the PR that did it is merged, the
-  host it refers to is decommissioned. Close it, and cite the specific evidence in the
-  closing comment so the next reader can check your work.
-* **Merely suspected** -- it *looks* superseded, or you doubt it still matters, but you
-  cannot prove it; or whether it matters is a judgement about Brian's priorities rather
-  than about the code. **Label it `maybe-stale`**, comment with what you checked, what
-  you found and why you are unsure, and leave it open.
-
-```bash
-gh issue list --repo <org>/<repo> --label maybe-stale     # his review queue, in one query
-```
-
-Brian, 2026-08-16: *"some issues might no longer be current and should maybe be closed.
-I suggest assigning those to me to review or labelling them with a category for me to
-review."*
-
-**Label rather than assign**, deliberately. Assignment is the signal for *"you must
-act"*; spending it on *"please glance at this"* dilutes the `BRIAN:` queue into noise,
-and that queue only works while everything in it is genuinely his to do.
+The bar is **proof, not confidence**. **Provable** (the function exists, the PR merged, the host
+is gone): close it and cite the evidence. **Merely suspected**: label it **`maybe-stale`**,
+comment what you checked and why you are unsure, and leave it open — label rather than assign,
+so the `BRIAN:` queue stays his real work. His queue: `gh issue list --repo <org>/<repo> --label
+maybe-stale`.
 
 ### Closing the loop
-
-Nothing watches GitHub on your behalf -- a session exists only while Brian is
-running one, so an answer he writes reaches nobody until someone looks.
-`home-infra`'s `make sweep` has a section that lists open issues assigned to him
-whose **last comment is his**; that is the signal that a decision is waiting on
-*you*. When you act on one, close the `BRIAN:` issue -- closing the blocker is what
-releases its dependents.
+Nothing watches GitHub for you. home-infra's `make sweep` lists issues assigned to him whose
+**last comment is his** — a decision waiting on *you*. When you act on one, close the `BRIAN:`
+issue; closing the blocker releases its dependents.
 
 ## Referring to issues and PRs
-
-**Every issue or PR number in text the user reads is a hyperlink, and says which
-it is.** Never a bare `#441`, and never a bare `hog#441`.
-
+**Every issue or PR number in text the user reads is a hyperlink AND says which it is** — never
+a bare `#441` or `hog#441`. Brian reads in a terminal where links are clickable, and issues and
+PRs share one number space.
 ```markdown
 PR [hog#441](https://github.com/finzeug/hog/pull/441)
 issue [slingshot#138](https://github.com/finzeug/slingshot/issues/138)
 ```
+Org for the URL: see the table under GitHub Authentication.
 
-Two separate requirements, and both are needed:
-
-1. **A link.** Brian reads in a terminal, where markdown links are clickable. A
-   bare number costs him a manual lookup every single time.
-2. **The word "PR" or "issue" beside it.** Issues and PRs share one number
-   space, so `hog#441` cannot say which it is, and the rendered link text hides
-   the `/pull/` vs `/issues/` that would have told him. Grouping works too
-   ("PRs merged: ...", "Issues: ...").
-
-Org for the URL, from the repo's `origin`: `bdh-org` (home-infra, home-site,
-dev-common, devtemplate, brief, roy), `finzeug` (hog, oleo, canary, heller,
-panoptikon, refdims, ratecraft, ferret, freddyb, slingshot, ledger-io).
-
-**THE ONE EXCEPTION: a PR's closing trailer takes the BARE form.** `Closes #372`,
-on its own line -- never `Closes issue [home-infra#372](...)`. That line is a
-machine directive, not prose: GitHub parses the PR body for closing keywords and
-needs a bare reference, so the hyperlinked form matches nothing and the issue
-silently stays open. Measured 2026-08-15 across the last 60 merged home-infra PRs:
-53 used a closing keyword and **25 registered no closing reference at all**. It
-never looked broken because whoever noticed closed the issue by hand. Still
-hyperlink the issue wherever the body *discusses* it -- the two rules govern
-different lines.
-
-This is here rather than in a memory note because it kept regressing when it was
-only a note. Brian has asked for it repeatedly.
+**THE ONE EXCEPTION: a PR's closing trailer is BARE** — `Closes #372` on its own line. GitHub
+parses it as a directive, and a hyperlinked form matches nothing, so the issue silently stays open
+(25 of 60 merged home-infra PRs, measured 2026-08-15). Hyperlink wherever the body *discusses* it.
 
 ## GitHub Authentication
-The devcontainer has **no ambient `gh` auth** — this is deliberate, not a
-misconfiguration. `GITHUB_TOKEN` is intentionally empty and `gh`'s
-`config.yml` carries no auth state, so a bare `gh ...` or `gh auth status`
-fails. Do NOT run `gh auth login` to "fix" this.
-
-Instead, authenticate **per command** with a short-lived token from the
-**`bdh-org-headful` GitHub App**, minted for the repo's GitHub org:
-
+The devcontainer has **no ambient `gh` auth**, deliberately — do NOT run `gh auth login`.
+Authenticate **per command** with a ~1h token from the **`bdh-org-headful` GitHub App**:
 ```bash
 GH_TOKEN="$(gh-app-token bdh-org)" gh pr create ...
+GH_TOKEN="$(gh-app-token finzeug)" git pull --ff-only
 ```
-
-`gh-app-token <org>` prints a ~1h installation token and nothing else; the
-App's key and install map live at `~/.config/ai/claude/credentials/
-bdh-org-headful.{pem,conf}` (bdh-org/home-infra#262). Mint per command --
-never export the token or save it to a file, which is how a secret ends up
-in shell history or a reflog. `gh-app-token --check` proves every org
-works without printing a token.
-
-Pick the org from the repo's origin (`git remote get-url origin`):
+Mint per command — never export it or save it to a file. The App's key and install map are
+`~/.config/ai/claude/credentials/bdh-org-headful.{pem,conf}` (bdh-org/home-infra#262);
+`gh-app-token --check` proves every org works without printing a token. PRs, issues and comments
+made this way are authored by `bdh-org-headful[bot]`; commits keep their git identity.
 
 | GitHub org | Used by |
 | --- | --- |
@@ -515,476 +186,112 @@ Pick the org from the repo's origin (`git remote get-url origin`):
 | `finzeug` | hog, oleo, canary, heller, panoptikon, refdims, ratecraft, ferret, freddyb, slingshot, ledger-io |
 | `finriskanalytics` | fra-stack-common, hmdlib, billing, ASG-ALMT-Review |
 
-**There are THREE orgs, not two.** An earlier table listed only two for months,
-so a session concluded finriskanalytics was unreachable -- or, worse, used the
-finzeug credential and got a 404 that reads exactly like a deleted repo. The
-org holds a second stack (`fra-stack-common` is the repo this file's own P3
-section cites as the naming example). The App's finriskanalytics tokens are
-deliberately narrowed to those stack repos, not the org's other private work.
+**There are THREE orgs.** finriskanalytics holds a second stack; using another org's token gets a
+404 that reads like a deleted repo. The App's tokens there are narrowed to the stack repos.
 
-**Why the App and not the PATs this section used to prescribe.** The three
-fine-grained PATs (`gh-<org>.token`) expire every 90 days, all on one date,
-and once lapsed silently mid-session. They also cannot read check runs at all
--- fine-grained PATs have no Checks permission -- so `gh pr checks` and a PR's
-`statusCheckRollup` returned 403 while the App reads both
-(bdh-org/home-infra#350). What GitHub records changes too: PRs, issues and
-comments made this way are authored by `bdh-org-headful[bot]`, not `bdh-ai`.
-Commits are unchanged -- their author comes from the git identity, not the
-token.
+**There is no PAT fallback.** The `bdh-ai` PATs were revoked 2026-09-25
+(bdh-org/home-infra#1089); a `gh-<org>.token` file is dead and returns 401.
+- **`gh-app-token` not found**: the devcontainer predates bdh-org/dev-common#269. Bump `common`
+  and rebuild; meanwhile run `common/devcontainer/gh-app-token.sh` by path.
+- **`gh-app-token: no App config`**: the host lacks the App key — a host step for Brian
+  (bdh-org/home-infra#1090), never something to route around.
+- Anything else prints GitHub's own reason; fix the cause it names.
 
-**There is no PAT fallback any more.** The three `bdh-ai` PATs were revoked
-on 2026-09-25 (bdh-org/home-infra#1089); a `gh-<org>.token` file that still
-exists anywhere is dead and returns 401.
-
-**`gh-app-token` not found** means the devcontainer was built from a `common`
-older than bdh-org/dev-common#269, which is where `setup-claude.sh` started
-linking it into `/usr/local/bin`. Bump `common` and rebuild. Until then it can
-be run by path: `common/devcontainer/gh-app-token.sh` -- once `common` carries
-it.
-
-**`gh-app-token: no App config`** means this host has not been given the App's
-key: `bdh-org-headful.{pem,conf}` must sit in the host's
-`~/.config/ai/claude/credentials/`. Copying them there is a host step for
-Brian (bdh-org/home-infra#1090 did it for cosmo), never something to route
-around.
-
-Any other failure prints GitHub's own reason and exits non-zero; `gh` then
-fails "not logged in". Fix the cause it names.
-
-The same applies to `git push` over HTTPS and any other `gh`/API call that
-writes. The ambient git identity (a personal token) must not be used for
-automated writes.
-
-**For `git` itself, the prefix is the WHOLE recipe -- never put a token in
-the URL.** The Claude gitconfig routes `https://github.com` to
-`gh auth git-credential`, which honours `GH_TOKEN`, so this works against a
-private repo with nothing else:
-
-```bash
-GH_TOKEN="$(gh-app-token finzeug)" git pull --ff-only
-```
-
-`git pull https://x-access-token:<token>@github.com/...` also authenticates,
-and git writes that URL, token included, into the **reflog**. On 2026-09-25
-two PATs were found in cleartext in 20+ reflog files across the bind-mounted
-checkouts -- readable by every container on the host -- and both had to be
-regenerated (bdh-org/home-infra#1075). The Claude gitconfig now carries
-`transfer.credentialsInUrl = die`, so git refuses such a URL before
-connecting (bdh-org/dev-common#265); if you see `uses plaintext credentials`,
-that is the guard working, and the fix is the prefix above, not a workaround.
-**Never `git config --show-origin` or `--get-regexp` a `credential.*` key**
-either: it prints the value. `make git-credential-audit` in home-infra reads
-configs and history files without printing anything.
+**For `git`, the `GH_TOKEN=` prefix is the WHOLE recipe — never put a token in a URL.** The Claude
+gitconfig routes github.com to `gh auth git-credential`, which honours `GH_TOKEN`. A URL-borne
+token is written into the **reflog** (two PATs were found in 20+ reflogs, bdh-org/home-infra#1075),
+so `transfer.credentialsInUrl = die` now refuses one (bdh-org/dev-common#265) — if you see `uses
+plaintext credentials`, that is the guard working. **Never `git config --show-origin` or
+`--get-regexp` a `credential.*` key** — it prints the value. The ambient personal git identity
+must not be used for automated writes.
 
 ## Saying which devcontainer you are
-
-Vocabulary, because these get conflated: a **devcontainer** is the environment
-(one per repo); a **session** is one running Claude Code conversation inside
-one; a **role** is what that session acts as -- **architect** or
-**contractor**. The role follows the devcontainer, so naming the devcontainer
-names the role.
-
-Every session authenticates as the same identity, so nothing GitHub records
-distinguishes them: an issue filed from any devcontainer reads
-`login: bdh-org-headful[bot]` (or `login: bdh-ai`, `type: User` from a seat
-still on the PATs). Either way it is one account for every seat. Two
-mechanisms close that gap, one automatic and one yours to remember.
-
-**Commits and PRs — automatic, nothing to do.** `setup-claude-identity.sh`
-writes a container-local `~/.gitconfig-role` setting `user.name` to
-`bdh-ai (architect)` or `bdh-ai (contractor/<repo>)`, derived from
-`PROJECT_NAME`. Only the display name varies; `user.email` stays `bdh-ai`
-everywhere.
-
-**Never set `user.name` or `user.email` in a repo's `.git/config`.** Repo
-checkouts are bind-mounted from the host, so a repo-local override is
-shared with the human's own shell -- which is how two repos ended up
-attributing container commits to a person (bdh-org/home-infra#317). If a
-role name looks wrong, fix `~/.gitconfig-role`, never the repo.
-
-**Issues and issue comments — add a footer**, since these never touch git:
-
-```markdown
-<sub>filed from the <repo> devcontainer</sub>
-```
-
-Use the repo whose devcontainer you are running in, which is the directory
-your `CLAUDE.md` was loaded from -- not the repo the issue is filed against.
-They differ often: cross-repo work is normal from the architect workspace.
+A **devcontainer** is the environment, a **session** is one Claude Code conversation in it, a
+**role** is what it acts as (**architect** or **contractor**). Every session authenticates as
+one identity, so GitHub records nothing that tells them apart.
+- **Commits — automatic.** `setup-claude-identity.sh` writes a container-local `~/.gitconfig-role`
+  setting `user.name` to `bdh-ai (architect)` or `bdh-ai (contractor/<repo>)` from `PROJECT_NAME`.
+- **Never set `user.name`/`user.email` in a repo's `.git/config`** — checkouts are bind-mounted
+  from the host, so it is shared with the human's own shell (bdh-org/home-infra#317). Fix
+  `~/.gitconfig-role` instead.
+- **Issues and comments — add a footer**, `<sub>filed from the <repo> devcontainer</sub>`,
+  naming the repo your `CLAUDE.md` loaded from, not the repo the issue is filed against.
 
 ## Every command you hand over names its machine and its account
-
-Brian runs about seven machines, with several accounts on each. A command
-without a location is not actionable, so **say which host and which user id, in
-the same breath as the command** — never leave it to be inferred from what was
-being discussed.
-
+Brian runs about seven machines with several accounts each. **Say which host and which user, in
+the same breath as the command**, beside **each** step — steps are copied one at a time and a
+header does not travel. **The working directory too**: put `cd ~/dev/home-infra && …` inside the
+command, never above it. Where a command switches account (`sudo machinectl shell svc-prod@ …`,
+`sudo -u`, an `ssh` inside a make target), say both who types it and who it runs as. A `prod-*`
+make target usually runs on a DEV host and ssh's into prod — name the host and checkout you invoke
+it from. **If you do not know which host something belongs on, ask** (a `prod-bootstrap` run on
+prod chowned a live Postgres directory; bdh-org/dev-common#159).
 ```
 On Minerva, as brian:
 
     sudo chown --reference=/srv/svc-prod/refdims-data/PG_VERSION /srv/svc-prod/refdims-data
 ```
 
-For a multi-step sequence, put host and account beside **each** step rather than
-once at the top: steps get copied one at a time, and the header does not travel
-with them. **The working directory is part of that rule, and is the half that
-keeps getting missed:** a `cd` stated in a heading is exactly as lost as a
-hostname stated in a heading. Put it inside the command — `cd ~/dev/home-infra
-&& ...` — never as "in `~/dev/home-infra`" above the block, and never as "same
-directory" on the step after. Where a command internally switches account —
-`sudo machinectl shell svc-prod@ ...`, `sudo -u ...`, an `ssh` inside a make
-target — say both which account the human types it as and which one it ends up
-running as.
-
 ### Prefer ONE chained command to a numbered list
-
-Brian, 2026-09-12, on a three-step handoff: *"the first two steps and the first
-header should have been one line, cd ~/dev/home-infra && etc etc"* — and, when
-the rewrite still split them: *"is there a reason not to? You're making multiple
-commands for me."*
-
-Usually there is no reason. Numbering is for steps that genuinely cannot join: a
-different machine, or a decision in between. Everything else chains.
-
+Number only steps that cannot join — a different machine, or a decision between. Everything else
+chains, and `&&` fails closed (Brian, 2026-09-12: *"You're making multiple commands for me."*):
 ```
 cd ~/dev/home-infra && ./scripts/twix/sync-claude-access.sh && make brief-redeploy
 ```
-
-`&&` also fails closed, which a numbered list does not — a failed step stops the
-chain instead of rsyncing a stale tree onto a host.
-
-**THE PULL IS NOT IN THAT CHAIN, AND MUST NOT BE.** This example carried
-`&& git pull &&` until 2026-09-14, and it was teaching the exact thing another
-rule here forbids: *update the checkout YOURSELF, then hand over only the step
-that needs him*. `/workspaces/<repo>` IS that checkout, bind-mounted, so a pull
-needs no root, no credential he alone holds and no judgement — and he has
-several sessions live in that directory, so pulling it is a risk that belongs to
-whoever can see who else is working there.
-
-It recurred twice within three days BECAUSE the worked example showed it, which
-is what a worked example does. Brian, 2026-09-14, having run one anyway:
-*"the CLAUDE memory says don't pull in main but you keep asking me to do it"* —
-and, three days earlier: *"You know I have several sessions using that directory
-- I am uncomfortable pulling it but I did it anyway."*
-
-**The tell is the prefix `cd ~/dev/<repo> && git pull`.** Seeing yourself type it
-is the signal to stop, do the pull from your own seat after checking with the
-live sessions, and hand over what is left. Chaining is still right; chaining in
-work that was never his is not.
-
-**But the test is CUSTODY, not runnability, and `git pull` is only its commonest
-instance.** That pull is perfectly runnable where it was handed over — twix is
-the one host with checkouts and credentials — so "would it work?" never catches
-it. The question to ask of every clause you chain is **whose is this?** A clause
-needing no root, no credential only he holds, and no judgement is yours by that
-test, whatever it happens to be: a `make` target that only rsyncs, a `git
-fetch`, a file you could have written. Chain only the clauses that are actually
-his, and do the rest before you hand anything over.
-
-**A second host is often not a second step.** Check the Makefile before
-splitting by machine: that example's last word does the rsync to forge *and*
-runs the provisioner there over `ssh -t`, so what had been written as "run this
-on twix, then that on forge" was one target. Same for verification blocks —
-inline the variables (`FOO=1 BAR=1 /path/to/script`) instead of an `export` line
-pasted separately, which also leaves nothing set in the operator's shell
-afterwards.
-
-This does **not** conflict with "one line at a time whenever anything prompts"
-below. That hazard is a `read` swallowing the NEXT PASTED LINE; a single `&&`
-chain has no next line, and `sudo` / `ssh` prompts read from the tty and are
-fine mid-chain.
-
-**And re-check a success test whenever the thing it inspects changes.** A
-handoff that promised `grep -c '...'` would print `2` was left behind by a fix
-that changed what the file contains; the true answer became `6`, so a correct
-delivery would have read to the operator as a failure. Render or run the thing
-and count — never carry the old number forward.
-
-The rule extends to make targets, which are the easiest thing to get wrong: a
-`prod-*` target usually runs on a DEV host and ssh's *into* prod, so "run `make
-prod-bootstrap`" is ambiguous exactly where it matters. Name the host you invoke
-it from and the checkout you invoke it in.
-
-**When you do not know which host something belongs on, ask.** The assumption
-has been wrong more often than right, and the failures are not cheap: a
-`prod-bootstrap` recommended without saying it runs from a dev host was run on
-prod, where it chowned what the Makefile still believed was the live Postgres
-data directory (bdh-org/dev-common#159, finzeug/refdims#177).
+- **THE PULL IS NOT IN THE CHAIN, and must not be.** `/workspaces/<repo>` IS his checkout,
+  bind-mounted, and several sessions work in it: update it YOURSELF after checking the live
+  sessions, and hand over only what is his. **The tell is `cd ~/dev/<repo> && git pull`.**
+- **The test is CUSTODY, not runnability**: of every clause ask *whose is this?* A clause needing
+  no root, no credential only he holds and no judgement — a `git fetch`, a make target that only
+  rsyncs, a file you could write — is yours. Do it first.
+- **A second host is often not a second step** — check the Makefile (a target may rsync *and* run
+  the provisioner over `ssh -t`). Inline variables (`FOO=1 /path/to/script`) instead of a separate
+  `export`.
+- **Re-check a success test whenever the thing it inspects changes** — run it and count; never
+  carry the old number forward.
 
 ### The SHAPE of a handoff breaks it as often as the content
-
-The rules above govern what a command says. These govern how it survives being
-copied. Two handoffs failed on 2026-08-20 for the same reason -- the chat
-message's formatting broke the command, twice, in opposite directions.
-
-* **One line at a time whenever anything prompts for input.** A block that
-  opens with `read -r R` to ask for a secret puts the *next* line into the
-  terminal's input buffer, so `read` consumes the following command as the
-  value. `curl` then ran with the command text as its credential. Hand such
-  blocks over as separate lines, and say to run them one at a time.
-
-* **Keep every line short enough not to wrap** -- roughly 70 characters. The
-  rewrite that collapsed the block into one long line wrapped in the reader's
-  terminal, and the copy carried the wraps as real newlines: `-d` lost its
-  parameter and the JSON body executed as a command. Once copied, a wrapped
-  line is indistinguishable from two lines.
-
-* **Never pipe a command's output straight into a parser.** Show the server's
-  own error. `KeyError: 'auth'` sent the operator nowhere; the
-  `{"errors":["permission denied"]}` it was hiding would have ended it in one
-  step. Same rule as making a 403 self-describing.
-
-* **A secret NEVER appears in a command the operator types.** Not as `export
-  TOKEN='...'`, not as a flag, not interpolated into a curl. It lands in shell
-  history and stays there. Prompt for it instead -- `read -rs`, `getpass`,
-  `stty -echo` -- or read it from a mode-600 file. Passing `$VAR` is fine:
-  history records the name, not the value. Where a tool already prompts, say
-  so and tell the operator NOT to set the variable, because helpfully
-  exporting it first is the exact mistake this prevents. Brian, 2026-08-20, on
-  being handed `export VAULT_TOKEN='<paste the new token>'`: *"Never have a
-  script asking me to paste a token into the command that will appear in the
-  shell history."*
-
-* **Check whether the recipe already exists** before writing one. This command
-  was already documented in another repo -- four short lines using that
-  service's CLI, no parsing at all -- and was reinvented as a `curl` pipeline
-  to save one `ssh`. Every problem above was downstream of that invention.
-
-**And when a handoff fails, fix the handoff.** The reflex to escalate --
-script, make target, tests, PR -- produces something that works while putting
-a one-off procedure permanently into a repo that does not own it, duplicating
-the recipe of the repo that does. Brian, 2026-08-20, on merging exactly that:
-*"having a one-off make target there forever is also not ideal. You could just
-have said to paste the commands line by line."* Ask first whether the handoff
-was malformed, not whether the operation was under-tooled.
-See bdh-org/dev-common#218.
+- **One line at a time whenever anything prompts.** A `read` consumes the next pasted line as its
+  value. (A single `&&` chain is fine; `sudo`/`ssh` prompts read the tty.)
+- **Keep lines under ~70 characters** — a wrapped line copies as two.
+- **Never pipe output straight into a parser** — show the server's own error.
+- **A secret NEVER appears in a command the operator types** — not `export TOKEN='…'`, not a flag.
+  Prompt (`read -rs`) or read a mode-600 file; `$VAR` is fine. Where a tool already prompts, tell
+  him NOT to set the variable (Brian, 2026-08-20: *"Never have a script asking me to paste a token
+  into the command"*).
+- **Check whether the recipe already exists** in the repo that owns it before writing one.
+- **When a handoff fails, fix the handoff** — not by adding a permanent one-off script or make
+  target to a repo that does not own the operation (bdh-org/dev-common#218).
 
 ## Package Management
 - Install packages with `conda` (conda-forge) into the dev environment when possible.
 - Use `pip` only as a fallback when a package is not available on conda-forge.
 - Flag potential conflicts when mixing pip and conda in the same environment.
 
-## Stack Architecture Patterns
-
-These are generic pattern *definitions* — the shared vocabulary for how a stack
-built on this tooling is wired. Each stack's concrete instances (primary repo,
-service names, shared network, hosts) live in that stack's
-`stack-common/CLAUDE.md`, included alongside this file.
-
-### P1: Primary repo
-Primary/edge repo for a stack. Two hats:
-- **Orchestrator**: owns `docker-compose.yml`, is the entry point for
-  `prod-deploy-all`, and aggregates service versions at build time (P8).
-- **Web edge**: ships an Apache container (its own `Dockerfile`) that
-  serves static HTML, mounts P2b static sites into its docroot, and
-  reverse-proxies P2a services via vhost config.
-
-Has no Python application code of its own, so it does NOT use the shared
-Python CI workflow (`common/.github/workflows/ci.yml`) — ruff + pytest
-don't apply. A P1-shaped CI (compose config validation, vhost syntax
-checks, hadolint) is optional and bespoke. See stack-common for this
-stack's primary repo.
-
-### P2a: Full service
-Long-running container (API, dashboard) with its own Dockerfile, served via
-Apache vhost proxy. See stack-common for this stack's services.
-
-### P2b: Static site
-Built frontend assets (no container of its own). The primary repo's
-Apache container mounts the build output into its docroot via
-`docker-compose.yml` (e.g. `../<site>/dist:/usr/local/apache2/<site>:ro`).
-See stack-common for this stack's static sites.
-
-### P2c: Data service
-Postgres (or similar DB) container whose primary deliverable is
-**schema + seed data**, not application code. Shape:
-- Base image is a DB image (e.g. `postgres:16-alpine`), not Python.
-- `schema/*.sql` and `seed/` copied into `docker-entrypoint-initdb.d/`.
-- Makefile targets are operational (`build/up/down/reset/psql/logs/
-  backup/restore`), not `run/test`.
-- CI is bespoke: build the image, wait for seed, run shell tests
-  against the running container — the shared Python CI workflow
-  doesn't apply.
-- No `conda-packages.txt`, `ruff.toml`, `requirements-prod.txt`, or
-  `src/` tree. Devcontainer uses a non-Python base image with
-  `docker-outside-of-docker` so the dev can build and run the service.
-
-P2c repos are not currently scaffolded from `devtemplate` cleanly — see
-`brianholland/devtemplate#15` for the `devtemplate-db` sibling template
-that will. Until that exists, P2c repos don't track
-`DEVTEMPLATE_VERSION`. See stack-common for this stack's data services.
-
-### P3: Submodule hierarchy
-Two-tier shared infrastructure via git submodules:
-- `common/` (dev-common) — dev tooling used by all projects across every
-  stack: version.mk, python.mk, utils.mk, devcontainer.mk, devcontainer
-  setup scripts (incl. generic `claude-prod` / `claude-dev` shims that read
-  host config from env), and shared Claude Code skills (P14).
-- `stack-common/` — stack-specific: deploy.mk, airflow.mk,
-  `devcontainer/setup-stack-hosts.sh` (writes a `/etc/profile.d` entry setting
-  CLAUDE_PROD_HOST / CLAUDE_DEV_HOST and any other stack-specific env), and the
-  stack's `CLAUDE.md`. Has dev-common as a nested submodule.
-
-All repos include both with `-include` (tolerates missing submodules on fresh
-clone). A repo's `CLAUDE.md` likewise includes `@common/CLAUDE.md` and, when
-present, `@stack-common/CLAUDE.md`. By convention the stack-common repo is
-named `<stack>-stack-common` (e.g. `fra-stack-common`); the mount path is
-always `stack-common/`, so member wiring never depends on the repo name.
-
-### P4: Conda-dev / pip-prod dependency split
-Development and production use different package managers:
-- **Dev**: `conda-packages.txt` installed via conda in the devcontainer.
-- **Prod**: `requirements-prod.txt` installed via pip in the Dockerfile.
-- **Bridge**: `make requirements` (python.mk) generates `requirements-prod.txt`
-  by scanning imports and pinning to versions from the active conda environment.
-
-Never delete one thinking it duplicates the other — they serve different purposes.
-
-### P5: Service composition via extends
-The primary repo's `docker-compose.yml` uses `extends` to pull service
-definitions from stub files in each service's directory
-(e.g. `./<svc>/docker-compose.stub.yml`). All services join the stack's
-shared bridge network (named in stack-common).
-
-### P6: Service discovery
-Services find each other by container name on the stack's shared Docker
-network. Environment variables pass these URLs to services that need them
-(one endpoint var per upstream). See stack-common for the network name and
-concrete service endpoints.
-
-### P7: DAG management
-DAGs live in each service's `dags/` directory. `make dags-install` (airflow.mk)
-copies them to the central Airflow DAGs directory. `make dags-reserialize`
-triggers Airflow to reload. `prod-deploy-all` runs both for every service that
-has a `dags/` directory. Services with DAGs typically also have a Dockerfile
-for the container that DAG tasks call into.
-
-### P8: Version propagation
-Each repo has `VERSION=x.y.z` in its Makefile. The primary repo extracts
-service versions at build time and exports them as environment variables for
-docker-compose image tagging. `make bump-patch` increments and auto-commits.
-The `tag-version.yml` workflow (reusable from dev-common) creates git tags
-on push to main.
-
-One known failure: if a commit touching `.github/workflows/` lands on main
-next to a bump merge, the tag push is rejected ("without `workflows`
-permission") because GitHub checks a new ref's workflow files against the
-default branch. `GITHUB_TOKEN` can never hold `workflows`, so re-running does
-not help — push the tag by hand with a PAT pointing at the bump commit. The
-tag step prints this remediation itself; see dev-common's README
-(bdh-org/dev-common#122).
-
-### P9: Devcontainer setup chain
-Four sequential steps initialize the development environment:
-1. `init-host.sh` — runs on HOST: creates credential dirs, extracts macOS
-   Keychain tokens.
-2. `setup-base.sh` — installs Miniforge, tmux, shell config, git aliases.
-3. `setup-python-dev.sh` — conda dev tools (ruff, pytest, jupyter) + project
-   packages from `conda-packages.txt`.
-4. `setup-claude.sh` — Claude Code CLI + shared skills (P14).
-
-Repos without a Python environment skip step 3:
-- P1 — orchestrator + Apache, no Python app code.
-- P2c — DB service, no Python env in the container.
-
-### P10: Production deployment (runner-on-merge)
-Merging to main IS the production deploy. The repo's `ci-build` workflow
-(self-hosted runner) builds a SHA-tagged image, pushes it to the stack's
-registry, and triggers the deploy wrapper on the prod host
-(`ssh deploy@<host> "<svc> <sha>"`), which runs the stack's deploy script
-as the scoped prod service user: pull the image, restart the container,
-deliver the image-baked `dags/` (P7).
-
-`make prod-deploy` (stack deploy.mk) is a thin force-redeploy escape
-hatch — it re-triggers `ci-build` via `gh workflow run`, normally
-unnecessary. The primary repo's `prod-deploy-all` loops it over every
-service (fleet bring-up / DR); P2b static sites override `prod-deploy`
-to host-build and rsync their `dist/` instead of riding the runner.
-
-`dev-deploy-all` is the manually driven parallel for the dev tier; see
-P12. Its git operations use `git_retry` (make define/call macro) — 5
-attempts with 10s backoff to handle transient DNS failures (Tailscale
-MagicDNS).
-
-### P11: Project scaffolding (devtemplate)
-New repos are created by cloning `devtemplate`, which embeds the standard
-patterns: dev-common submodule, conda-packages.txt, ruff.toml, devcontainer
-setup chain, Makefile includes. Run `make init` after renaming the directory
-to finalize the scaffold.
-
-For Postgres-backed data services (P2c), use the future `devtemplate-db`
-sibling template instead — see `brianholland/devtemplate#15`. Future
-`devtemplate-primary` (P1) and `devtemplate-stack-common` siblings are
-tracked at `brianholland/devtemplate#24` and `#25`.
-
-### P12: Dev tier on a parallel host
-A pre-prod environment that mirrors prod's service set on a separate
-host (typically the host that runs the developer's devcontainer).
-Validates cross-service wiring before promoting to prod.
-
-Shape, parallel to P10:
-- `dev-deploy-all` SSHes to `$(DEV_SERVER)` (default set by the stack, overridable),
-  runs `dev-bootstrap && dev-up` on that host.
-- `dev-bootstrap` is idempotent: copies missing per-service `.env` from
-  `.env.example`, seeds host-local data files (e.g. hog's tensor.duckdb)
-  for things that can't ride the live NFS mount because of file locks.
-- `dev-up` runs `docker compose up -d --build` *without* `--profile airflow`,
-  so airflow services are skipped at parse time. (Prod's `up` passes
-  `--profile airflow` to bring them up.)
-- DAG installation is omitted on dev (no Airflow). Cross-service writes
-  driven by DAGs propagate from prod into dev "for free" through the
-  shared NFS mount of prod data.
-
-Apache vhost on the dev host accepts both prod and dev ServerAlias entries —
-same image runs on both hosts; only the hostname differs. See stack-common
-for the concrete host names and DNS suffixes.
-
-### P13: Scoped Claude Code identities
-Each tier has a constrained `claude` SSH user — `claude-prod` on prod,
-`claude-dev` on dev — with:
-- Verb-allowlisted SSH wrapper (`/usr/local/bin/claude-prod` /
-  `claude-dev`), forced via `command="..."` in `authorized_keys`.
-- POSIX ACL grant for read-only access to a data path (or, on NFS clients
-  reading server-side ACLs, group membership with the matching numeric GID).
-- Sudoers entry for a specific docker-helper script that runs as root and
-  re-validates inputs.
-
-Devcontainer shims at `/usr/local/bin/claude-{prod,dev}` (installed by
-`setup-claude.sh`) are host-portable: they SSH to whatever host the env
-vars `CLAUDE_PROD_HOST` / `CLAUDE_DEV_HOST` name. stack-common's
-`setup-stack-hosts.sh` writes those env vars at `/etc/profile.d` so they
-survive devcontainer rebuilds.
-
-Source for the wrappers + install docs lives in the stack's **infra/architect**
-repo at `claude-access/` — not the primary repo. These are host-provisioning
-scripts: they install to `/usr/local/bin` and `/etc` on the prod host as root,
-and a primary repo neither builds nor ships them, so carrying them there puts
-undeployed root-installed code inside a deployable service. The infra repo is
-also where the rest of the host provisioning lives, including the ACL grant for
-the reader these wrappers authenticate.
-
-One consequence to plan for: the infra repo is typically NOT synced to the prod
-host (being non-operational, it is not one of the deployed siblings), so the
-install cannot read from a checkout there. Deliver by push-rsync from the dev
-host instead — stage unprivileged, install as root, remove the staging dir.
-
-### P14: Shared Claude Code skills
-Reusable Claude Code skills live in `dev-common/skills/<name>/SKILL.md`
-(version-controlled, one source of truth). `setup-claude.sh` exposes each as a
-**project-level** skill via a per-repo *relative* symlink
-(`<repo>/.claude/skills/<name>` -> `../../common/skills/<name>`), so they are
-available in every repo's Claude Code session, live-update through
-`update-common` (the submodule bump — no copy, no rebuild), and never collide
-across containers that share one host `~/.claude`. (They are deliberately NOT
-symlinked into `~/.claude/skills/`: that dir is bind-mounted from the host into
-every container, so workspace-absolute links there are last-writer-wins and
-dangle in all but the most-recently-set-up container.) Current skills: `ship` (end-to-end
-issue -> PR -> squash-merge -> cleanup), `update-common` (bump the dev-common
-submodule across repos), `incorporate-devtemplate` (diff repos against
-devtemplate, file issues), `verification-discipline` (write checks and tests
-that ask the data what it holds rather than asserting what it ought to),
-`watch` (cheap exit-early polling for `/loop` ticks — pinned to a small model
-via `model:` frontmatter, one probe per tick, escalates to a summary only when
-the watched thing goes red). `make incorporate-devtemplate` is a signpost that
-points at the skill — the work needs human judgment, so there is no
-fully-automated target.
+## Stack Architecture Patterns — index (definitions: `common/docs/stack-patterns.md`)
+Generic pattern vocabulary; each stack's concrete instances are in its `stack-common/CLAUDE.md`.
+**Read the definition before relying on a pattern's details.**
+- **P1 Primary repo** — orchestrator (`docker-compose.yml`, `prod-deploy-all`, version
+  aggregation) + Apache web edge. No Python app code, so not the shared Python CI.
+- **P2a Full service** — long-running container behind the Apache vhost proxy.
+- **P2b Static site** — built `dist/` mounted into the primary's docroot.
+- **P2c Data service** — DB image whose deliverable is schema + seed; operational Makefile, bespoke CI.
+- **P3 Submodule hierarchy** — `common/` (dev-common, every stack) + `stack-common/` (per stack,
+  nests dev-common); both `-include`d and `@`-included; mount path always `stack-common/`.
+- **P4 Conda-dev / pip-prod split** — `conda-packages.txt` vs `requirements-prod.txt`, bridged by
+  `make requirements`. Never delete one as a duplicate.
+- **P5 Compose via extends** — primary's compose extends `<svc>/docker-compose.stub.yml`.
+- **P6 Service discovery** — container names on the stack's shared network; one endpoint env var per upstream.
+- **P7 DAG management** — `dags/` per service; `make dags-install` / `dags-reserialize`.
+- **P8 Version propagation** — `VERSION=` in each Makefile; `make bump-patch`; `tag-version.yml`
+  tags on push (a workflow-file commit beside a bump breaks the tag push — see the doc).
+- **P9 Devcontainer setup chain** — `init-host.sh` → `setup-base.sh` → `setup-python-dev.sh` →
+  `setup-claude.sh`; P1/P2c skip the Python step.
+- **P10 Runner-on-merge deploy** — **merging to main IS the production deploy**; `make
+  prod-deploy` is a force-redeploy escape hatch.
+- **P11 Scaffolding** — new repos come from `devtemplate` (`make init`).
+- **P12 Dev tier** — `dev-deploy-all` on a parallel host, no Airflow.
+- **P13 Scoped Claude identities** — `claude-prod` / `claude-dev` verb-allowlisted SSH wrappers;
+  source lives in the stack's infra repo at `claude-access/`.
+- **P14 Shared skills** — `dev-common/skills/<name>/SKILL.md`, exposed per repo by relative symlink
+  from `setup-claude.sh`; they update through the `common` bump.
