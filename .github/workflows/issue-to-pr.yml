@@ -62,7 +62,8 @@ jobs:
       (github.event_name == 'issue_comment' &&
       github.event.issue.pull_request == null &&
       startsWith(github.event.comment.body, '/agent') &&
-      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
+      (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) ||
+      github.event.comment.user.login == 'bdh-org-headful[bot]'))
     uses: bdh-org/dev-common/.github/workflows/agent-issue-to-pr.yml@main
     with:
       # no deployable dev tier -> no gate, no agent-deploy auto-merge

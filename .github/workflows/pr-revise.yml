@@ -36,6 +36,7 @@ jobs:
     if: >
       github.event.issue.pull_request != null &&
       startsWith(github.event.comment.body, '/revise') &&
-      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
+      (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) ||
+      github.event.comment.user.login == 'bdh-org-headful[bot]')
     uses: bdh-org/dev-common/.github/workflows/agent-pr-revise.yml@main
     secrets: inherit
