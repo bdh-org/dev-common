@@ -37,59 +37,62 @@
 #   fixed from a workflow. REVERSAL TRIGGER: if agent throughput becomes the
 #   bottleneck, give each runner unit its own HOME on forge and delete this.
 #
+# WHERE IT IS HELD (bdh-org/home-infra#881)
+#
+#   ../claude-code-install/install.sh takes it, installs, copies the binary
+#   somewhere private, and releases -- seconds, or one download. It used to be
+#   taken before anthropics/claude-code-action and released after it, which held
+#   it for the whole agent run and serialised the fleet to one agent at a time:
+#   runs waited 21, 46 and 64 minutes holding a runner unit, and the 64-minute one
+#   outlived its App token and died on "Bad credentials" (dev-common#257). The
+#   acquire/release modes remain for any caller that genuinely needs to span two
+#   steps; neither agent workflow does any more.
+#
 # WHY mkdir AND NOT flock
 #
-#   The lock has to span two workflow STEPS (acquire, then the action itself),
-#   and each step is a separate shell -- a flock held by the first process is
-#   gone before the second starts. `mkdir` is atomic on a local filesystem and
-#   outlives the process, which is exactly the property needed.
+#   The lock may have to span two workflow STEPS (acquire, then the thing it
+#   protects), and each step is a separate shell -- a flock held by the first
+#   process is gone before the second starts. `mkdir` is atomic on a local
+#   filesystem and outlives the process, which is exactly the property needed.
+#   install.sh holds it within one process, but it shares this lock with any
+#   older caller, so the mechanism stays the same.
 #
 # THE STALE CASE
 #
-#   A hard-killed job never runs its release step, so a lock can outlive its
-#   holder and would otherwise wedge the pipeline permanently. Anything older
-#   than LOCK_STALE_SECONDS is stolen, loudly. Release is OWNER-CHECKED so the
+#   A hard-killed job never runs its release, so a lock can outlive its holder
+#   and would otherwise wedge the pipeline permanently. Anything older than
+#   LOCK_STALE_SECONDS is stolen, loudly. Release is OWNER-CHECKED so the
 #   original holder returning late cannot delete the thief's lock and leave two
 #   runs installing at once -- which would be this bug again, harder to see.
 #
-# THE ORDERING INVARIANT: job timeout < STALE < WAIT
+# THE ORDERING INVARIANT: holder's step timeout < STALE < WAIT
 #
-#   These three numbers only work as a set, and the first version got the order
-#   backwards: WAIT was 1500 (25min) under STALE 3600 (1h). A waiter therefore
-#   had to arrive when the lock was ALREADY older than 2100s to reach the steal
-#   path at all -- any waiter arriving in the first 35 minutes of a long hold
-#   died instead. The steal case above was, for the common arrival, unreachable.
+#   These numbers only work as a set. The first version got the order backwards
+#   -- WAIT 1500 under STALE 3600 -- so a waiter arriving in the first 35 minutes
+#   of a long hold died instead of reaching the steal path (measured 2026-09-12,
+#   bdh-org/home-infra#881: a /revise would have given up 33 seconds before the
+#   lock became stealable). Each number guards the next one down:
 #
-#   Measured on 2026-09-12 (bdh-org/home-infra#881): a healthy agent run held
-#   the lock from 19:12:05 while it worked issue #874. The next run waited
-#   19:12:54 -> 19:37:56, exactly 1500s, and FAILED with claude-code-action
-#   skipped -- a red run about an issue it never touched. A `/revise` on PR #821
-#   queued behind it would have given up at 20:11:32, when the lock became
-#   stealable at 20:12:05. It missed by 33 seconds.
+#     * the install step's `timeout-minutes` (10) bounds how long a holder holds;
+#     * STALE (15min) sits above that, so a slow-but-alive install is never
+#       stolen from -- only a lock that outlived the step that created it;
+#     * WAIT (20min) sits above STALE, so a waiter always reaches the steal path
+#       rather than timing out first.
 #
-#   Ordered the other way the failure mode disappears, because each number now
-#   guards the next one down:
+#   While the lock spanned the agent run these were 90min / 100min / 110min, so a
+#   runner crash cost every later agent run up to 100 minutes. Scoped to the
+#   install, a crashed holder costs 15.
 #
-#     * the agent job's `timeout-minutes` bounds how long ANY holder can hold;
-#     * STALE sits above that, so a slow-but-alive holder is never stolen from
-#       -- only one that outlived the job that created it (a runner crash,
-#       where no release step ever ran);
-#     * WAIT sits above STALE, so a waiter always reaches the steal path rather
-#       than timing out first.
-#
-#   The cost is that a waiter can occupy a runner unit for up to WAIT. That is
-#   the right trade while the lock is held across the whole agent run: the
-#   fleet's agent throughput is 1 either way, so a waiting unit is not work
-#   being displaced, and a wait ends in the PR being revised instead of a red
-#   run. Rescoping the lock to the install alone -- which is what it is named
-#   for, and which would restore real parallelism -- is home-infra#881.
+#   A holder from a workflow that predates the rescope (in flight when it
+#   merged) can be stolen from after 15 minutes. That is harmless: its install
+#   finished in its first minute, and its late release is owner-checked.
 #
 # ENV:
 #   LOCK_MODE           acquire | release          (required)
 #   LOCK_OWNER          identity written into the lock (required for acquire)
 #   LOCK_DIR            default "$HOME/.claude/install.lock.d"
-#   LOCK_WAIT_SECONDS   give up waiting after this (default 6600 = 110min)
-#   LOCK_STALE_SECONDS  steal a lock older than this (default 6000 = 100min)
+#   LOCK_WAIT_SECONDS   give up waiting after this (default 1200 = 20min)
+#   LOCK_STALE_SECONDS  steal a lock older than this (default 900 = 15min)
 #   LOCK_POLL_SECONDS   how often to retry (default 10)
 #
 # EXIT: 0 acquired/released (or nothing to release); 1 timed out or misused.
@@ -99,8 +102,8 @@ set -uo pipefail
 MODE="${LOCK_MODE:-}"
 LOCK="${LOCK_DIR:-${HOME:?HOME is unset and LOCK_DIR was not given}/.claude/install.lock.d}"
 OWNER_FILE="$LOCK/owner"
-WAIT="${LOCK_WAIT_SECONDS:-6600}"
-STALE="${LOCK_STALE_SECONDS:-6000}"
+WAIT="${LOCK_WAIT_SECONDS:-1200}"
+STALE="${LOCK_STALE_SECONDS:-900}"
 POLL="${LOCK_POLL_SECONDS:-10}"
 
 # Actions renders ::error:: / ::warning:: as annotations; elsewhere they are

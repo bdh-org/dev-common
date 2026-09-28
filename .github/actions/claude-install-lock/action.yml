@@ -2,9 +2,10 @@ name: Claude Code install lock
 description: >
   Serialize the Claude Code CLI install across every self-hosted runner unit
   sharing one HOME, so two concurrent agent runs cannot corrupt each other's
-  download (bdh-org/home-infra#541). Call once with mode=acquire immediately
-  before anthropics/claude-code-action, and once with mode=release and
-  `if: always()` immediately after.
+  download (bdh-org/home-infra#541). The agent workflows no longer call this
+  directly: ../claude-code-install takes the same lock around the install
+  alone (bdh-org/home-infra#881). For a caller that must span steps, call once
+  with mode=acquire and once with mode=release and `if: always()`.
 
 # A COMPOSITE ACTION, deliberately -- not an embedded `run:` block.
 #
@@ -32,15 +33,15 @@ inputs:
       than stale-seconds, or the steal path is unreachable to a waiter and it
       fails instead of using it (bdh-org/home-infra#881).
     required: false
-    default: "6600"
+    default: "1200"
   stale-seconds:
     description: >
       Steal a lock older than this (a job killed mid-run cannot release its
-      own). MUST be greater than the agent job's timeout-minutes, so a holder
-      that is merely SLOW is never stolen from -- only one that has outlived
-      the job that created it.
+      own). MUST be greater than the holding step's timeout-minutes (the
+      install step's 10), so a holder that is merely SLOW is never stolen from
+      -- only one that has outlived the step that created it.
     required: false
-    default: "6000"
+    default: "900"
   lock-dir:
     description: "Override the lock path (tests use this; leave empty for $HOME/.claude/install.lock.d)"
     required: false

@@ -1,0 +1,58 @@
+name: Claude Code install (under the host-wide install lock)
+description: >
+  Install the Claude Code CLI version that anthropics/claude-code-action pins,
+  holding the host-wide install lock ONLY for the install, and hand back a
+  private copy of the binary for `path_to_claude_code_executable`. The agent
+  run itself then needs no lock, so agent runs on one forge host overlap again
+  (bdh-org/home-infra#881). Outputs `path` and `version`.
+
+# WHY THIS EXISTS (bdh-org/home-infra#881)
+#
+# The lock in ../claude-install-lock serialises the CLI install, because forge's
+# runner units share one HOME and the installer hardcodes $HOME/.claude/downloads
+# (bdh-org/home-infra#541). It used to be acquired before claude-code-action and
+# released after it -- so it was held for the WHOLE agent run (15-45 min), and the
+# fleet ran one agent at a time: runs sat in "Wait for the Claude Code install
+# lock" for 21 and 46 minutes, holding a runner unit and doing nothing, and one
+# waited 64 minutes and outlived its App token (bdh-org/dev-common#257).
+#
+# claude-code-action installs the CLI itself, INSIDE its one long step, so the
+# lock could not end where the install does. `path_to_claude_code_executable`
+# makes the action skip its install; this action does the install instead, so
+# the critical section is this step and nothing else. See install.sh for why the
+# binary handed back is a private COPY and how the version is kept identical to
+# the one the action would have installed.
+#
+# A composite action for the same reason as claude-install-lock: a reusable
+# workflow's `run:` steps execute against the CALLER's checkout, where this
+# repo's scripts do not exist; an action is fetched from this repo by ref.
+
+inputs:
+  version:
+    description: >
+      Claude Code version to install. Leave empty to use the version the
+      downloaded anthropics/claude-code-action@v1 pins (read from its source on
+      the runner), which is what the action would have installed itself.
+    required: false
+    default: ""
+
+outputs:
+  path:
+    description: "Absolute path to a private copy of the installed claude binary"
+    value: ${{ steps.install.outputs.path }}
+  version:
+    description: "The version that was installed"
+    value: ${{ steps.install.outputs.version }}
+
+runs:
+  using: composite
+  steps:
+    - id: install
+      shell: bash
+      env:
+        CLAUDE_CODE_VERSION: ${{ inputs.version }}
+        # Same owner format as claude-install-lock, so a waiter's "held by" line
+        # names the run whichever of the two actions took the lock.
+        LOCK_OWNER: ${{ format('{0}#{1} ({2})', github.repository, github.run_id, github.job) }}
+        LOCK_SH: ${{ github.action_path }}/../claude-install-lock/lock.sh
+      run: bash "${{ github.action_path }}/install.sh"

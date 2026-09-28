@@ -59,7 +59,7 @@ trap 'rm -rf "$TMP"' EXIT
 LOCK="$TMP/install.lock.d"
 
 # Run lock.sh with a throwaway lock dir and impatient timings, so the whole
-# suite stays sub-second. The defaults it ships with (110min wait, 100min stale)
+# suite stays sub-second. The defaults it ships with (20min wait, 15min stale)
 # are for a real forge run and would make this test useless as a gate. The
 # shipped values are asserted separately, below, as an ORDERING.
 run_lock() { # mode owner [extra env assignments...]
@@ -146,50 +146,62 @@ assert_eq "1" "$?" "acquire without an owner fails"
 assert_contains "$out" "LOCK_OWNER" "and names what was missing"
 
 # --- the wiring, which is the half that silently does nothing --------------
+#
+# Since bdh-org/home-infra#881 the lock is taken by the claude-code-install
+# action around the install ALONE, and claude-code-action is handed the binary
+# it produced. The wiring that matters is therefore:
+#
+#   - the install step exists and runs BEFORE claude-code-action;
+#   - claude-code-action is given its path, so it does not install again --
+#     unlocked, inside its own long step, which would be #541 back;
+#   - nothing acquires the lock across the agent step any more (that is what
+#     serialised the fleet to one agent at a time);
+#   - the agent's GitHub token is minted AFTER the install, so no wait before it
+#     can age the token past its 60 minutes (bdh-org/dev-common#257).
 
 for wf in "$WF_ISSUE" "$WF_REVISE"; do
   CASE="wiring $(basename "$wf")"
   if [ ! -f "$wf" ]; then notok "workflow is missing at $wf"; continue; fi
   body="$(cat "$wf")"
-  assert_contains "$body" "claude-install-lock@main" "calls the lock action"
-  assert_contains "$body" "mode: acquire" "acquires"
-  assert_contains "$body" "mode: release" "releases"
+  assert_contains "$body" "claude-code-install@main" "calls the install action"
+  assert_contains "$body" 'path_to_claude_code_executable: ${{ steps.claude_cli.outputs.path }}' \
+    "hands claude-code-action the installed binary, so it skips its own unlocked install"
+  assert_absent "$body" "mode: acquire" "does not hold the lock across the agent step"
 
-  # Order matters: acquire ABOVE the action, release BELOW it. A release above
-  # the action would free the lock before the install it is protecting.
-  acq=$(grep -n "mode: acquire" "$wf" | head -1 | cut -d: -f1)
+  inst=$(grep -n "uses: bdh-org/dev-common/.github/actions/claude-code-install@main" "$wf" | head -1 | cut -d: -f1)
   act=$(grep -n "uses: anthropics/claude-code-action" "$wf" | head -1 | cut -d: -f1)
-  rel=$(grep -n "mode: release" "$wf" | head -1 | cut -d: -f1)
-  if [ -n "$acq" ] && [ -n "$act" ] && [ "$acq" -lt "$act" ]; then
-    ok "acquires BEFORE claude-code-action"
+  if [ -n "$inst" ] && [ -n "$act" ] && [ "$inst" -lt "$act" ]; then
+    ok "installs BEFORE claude-code-action"
   else
-    notok "acquire is not before claude-code-action (acquire=$acq action=$act)"
+    notok "install is not before claude-code-action (install=$inst action=$act)"
   fi
-  if [ -n "$rel" ] && [ -n "$act" ] && [ "$rel" -gt "$act" ]; then
-    ok "releases AFTER claude-code-action"
+  inst_id=$(grep -n "id: claude_cli" "$wf" | head -1 | cut -d: -f1)
+  if [ -n "$inst_id" ] && [ -n "$inst" ] && [ "$inst_id" -lt "$inst" ] && [ $(( inst - inst_id )) -le 4 ]; then
+    ok "the install step carries id claude_cli, which the action's path refers to"
   else
-    notok "release is not after claude-code-action (release=$rel action=$act)"
+    notok "no 'id: claude_cli' on the install step (id=$inst_id uses=$inst)"
   fi
 
-  # The release must be unconditional. Without `if: always()` a failed or
-  # cancelled agent run leaves the lock behind, and every later run pays the
-  # full stale timeout before it can proceed.
-  #
-  # Anchor on the step's NAME, not on `mode: release`: `if:` sits above `with:`
-  # in a step, so a window opened at the mode line looks past the condition it
-  # is checking for and reports a correctly-wired workflow as broken.
-  rel_name=$(grep -n "name: Release the Claude Code install lock" "$wf" | head -1 | cut -d: -f1)
-  if [ -z "$rel_name" ]; then
-    notok "no step named 'Release the Claude Code install lock'"
+  # The token the agent uses must come from a mint that runs after the install,
+  # i.e. after anything that can wait.
+  mint=$(grep -n "id: coder_agent" "$wf" | head -1 | cut -d: -f1)
+  if [ -n "$mint" ] && [ -n "$inst" ] && [ -n "$act" ] && [ "$mint" -gt "$inst" ] && [ "$mint" -lt "$act" ]; then
+    ok "mints the agent's token between the install and the agent (dev-common#257)"
   else
-    rel_block="$(sed -n "${rel_name},\$p" "$wf" | head -8)"
-    assert_contains "$rel_block" "always()" "the release runs even when the agent step failed"
+    notok "the agent's token mint is not between install and agent (install=$inst mint=$mint action=$act)"
   fi
+  act_block="$(sed -n "${act:-1},\$p" "$wf" | head -60)"
+  assert_contains "$act_block" 'github_token: ${{ steps.coder_agent.outputs.coder_token }}' \
+    "claude-code-action gets the freshly minted token"
+  assert_contains "$act_block" 'GH_TOKEN: ${{ steps.coder_agent.outputs.coder_token }}' \
+    "and so does the agent's own shell"
+  assert_absent "$act_block" 'steps.coder.outputs.coder_token' \
+    "and never the job-start token"
 done
 
-# --- the ordering invariant: job timeout < stale < wait ---------------------
+# --- the ordering invariant: install step timeout < stale < wait ------------
 #
-# These three numbers are only correct as a SET, and the first version had them
+# These numbers are only correct as a SET, and the first version had them
 # in the wrong order (wait 1500 under stale 3600). Nothing was red: the lock
 # worked, the tests passed, and the defect only showed as agent runs failing
 # after 25 minutes about issues they had never touched (home-infra#881). So the
@@ -234,23 +246,31 @@ else
   fi
 fi
 
-# The agent jobs must bound their own hold, and bound it below the steal window,
-# so a hung holder is killed (releasing on `if: always()`) while a slow-but-alive
-# one is never stolen from. No timeout at all means GitHub's 6-hour default.
+# The holder of the lock is now the install step, so ITS timeout is the first
+# term of the ordering: a hung install is killed (its EXIT trap releases) well
+# before the lock goes stale, and a slow-but-alive one is never stolen from.
+# No step timeout would mean the job's 90 minutes, far above the stale window.
 for wf in "$WF_ISSUE" "$WF_REVISE"; do
   CASE="timings $(basename "$wf")"
   if [ ! -f "$wf" ]; then notok "workflow is missing at $wf"; continue; fi
-  tmo="$(sed -n 's/^    timeout-minutes:[[:space:]]*\([0-9]*\).*/\1/p' "$wf" | head -1)"
+  inst=$(grep -n "uses: bdh-org/dev-common/.github/actions/claude-code-install@main" "$wf" | head -1 | cut -d: -f1)
+  name=$(grep -n "name: Install Claude Code" "$wf" | head -1 | cut -d: -f1)
+  tmo=""
+  if [ -n "$inst" ] && [ -n "$name" ]; then
+    tmo="$(sed -n "${name},${inst}p" "$wf" | sed -n 's/^[[:space:]]*timeout-minutes:[[:space:]]*\([0-9]*\).*/\1/p' | head -1)"
+  fi
   if [ -z "$tmo" ]; then
-    notok "the agent job sets no timeout-minutes, so it can hold the lock for GitHub's 6h default"
+    notok "the install step sets no timeout-minutes, so it can hold the lock for the whole job"
   else
-    ok "the agent job bounds its own runtime (${tmo}m)"
+    ok "the install step bounds its own hold (${tmo}m)"
     if [ -n "${STALE_YML:-}" ] && [ "$(( tmo * 60 ))" -lt "$STALE_YML" ]; then
       ok "that timeout (${tmo}m) is below the steal window (${STALE_YML}s)"
     else
       notok "timeout ${tmo}m must be below stale ${STALE_YML:-?}s, or a live holder gets stolen from"
     fi
   fi
+  jt="$(sed -n 's/^    timeout-minutes:[[:space:]]*\([0-9]*\).*/\1/p' "$wf" | head -1)"
+  if [ -n "$jt" ]; then ok "the agent job still bounds its runtime (${jt}m)"; else notok "the agent job sets no timeout-minutes (GitHub's 6h default)"; fi
 done
 
 # --- report -----------------------------------------------------------------
