@@ -211,6 +211,8 @@ A **devcontainer** is the environment, a **session** is one Claude Code conversa
 one identity, so GitHub records nothing that tells them apart.
 - **Commits — automatic.** `setup-claude-identity.sh` writes a container-local `~/.gitconfig-role`
   setting `user.name` to `bdh-ai (architect)` or `bdh-ai (contractor/<repo>)` from `PROJECT_NAME`.
+  Where a repo wires the `devcontainer/claude-session-identity.sh` SessionStart hook, each session
+  also gets `, session <id>` (its transcript id), so concurrent sessions stay distinguishable.
 - **Never set `user.name`/`user.email` in a repo's `.git/config`** — checkouts are bind-mounted
   from the host, so it is shared with the human's own shell (bdh-org/home-infra#317). Fix
   `~/.gitconfig-role` instead.
