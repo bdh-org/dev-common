@@ -56,6 +56,11 @@ jobs:
       - name: setup-claude-identity.sh
         run: bash tests/setup-claude-identity.test.sh
 
+      # Sets the author name on every commit a Claude session makes, and loads in
+      # headless agent runs too, where it must do nothing (bdh-org/home-infra#755).
+      - name: claude-session-identity.sh (SessionStart hook)
+        run: bash tests/claude-session-identity.test.sh
+
       # The four below were on disk and ran in NO job -- only when a human typed
       # `make test`, which globs tests/*.test.sh and so hid the gap entirely. A test
       # that is never invoked cannot fail, which is the same shape as a detector

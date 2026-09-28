@@ -136,6 +136,22 @@ devcontainer and writes to a gitconfig shared by all of them, it is gated by
 `tests/setup-claude-identity.test.sh` on every PR — run it with `make test`
 before changing this script (bdh-org/dev-common#157).
 
+### claude-session-identity.sh
+
+A Claude Code **SessionStart hook**, not a setup script. The role name above is
+per container, and every session now shares one container, so it cannot tell
+two sessions apart (bdh-org/home-infra#755). This hook appends the session id
+to it for that session's commits, via the `CLAUDE_ENV_FILE` Claude Code applies
+before each Bash command:
+
+    bdh-ai (architect)  ->  bdh-ai (architect, session eea68fda)
+
+The id is the transcript's file name (`~/.claude/projects/*/eea68fda-*.jsonl`).
+It writes nothing in GitHub Actions (headless commits stay `bdh-org-coder[bot]`)
+or for a non-`bdh-ai` identity. Wire it synchronously in a repo's
+`.claude/settings.json` -- the header has the snippet. Gated by
+`tests/claude-session-identity.test.sh`.
+
 ## Package Files
 
 ### base-conda-packages.txt
