@@ -32,7 +32,14 @@ cat > "$STUB/curl" <<'STUBEOF'
 #!/usr/bin/env bash
 body=""; url=""
 while [ $# -gt 0 ]; do
-  case "$1" in -d) body="$2"; shift 2 ;; -H|-X|--max-time|--connect-timeout|--retry|--retry-delay) shift 2 ;; -*) shift ;; *) url="$1"; shift ;; esac
+  case "$1" in
+    -d) body="$2"; shift 2 ;;
+    # A credential on argv is the defect (dev-common#278): record it so the test fails.
+    -H) case "$2" in *Bearer*) printf '%s\n' "$2" >> "$STUB_STATE/argv_auth" ;; esac; shift 2 ;;
+    -K) grep -o 'Bearer [^"]*' "$2" >> "$STUB_STATE/k_auth" 2>/dev/null; shift 2 ;;
+    -X|--max-time|--connect-timeout|--retry|--retry-delay) shift 2 ;;
+    -*) shift ;; *) url="$1"; shift ;;
+  esac
 done
 case "$url" in
   */access_tokens)
@@ -84,6 +91,11 @@ out="$(STUB_TOTAL=0 "$MINT" --check 2>&1)"; rc=$?
 "$MINT" >/dev/null 2>&1; [ $? = 2 ] && ok || bad "no-arg rc not 2"
 "$MINT" nosuch >/dev/null 2>&1; [ $? = 2 ] && ok || bad "unknown org rc not 2"
 GH_APP_CONF="$TMP/none" "$MINT" bdh-org >/dev/null 2>&1; [ $? = 1 ] && ok || bad "missing conf rc not 1"
+
+
+# The Bearer credential reaches curl ONLY through -K, never on argv (dev-common#278).
+if [ ! -s "$TMP/argv_auth" ] && [ -s "$TMP/k_auth" ]; then ok
+else bad "a Bearer credential was passed on curl's argv: $(cat "$TMP/argv_auth" 2>/dev/null)"; fi
 
 printf 'gh-app-token.test: %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" = 0 ]
