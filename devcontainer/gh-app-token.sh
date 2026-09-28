@@ -69,17 +69,27 @@ jwt() {
   printf '%s.%s.%s' "$hdr" "$pld" "$sig"
 }
 
+# auth_curl <token> <curl args...> -- curl with "Authorization: Bearer <token>" read from
+# a -K config on a process substitution. printf is a builtin, so the credential is in no
+# process's argv; `-H "Authorization: Bearer $x"` put the JWT (which can mint for every
+# installed org) in curl's /proc/<pid>/cmdline, readable by anything in the container
+# (bdh-org/dev-common#278).
+auth_curl() {
+  local t="$1"; shift
+  curl -K <(printf 'header = "Authorization: Bearer %s"\n' "$t") "$@"
+}
+
 # missing_repos <org> <inst> <jwt> -- print the REPOS entries the installation cannot
 # reach. Uses an unnarrowed token internally, only to list names; it is never printed.
 missing_repos() {
   local org="$1" inst="$2" j="$3" wide
-  wide="$(curl -sS --max-time 30 -X POST -H "Authorization: Bearer $j" \
+  wide="$(auth_curl "$j" -sS --max-time 30 -X POST \
       -H "Accept: application/vnd.github+json" "$API/app/installations/$inst/access_tokens" \
     | python3 -c 'import sys,json
 try: print(json.load(sys.stdin).get("token",""))
 except Exception: print("")')"
   [ -n "$wide" ] || return 0
-  curl -sS --max-time 30 -H "Authorization: Bearer $wide" \
+  auth_curl "$wide" -sS --max-time 30 \
       "$API/installation/repositories?per_page=100" \
     | WANT="${REPOS[$org]}" python3 -c 'import sys,json,os
 have={r["name"] for r in json.load(sys.stdin).get("repositories",[])}
@@ -103,8 +113,8 @@ mint() {
   # 30s connect timeout did, 2026-09-25). curl's --retry covers timeouts and 5xx only --
   # a 401/403/422 is an answer and is not retried. A duplicate mint is harmless: tokens
   # are ~1h and nothing tracks them. Worst case ~66s, still under the JWT's 9 minutes.
-  resp="$(curl -sS --connect-timeout 10 --max-time 20 --retry 2 --retry-delay 3 -X POST \
-      -H "Authorization: Bearer $j" -H "Accept: application/vnd.github+json" \
+  resp="$(auth_curl "$j" -sS --connect-timeout 10 --max-time 20 --retry 2 --retry-delay 3 -X POST \
+      -H "Accept: application/vnd.github+json" \
       -d "$body" "$API/app/installations/$inst/access_tokens")" \
     || { printf 'gh-app-token: %s: GitHub unreachable\n' "$org" >&2; return 1; }
   tok="$(printf '%s' "$resp" | python3 -c 'import sys,json
@@ -135,7 +145,7 @@ fi
 rc=0
 for org in $(printf '%s\n' "${!INSTALL[@]}" | sort); do
   if ! tok="$(mint "$org")"; then rc=1; continue; fi
-  n="$(curl -sS --max-time 30 -H "Authorization: Bearer $tok" \
+  n="$(auth_curl "$tok" -sS --max-time 30 \
         "$API/installation/repositories?per_page=1" \
       | python3 -c 'import sys,json
 try: print(json.load(sys.stdin).get("total_count",0))
