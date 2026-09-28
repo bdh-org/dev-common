@@ -836,6 +836,12 @@ jobs:
           # which the script tolerates by falling back to the API-only classification.
           AGENT_CONCLUSION: ${{ steps.agent.outputs.conclusion }}
           EXECUTION_FILE: ${{ steps.agent.outputs.execution_file }}
+          # The agent STEP's outcome. The action writes no `conclusion` when it dies in
+          # its prepare phase -- where an expired coder App token kills it -- so without
+          # this the reporter cannot tell "the agent step failed before its first turn"
+          # from "a step before the agent failed" (bdh-org/home-infra#1120). An older
+          # reporter ignores it; a newer one without it behaves as before.
+          AGENT_OUTCOME: ${{ steps.agent.outcome }}
           MAX_TURNS: ${{ steps.budget.outputs.turns }}
           # Empty on the `/agent` comment path -- that run carries no label to clear.
           TRIGGER_LABEL: ${{ github.event.label.name }}
