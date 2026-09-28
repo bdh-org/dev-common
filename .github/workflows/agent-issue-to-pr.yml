@@ -186,14 +186,11 @@ jobs:
     # which is indistinguishable from a busy fleet (finzeug/ratecraft sat 22h that way).
     # Re-run that probe (`forge-runner-labels.yml`) before changing this line again.
     runs-on: [self-hosted, forge-agent]
-    # Bounds how long this job can hold the Claude Code install lock. Without it the
-    # ceiling is GitHub's 6-hour default, so ONE hung run blocks every agent run in
-    # the fleet for six hours -- the lock is held across the whole agent step, and a
-    # hung holder never reaches its release. 90 minutes is set above the longest
-    # observed healthy run (45min, bdh-org/home-infra#874 on 2026-09-12) with room to
-    # spare; a run that exceeds it is killed, and `if: always()` on the release step
-    # hands the lock straight back. Must stay BELOW the lock's stale-seconds, so a
-    # slow-but-alive holder is never stolen from (bdh-org/home-infra#881).
+    # Bounds the run. Without it the ceiling is GitHub's 6-hour default, and a hung
+    # agent holds a forge-agent runner unit for six hours. 90 minutes is set above the
+    # longest observed healthy run (45min, bdh-org/home-infra#874 on 2026-09-12) with
+    # room to spare. It no longer bounds the install lock -- that is held only by the
+    # install step, which carries its own timeout (bdh-org/home-infra#881).
     timeout-minutes: 90
     steps:
       # Mint the running repo's org installation token for the bdh-org-coder App
@@ -532,20 +529,50 @@ jobs:
       # one ~/.claude/downloads -- and the CLI installer hardcodes that path
       # (CLAUDE_CONFIG_DIR is not read) with no locking of its own. Two agent
       # runs installing at the same moment corrupt each other's download and
-      # both die on ETXTBSY, in a way that names neither issue and reads as an
-      # unrelated blip. See the action's lock.sh for the full account
-      # (bdh-org/home-infra#541).
-      - name: Wait for the Claude Code install lock
-        uses: bdh-org/dev-common/.github/actions/claude-install-lock@main
-        with:
-          mode: acquire
+      # both die on ETXTBSY (bdh-org/home-infra#541), so the install runs under
+      # a host-wide lock.
+      #
+      # The lock is held for THIS STEP ONLY (bdh-org/home-infra#881). It used to
+      # be held across claude-code-action, because the action installs the CLI
+      # inside its own hour-long step -- which ran the fleet one agent at a time
+      # and left runs waiting 21-64 minutes for it. This step installs the version
+      # the action pins, releases, and hands back a private copy of the binary;
+      # `path_to_claude_code_executable` below makes the action skip its install.
+      # See the action's install.sh for why a copy, and lock.sh for the timings.
+      #
+      # timeout-minutes is the first term of lock.sh's ordering invariant (step
+      # timeout < stale < wait) -- raising it past the lock's stale-seconds lets a
+      # slow install be stolen from. tests/claude-install-lock.test.sh asserts it.
+      - name: Install Claude Code (holds the host-wide install lock for this step only)
+        id: claude_cli
+        timeout-minutes: 10
+        uses: bdh-org/dev-common/.github/actions/claude-code-install@main
+
+      # A GitHub App installation token lives 60 minutes, and the one minted at the
+      # top of the job has already been spent on checkout, hydration and the steps
+      # since -- and until the lock was rescoped, on a lock wait with no upper bound.
+      # A /revise that waited 64 minutes handed claude-code-action a token four
+      # minutes dead and failed on "Bad credentials" having done nothing
+      # (bdh-org/dev-common#257). So the agent gets a token minted immediately
+      # before it starts. The action also re-points the checkout's push credential
+      # at this token, so the agent's own pushes use it too. The first mint stays
+      # where it is: checkout and hydration need it before any of this.
+      - name: Mint a fresh coder App token for the agent (tokens live 60 min)
+        id: coder_agent
+        env:
+          VAULT_ADDR: ${{ vars.VAULT_ADDR }}
+        run: /srv/github-runner/bin/mint-coder-app-token.sh
 
       - uses: anthropics/claude-code-action@v1
         id: agent
         env:
           CLAUDE_DEV_SSH: ${{ vars.CLAUDE_DEV_SSH }}
           KEY_B64: ${{ steps.devkey.outputs.claude_dev_key_b64 }}
-          GH_TOKEN: ${{ steps.coder.outputs.coder_token }}
+          GH_TOKEN: ${{ steps.coder_agent.outputs.coder_token }}
+          # The binary is a private copy (see the install step). The auto-updater
+          # would write into the SHARED ~/.local/share/claude with no lock held,
+          # which is the race the install step exists to prevent.
+          DISABLE_AUTOUPDATER: "1"
           GATE_CMD: ${{ inputs.gate_cmd }}
           # dagparse: the gate's docker calls need the forge rootless daemon and the
           # run-scoped config holding the registry login; empty (svcdev/no-gate) is
@@ -554,7 +581,10 @@ jobs:
           DOCKER_CONFIG: ${{ inputs.gate_kind == 'dagparse' && format('/tmp/docker-config-{0}', github.run_id) || '' }}
         with:
           claude_code_oauth_token: ${{ steps.vault.outputs.oauth_token }}
-          github_token: ${{ steps.coder.outputs.coder_token }}
+          github_token: ${{ steps.coder_agent.outputs.coder_token }}
+          # Skip the action's own install -- it would run inside this hour-long
+          # step, outside any lock (bdh-org/home-infra#881).
+          path_to_claude_code_executable: ${{ steps.claude_cli.outputs.path }}
           # Headful sessions act as the bdh-org-headful App since the bdh-ai PATs were
           # retired (bdh-org/home-infra#504), so a label or /revise from a session has a
           # Bot actor. The action refuses any non-User actor not named here -- "Workflow
@@ -622,15 +652,20 @@ jobs:
             --max-turns ${{ steps.budget.outputs.turns }}
             --allowedTools "Read,Write,Edit,Bash"
 
-      # always(), so a failed, skipped or CANCELLED agent step still hands the
-      # lock back. Without this every later run pays the full stale timeout
-      # before it can start, which would turn one bad run into an hour of
-      # fleet-wide delay.
-      - name: Release the Claude Code install lock
-        if: always()
-        uses: bdh-org/dev-common/.github/actions/claude-install-lock@main
-        with:
-          mode: release
+      # The agent step can itself run past 60 minutes (the job allows 90), so the
+      # token minted before it may be dead by the time the steps below comment,
+      # edit the PR and auto-merge -- the same "Bad credentials" as
+      # bdh-org/dev-common#257, one step later. Mint again for them.
+      # continue-on-error with a fallback in each consumer: if Vault cannot mint
+      # here, the older token is still worth trying, and this step must not turn a
+      # finished run red on its own.
+      - name: Mint a fresh coder App token for the post-agent steps
+        id: coder_post
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        env:
+          VAULT_ADDR: ${{ vars.VAULT_ADDR }}
+        run: /srv/github-runner/bin/mint-coder-app-token.sh
 
       # Guarantee the issue link (home-site#266). The prompt above ASKS for
       # "Closes #<n>" in the PR body, and the model complies most of the time --
@@ -661,7 +696,7 @@ jobs:
           # depend on the CALLER granting `pull-requests: write` (a reusable
           # inherits the caller's permissions block, and not every wrapper in
           # the org spells that one out).
-          GH_TOKEN: ${{ steps.coder.outputs.coder_token }}
+          GH_TOKEN: ${{ steps.coder_post.outputs.coder_token || steps.coder_agent.outputs.coder_token || steps.coder.outputs.coder_token }}
           REPO: ${{ github.repository }}
           OWNER: ${{ github.repository_owner }}
           BRANCH: agent/issue-${{ github.event.issue.number }}
@@ -794,7 +829,7 @@ jobs:
           # clears the trigger label, and the App installation carries issues:write across
           # both orgs where a caller wrapper's `permissions:` block is the caller's to get
           # wrong. The auto-merge step below already comments with the same identity.
-          GH_TOKEN: ${{ steps.coder.outputs.coder_token }}
+          GH_TOKEN: ${{ steps.coder_post.outputs.coder_token || steps.coder_agent.outputs.coder_token || steps.coder.outputs.coder_token }}
           ISSUE: ${{ github.event.issue.number }}
           # The agent's own account of what happened, so the reason is read rather than
           # guessed. Both are empty if the action did not get far enough to write them,
@@ -838,7 +873,7 @@ jobs:
       - name: Auto-merge on green gate (agent-deploy)
         if: github.event.label.name == 'agent-deploy' && inputs.gate_cmd != ''
         env:
-          GH_TOKEN: ${{ steps.coder.outputs.coder_token }}
+          GH_TOKEN: ${{ steps.coder_post.outputs.coder_token || steps.coder_agent.outputs.coder_token || steps.coder.outputs.coder_token }}
           # Empty falls through to agent-automerge.sh's default denylist (":-").
           PROTECTED: ${{ inputs.protected }}
         run: /srv/github-runner/bin/agent-automerge.sh "agent/issue-${{ github.event.issue.number }}"

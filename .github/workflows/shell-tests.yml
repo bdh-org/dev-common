@@ -69,6 +69,11 @@ jobs:
       - name: The Claude Code install lock blocks, steals only what is stale, and is ordered
         run: bash tests/claude-install-lock.test.sh
 
+      # The only holder of that lock since bdh-org/home-infra#881: installs inside
+      # it, releases on every exit path, and hands back a private copy.
+      - name: The Claude Code install holds the lock for the install alone
+        run: bash tests/claude-code-install.test.sh
+
       - name: claude-prod / claude-dev host shims
         run: bash tests/claude-host-shim.test.sh
 
