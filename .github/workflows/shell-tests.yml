@@ -85,6 +85,13 @@ jobs:
       - name: PATH de-duplication
         run: bash tests/path-dedup.test.sh
 
+      # The base image's TERM=xterm title trap echoes every later ~/.bashrc line
+      # with `echo -e`, turning our PS1's literal \033 codes into junk printed
+      # before the first prompt. Asserts the trap is removed BEFORE the PS1 line,
+      # in a fresh bashrc and in an already-built container's alike.
+      - name: Title-trap test
+        run: bash tests/title-trap.test.sh
+
       # The only GitHub credential a devcontainer session has once the PATs are gone:
       # REPOS narrowing, naming a vanished repo, and --check refusing a zero-repo token
       # (bdh-org/dev-common#269).

@@ -51,6 +51,68 @@ echo "==> Configuring shell..."
 "$MINIFORGE_DIR/bin/conda" init bash
 
 MARKER="# --- devcontainer setup ---"
+
+# -----------------------------------------------------------------------------
+# Title trap off (its OWN marker, and placed BEFORE the block below, on purpose)
+# -----------------------------------------------------------------------------
+# The devcontainers base image's ~/.bashrc, when TERM is exactly "xterm",
+# installs `trap 'preexec' DEBUG`, and preexec runs
+#     echo -ne "\033]0;${USER}@${HOSTNAME}: ${BASH_COMMAND}\007"
+# before EVERY command, to put the running command in the terminal title. The
+# trap is live for the rest of ~/.bashrc too, including the PS1 assignment in
+# the block below -- whose text contains literal \033[..m colour codes. `echo -e`
+# turns those into real ESC bytes INSIDE the title sequence; the terminal aborts
+# the title at the first one and prints the remainder of the PS1 line as text:
+#     01;32m\]\u@host:proj\[\]:\[\]\w\[\] \[\]$(__git_ps1 "(%s)")\[\]\$ '
+# in front of the first prompt of every shell.
+#
+# TERM=xterm is not exotic: it is what `docker exec -t` injects when nothing
+# sets TERM, and `devcontainer exec` (so `make dc-shell`) forwards only
+# remoteEnv, never the host's TERM. tmux and VS Code set their own, which is
+# why this showed up on one machine and not the others.
+#
+# Order is the whole fix: the trap has to be gone BEFORE the PS1 line runs. So a
+# fresh ~/.bashrc gets this appended ahead of $MARKER's block, and an
+# already-built container -- which has that block already -- gets it INSERTED in
+# front of the marker line instead of appended after it. Its own marker, for the
+# same reason as the PATH dedupe below: $MARKER's guard means nothing added
+# inside that block ever reaches an existing container.
+# >>> title-trap install >>>
+TITLE_MARKER="# --- devcontainer title trap off ---"
+if ! grep -qF -- "$TITLE_MARKER" "$BASHRC"; then
+  _title_snippet="$(mktemp)"
+  cat > "$_title_snippet" <<'EOF'
+
+# --- devcontainer title trap off ---
+# The base image's block above sets `trap 'preexec' DEBUG` when TERM is exactly
+# "xterm" (docker exec -t's default) and echoes every command into the terminal
+# title with `echo -ne`. That mangles any later line holding a literal \033 --
+# the PS1 below -- into junk printed before the first prompt. Remove the trap,
+# and the precmd it paired with, before anything else runs. Matched on the exact
+# trap text so a DEBUG trap someone else installed is left alone.
+if [ "$(trap -p DEBUG)" = "trap -- 'preexec' DEBUG" ]; then
+  trap - DEBUG
+  PROMPT_COMMAND="${PROMPT_COMMAND%precmd}"
+  PROMPT_COMMAND="${PROMPT_COMMAND%; }"
+fi
+EOF
+  if grep -qxF -- "$MARKER" "$BASHRC"; then
+    _title_tmp="$(mktemp)"
+    awk -v m="$MARKER" -v f="$_title_snippet" '
+      $0 == m && !done { while ((getline l < f) > 0) print l; print ""; done = 1 }
+      { print }
+    ' "$BASHRC" > "$_title_tmp"
+    # cat, not mv: keep ~/.bashrc's inode, owner and mode exactly as they were.
+    cat "$_title_tmp" > "$BASHRC"
+    rm -f "$_title_tmp"
+  else
+    cat "$_title_snippet" >> "$BASHRC"
+  fi
+  rm -f "$_title_snippet"
+  unset _title_snippet _title_tmp
+fi
+# <<< title-trap install <<<
+
 if ! grep -q "$MARKER" "$BASHRC"; then
   # Build prompt host label: "host:project" if available, else default \h
   _HOST=$(cat "${HOSTNAME_FILE:-/dev/null}" 2>/dev/null || true)
