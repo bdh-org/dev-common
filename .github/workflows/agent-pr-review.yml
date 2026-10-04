@@ -202,20 +202,31 @@ jobs:
             exit "$rc"
           fi
           python3 - "$out" "$RUNNER_TEMP/review.md" <<'PY'
-          import json, sys
+          import json, os, sys
           raw = open(sys.argv[1]).read()
           try:
               d = json.loads(raw)
           except ValueError:
               sys.exit("::error::grok output is not JSON: " + raw[:500])
-          text = (d.get("text") or "").strip() if isinstance(d, dict) else ""
+          if not isinstance(d, dict):
+              sys.exit(f"::error::grok output is a {type(d).__name__}, not an object: " + raw[:500])
+          # Printed on EVERY run: why grok stopped, how far it got, what it cost.
+          # The pilot's first sandboxed run ended with empty text and none of this
+          # in the log, so the cause had to be guessed (dev-common#283).
+          facts = {k: d.get(k) for k in ("stopReason", "num_turns", "total_cost_usd")}
+          print("grok:", json.dumps(facts))
+          print("usage:", json.dumps(d.get("usage")))
+          print("modelUsage:", json.dumps(d.get("modelUsage")))
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as s:
+              s.write(f"grok stopReason `{facts['stopReason']}`, {facts['num_turns']} turns, "
+                      f"${facts['total_cost_usd']}\n\n")
+          text = (d.get("text") or "").strip()
           if not text:
-              keys = sorted(d) if isinstance(d, dict) else type(d).__name__
-              sys.exit(f"::error::grok returned no review text (top-level keys: {keys}) -- refusing to post an empty review")
+              thought = str(d.get("thought") or "")
+              print(f"thought ({len(thought)} chars), last 1500:\n{thought[-1500:]}")
+              sys.exit(f"::error::grok returned no review text (stopReason {facts['stopReason']!r}, "
+                       f"{facts['num_turns']} turns) -- refusing to post an empty review")
           open(sys.argv[2], "w").write(text)
-          usage = d.get("usage") if isinstance(d, dict) else None
-          if usage:
-              print("usage:", json.dumps(usage))
           PY
 
       # Minted only now, after the model has exited (tokens live 60 minutes).
