@@ -176,6 +176,11 @@ jobs:
           export HOME="$RUNNER_TEMP/grok-home"
           rm -rf "$HOME" && mkdir -p "$HOME"
           out="$RUNNER_TEMP/grok-out.json"
+          "$GROK" --version
+          # `|| rc=$?`, not a bare call: Actions runs this under `bash -e`, which
+          # would end the step on grok's exit before its stderr is shown (the
+          # pilot's first run, home-infra#1193, died exactly that way).
+          rc=0
           "$GROK" --prompt-file "$RUNNER_TEMP/prompt.md" \
             --output-format json \
             --model "$MODEL" \
@@ -185,11 +190,11 @@ jobs:
             --disallowed-tools Bash,Edit,write_file,web_search,web_fetch \
             --disable-web-search \
             --cwd "$GITHUB_WORKSPACE" \
-            > "$out" 2> "$RUNNER_TEMP/grok-err.log"
-          rc=$?
+            > "$out" 2> "$RUNNER_TEMP/grok-err.log" || rc=$?
           if [ "$rc" -ne 0 ]; then
-            echo "::error::grok exited ${rc}; its stderr follows (stdout is in ${out})"
-            tail -n 50 "$RUNNER_TEMP/grok-err.log"
+            echo "::error::grok exited ${rc}; its stderr and stdout follow"
+            echo "--- stderr"; tail -n 50 "$RUNNER_TEMP/grok-err.log"
+            echo "--- stdout"; tail -c 2000 "$out"
             exit "$rc"
           fi
           python3 - "$out" "$RUNNER_TEMP/review.md" <<'PY'
