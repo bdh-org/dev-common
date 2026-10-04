@@ -15,7 +15,8 @@ name: agent-pr-review (reusable)
 #     only AFTER grok exits, in a later step;
 #   - the checkout keeps no credential (persist-credentials: false), so there is
 #     none in .git/config to find;
-#   - grok runs under --sandbox read-only, with shell, edit, write and web tools
+#   - grok runs under --sandbox read-only and --permission-mode dontAsk (deny
+#     whatever is not allowed), with shell, edit, write and web tools
 #     disallowed;
 #   - HOME is a fresh temp dir, so no saved subscription login (~/.grok/auth.json
 #     outranks XAI_API_KEY) and no user config or MCP server is ever picked up.
@@ -186,7 +187,7 @@ jobs:
             --model "$MODEL" \
             --max-turns "$MAX_TURNS" \
             --sandbox read-only \
-            --permission-mode always-approve \
+            --permission-mode dontAsk \
             --disallowed-tools Bash,Edit,write_file,web_search,web_fetch \
             --disable-web-search \
             --cwd "$GITHUB_WORKSPACE" \
@@ -195,6 +196,9 @@ jobs:
             echo "::error::grok exited ${rc}; its stderr and stdout follow"
             echo "--- stderr"; tail -n 50 "$RUNNER_TEMP/grok-err.log"
             echo "--- stdout"; tail -c 2000 "$out"
+            # 2 = grok rejected its arguments: print its own flag list, since
+            # xAI's docs have run behind the binary (always-approve was refused).
+            if [ "$rc" -eq 2 ]; then echo "--- grok --help"; "$GROK" --help 2>&1 | head -n 150; fi
             exit "$rc"
           fi
           python3 - "$out" "$RUNNER_TEMP/review.md" <<'PY'
