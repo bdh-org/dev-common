@@ -79,6 +79,11 @@ jobs:
       - name: The Claude Code install holds the lock for the install alone
         run: bash tests/claude-code-install.test.sh
 
+      # The PR reviewer's CLI install: refuses a tarball that does not match the
+      # pinned sha512 and leaves no binary behind (dev-common#283).
+      - name: Grok Build install checks the pinned integrity
+        run: bash tests/grok-install.test.sh
+
       - name: claude-prod / claude-dev host shims
         run: bash tests/claude-host-shim.test.sh
 

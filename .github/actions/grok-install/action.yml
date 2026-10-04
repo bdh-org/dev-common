@@ -1,0 +1,46 @@
+name: Grok Build install (pinned, integrity-checked, private copy)
+description: >
+  Install a pinned Grok Build CLI into $RUNNER_TEMP for this job only, after
+  checking the npm tarball against a pinned sha512. No shared HOME, so no
+  install lock. Outputs `path` and `version`. (bdh-org/dev-common#283)
+
+# A composite action, like claude-code-install, because a reusable workflow's
+# `run:` steps execute against the CALLER's checkout, where install.sh does not
+# exist; an action is fetched from this repo by ref.
+
+inputs:
+  version:
+    description: "Grok Build version (npm @xai-official/grok-linux-x64)."
+    required: false
+    default: "1.0.46"
+  integrity:
+    description: >
+      npm dist.integrity for that version's linux-x64 tarball. Change it
+      TOGETHER with `version`:
+      npm view @xai-official/grok-linux-x64@<v> dist.integrity
+    required: false
+    default: "sha512-a9HSDEiXmCFW1sou2xYBZAM1jCDALWU2aNacmsFHztI6kukb8akdI0SlTI43q2uULHzNQlwhrI7GkPcraxM6bQ=="
+
+outputs:
+  path:
+    description: "Absolute path to the grok binary"
+    value: ${{ steps.install.outputs.path }}
+  version:
+    description: "The version installed"
+    value: ${{ steps.install.outputs.version }}
+
+runs:
+  using: composite
+  steps:
+    # The binary is brotli-compressed; node's zlib decompresses it when the host
+    # has no `brotli`. setup-node is a no-op beyond PATH once its tool cache is warm.
+    - uses: actions/setup-node@v4
+      with:
+        node-version: "22"
+    - id: install
+      shell: bash
+      env:
+        GROK_VERSION: ${{ inputs.version }}
+        GROK_INTEGRITY: ${{ inputs.integrity }}
+        GROK_DEST: ${{ runner.temp }}/grok-${{ github.run_id }}-${{ github.job }}
+      run: bash "${{ github.action_path }}/install.sh"
