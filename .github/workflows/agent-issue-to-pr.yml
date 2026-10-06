@@ -112,6 +112,14 @@ on:
         type: string
         required: false
         default: claude-opus-5
+      auto_review:
+        description: >
+          Label the agent's (non-draft) PR `agent-review`, which the per-repo Grok
+          reviewer wrapper triggers on (bdh-org/home-infra#1188). Default on; a wrapper
+          can pass false to opt out. Harmless in a repo with no reviewer wrapper.
+        type: boolean
+        required: false
+        default: true
 
 jobs:
   # Decide whether the /agent verb was actually said, BEFORE anything expensive.
@@ -574,6 +582,11 @@ jobs:
           # which is the race the install step exists to prevent.
           DISABLE_AUTOUPDATER: "1"
           GATE_CMD: ${{ inputs.gate_cmd }}
+          # Where the agent writes its finding when the issue needs NO change (a decision
+          # already implemented, a question answered): the reporter step reads it and ends
+          # the run green with that note on the issue, instead of a red "no PR"
+          # (bdh-org/home-infra#474). Outside the checkout, so it can never be committed.
+          AGENT_NO_WORK_FILE: ${{ runner.temp }}/agent-no-work.md
           # dagparse: the gate's docker calls need the forge rootless daemon and the
           # run-scoped config holding the registry login; empty (svcdev/no-gate) is
           # ignored by the docker CLI.
@@ -624,6 +637,15 @@ jobs:
             ${{ github.event.issue.body }}
 
             ${{ github.event_name == 'issue_comment' && format('ALSO READ THIS -- the run was triggered by a comment, not a label, and the comment may carry a DECISION or instruction the issue body does not. An operator answering "pick A or B" writes the answer here, not in the body. Treat it as part of the task; where it conflicts with the body, the comment is newer and wins. Comment: {0}', github.event.comment.body) || '' }}
+
+            FIRST decide whether this issue needs a change at all. If it is a decision
+            that is already implemented, a question you can answer from the code, or it
+            otherwise needs no change to this repository, do NOT create a branch, commit,
+            or pull request -- and never invent a change to have something to submit.
+            Instead write a short note to the file named by the env var
+            AGENT_NO_WORK_FILE: what you understood was asked, what you checked (name the
+            files and lines), and why no change is needed. Then stop. Do this only when
+            you are sure; when in doubt, implement.
 
             Create a branch named `agent/issue-${{ github.event.issue.number }}`, commit
             with conventional-commit style, and PUSH it. Follow this repository's CLAUDE.md
@@ -771,6 +793,62 @@ jobs:
                            "the issue.\n")
           PY
 
+      # Ask the automated reviewer to read every headless-agent PR (bdh-org/home-infra#1188):
+      # the `agent-review` label is what the per-repo reviewer wrapper triggers on. Applied
+      # with the coder App token, because a label added with github.token starts no
+      # workflow. A repo without the wrapper just carries an inert label. NEVER fails the
+      # run: a missing review is a notice, and the deliverable check below owns red/green.
+      - name: Request the automated review (agent-review label)
+        if: ${{ !cancelled() && steps.agent.outcome != 'skipped' && inputs.auto_review }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ steps.coder_post.outputs.coder_token || steps.coder_agent.outputs.coder_token || steps.coder.outputs.coder_token }}
+          REPO: ${{ github.repository }}
+          OWNER: ${{ github.repository_owner }}
+          BRANCH: agent/issue-${{ github.event.issue.number }}
+        run: |
+          set -eu
+          python3 - <<'PY'
+          import json, os, urllib.error, urllib.request
+
+          repo, owner, branch = os.environ["REPO"], os.environ["OWNER"], os.environ["BRANCH"]
+          # GITHUB_API_URL is set by Actions; tests point it at a stub.
+          base = os.environ.get("GITHUB_API_URL", "https://api.github.com").rstrip("/")
+
+          def api(path, method="GET", payload=None):
+              data = json.dumps(payload).encode() if payload is not None else None
+              req = urllib.request.Request(
+                  f"{base}/repos/{repo}/{path}", data=data, method=method,
+                  headers={"Authorization": "Bearer " + os.environ["GH_TOKEN"],
+                           "Accept": "application/vnd.github+json",
+                           "Content-Type": "application/json"})
+              with urllib.request.urlopen(req, timeout=30) as resp:
+                  return json.load(resp)
+
+          try:
+              pulls = api(f"pulls?state=open&head={owner}:{branch}&per_page=100") or []
+          except urllib.error.HTTPError as exc:
+              print(f"::warning::could not look up the PR on {branch} (HTTP {exc.code}) -- no review requested")
+              raise SystemExit(0)
+          if not pulls:
+              print(f"::notice::no open PR on {branch} -- nothing to review")
+              raise SystemExit(0)
+          pr = pulls[0]
+          if pr.get("draft"):
+              # A draft is the agent saying it is still red; review it once it is ready.
+              print(f"::notice::PR #{pr['number']} is a draft -- not requesting a review yet")
+              raise SystemExit(0)
+          if any(l.get("name") == "agent-review" for l in pr.get("labels") or []):
+              print(f"::notice::PR #{pr['number']} already carries agent-review")
+              raise SystemExit(0)
+          try:
+              api(f"issues/{pr['number']}/labels", method="POST", payload={"labels": ["agent-review"]})
+          except urllib.error.HTTPError as exc:
+              print(f"::warning::could not label PR #{pr['number']} agent-review (HTTP {exc.code})")
+              raise SystemExit(0)
+          print(f"::notice::requested the automated review on PR #{pr['number']} (agent-review)")
+          PY
+
       # Deliverable check (dev-common#140) -- UNCONDITIONAL, unlike the gate below. Six
       # repos call this reusable with an EMPTY gate_cmd, so for them the gate step is
       # skipped and the agent's own exit code was the only verdict: a run that implemented
@@ -845,6 +923,10 @@ jobs:
           MAX_TURNS: ${{ steps.budget.outputs.turns }}
           # Empty on the `/agent` comment path -- that run carries no label to clear.
           TRIGGER_LABEL: ${{ github.event.label.name }}
+          # The agent's "nothing to build" note, if it wrote one (bdh-org/home-infra#474).
+          # A reporter that knows it ends a no-push run GREEN with the note on the issue;
+          # an older reporter ignores it and reports "no PR" as before.
+          AGENT_NO_WORK_FILE: ${{ runner.temp }}/agent-no-work.md
         run: |
           set -eu
           S=/srv/github-runner/bin/agent-report-outcome.sh

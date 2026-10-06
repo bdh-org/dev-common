@@ -84,6 +84,22 @@ jobs:
       - name: Grok Build install checks the pinned integrity
         run: bash tests/grok-install.test.sh
 
+      # The reviewer's extraction step, lifted out of agent-pr-review.yml and run on grok
+      # output shaped like the runs that posted nothing from 2026-10-04 on: a one-turn
+      # answer lands in `thought` with `text` empty (bdh-org/home-infra#1217).
+      - name: The PR reviewer finds the review grok wrote, and still refuses an empty one
+        run: bash tests/agent-pr-review-extract.test.sh
+
+      # The agent's PR is labelled for the reviewer, never a draft, never twice, and the
+      # step can never turn a run red (bdh-org/home-infra#1188).
+      - name: The agent's PR is put in front of the automated reviewer
+        run: bash tests/agent-review-label.test.sh
+
+      # NO-WORK: the agent step and the reporter step must name the same note file, or a
+      # "nothing to build" run reads as a red "no PR" again (bdh-org/home-infra#474).
+      - name: The NO-WORK note file is wired from the agent to the reporter
+        run: bash tests/agent-no-work-wiring.test.sh
+
       - name: claude-prod / claude-dev host shims
         run: bash tests/claude-host-shim.test.sh
 
