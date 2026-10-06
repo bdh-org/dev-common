@@ -18,7 +18,11 @@ Run this workflow in the current repo working directory. Adapt to whatever state
 - Include `Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>`
 
 ### 4. Version bump
-- Run `make bump-patch` to increment the patch version
+- Pick the level by the P8 rule, do not default it (bdh-org/home-infra#693):
+  `make bump-minor` if a consumer could observe the change (new module, function or
+  capability; changed default or output shape; an ADR or convention amended),
+  otherwise `make bump-patch` (fix, refactor, tests, docs, CI). Say which you chose,
+  and why, in the PR body.
 - The bump-patch target auto-commits (may include `[CC]` prefix from the make target — that's fine)
 
 ### 5. Push and PR
@@ -40,6 +44,6 @@ Run this workflow in the current repo working directory. Adapt to whatever state
 - Run `git log --oneline -3` and `git branch -a` to show final state
 
 ## Notes
-- Ask the user before proceeding if anything is ambiguous (e.g. patch vs minor bump)
+- Ask the user before proceeding if anything is ambiguous (the bump level is not: the P8 rule decides it)
 - If any step fails, diagnose and fix rather than skipping
 - The user may invoke this at any stage — detect where things are and pick up from there
