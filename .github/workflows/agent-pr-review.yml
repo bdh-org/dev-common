@@ -247,31 +247,43 @@ jobs:
           # since the diff-first prompt (#288) -- in `thought`, with `text` empty and
           # stopReason `cancelled`. Every review from 2026-10-04 on was discarded that way
           # while its `thought` read "**No significant findings.** The diff introduces...".
-          # So the prompt asks for <review>...</review>, and the review is the LAST tagged
-          # block in `text`, else in `thought`. An untagged `text` is still taken whole (an
-          # older prompt, or a model ignoring the tags). A bare no-findings verdict in
-          # `thought` is posted as that verdict. Anything else is still refused: posting
-          # raw reasoning as a review would be worse than posting nothing.
+          #
+          # `text` (the final message) wins: its last <review> block, else all of it.
+          # `thought` is REASONING, so it is trusted less, because it can quote the prompt's
+          # own "<review>No significant findings.</review>" instruction, or echo a diff
+          # containing that literal, after naming a real finding. A false clean review is
+          # the one outcome worse than none, so from `thought`:
+          #   - a <review> block counts only if it is the LAST substantive content;
+          #   - a block that reads clean is NOT taken if the rest of `thought` names a
+          #     severity-tagged finding;
+          #   - when in doubt, `thought` is posted VERBATIM (marked as reasoning), never a
+          #     synthesized clean line;
+          #   - a `thought` holding no verdict at all (no block, no clean phrase, no finding)
+          #     is still refused: raw musing is not a review.
           TAG = re.compile(r"<review>(.*?)</review>", re.S | re.I)
+          CLEAN = re.compile(r"\bno significant findings\b", re.I)
+          FINDING = re.compile(r"\bseverity\b|\b(high|medium|low)\b\s*[:|/)-]", re.I)
 
           def tagged(s):
               found = TAG.findall(s or "")
               return found[-1].strip() if found else ""
 
           text = (d.get("text") or "").strip()
-          thought = str(d.get("thought") or "")
-          review, source = tagged(text), "text"
-          if not review and text:
-              review = text
-          if not review:
-              review, source = tagged(thought), "thought"
-          # Only a CLEAN verdict: reasoning that also lays out a severity-tagged finding is
-          # not "no findings" just because the phrase appears in it (a false clean review is
-          # the one outcome worse than none).
-          FINDING = re.compile(r"\bseverity\b|\b(high|medium|low)\b\s*[:|/)-]", re.I)
-          if (not review and re.search(r"\bno significant findings\b", thought, re.I)
-                  and not FINDING.search(thought)):
-              review, source = "No significant findings.", "thought"
+          thought = str(d.get("thought") or "").strip()
+          review, source = (tagged(text) or text), "text"
+          if not review and thought:
+              source = "thought"
+              last = None
+              for last in TAG.finditer(thought):
+                  pass
+              block, outside = "", thought
+              if last is not None and not thought[last.end():].strip():
+                  block = last.group(1).strip()
+                  outside = thought[:last.start()]
+              if block and not (CLEAN.search(block) and FINDING.search(outside)):
+                  review = block
+              elif last is not None or CLEAN.search(thought) or FINDING.search(thought):
+                  review = thought   # in doubt: the reasoning itself, never a synthesized verdict
           if not review:
               print(f"thought ({len(thought)} chars), last 1500:\n{thought[-1500:]}")
               sys.exit(f"::error::grok returned no review text (stopReason {facts['stopReason']!r}, "

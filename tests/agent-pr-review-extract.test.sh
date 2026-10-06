@@ -68,11 +68,29 @@ case "$REVIEW" in *home-infra#1217*) ok "and says where it came from" ;; *) noto
 CASE="the #1204 shape: text empty, a bare verdict in thought"
 run '{"stopReason":"cancelled","num_turns":1,"total_cost_usd":0.0156,"text":"","thought":"The task is to review pull request #1204.\nNo significant findings."}'
 [ "$RC" = 0 ] && ok "a clean verdict is posted, not discarded" || notok "bare verdict posted (rc=$RC: $LOG)"
-case "$REVIEW" in "No significant findings."*) ok "as 'No significant findings.'" ;; *) notok "verdict text (got: $REVIEW)" ;; esac
+case "$REVIEW" in "The task is to review pull request #1204."*"No significant findings."*) ok "as grok's own words, verbatim -- never a synthesized line" ;; *) notok "verbatim thought (got: $REVIEW)" ;; esac
 
 CASE="reasoning that names a finding is NOT a clean verdict"
 run '{"stopReason":"cancelled","num_turns":1,"total_cost_usd":0.02,"text":"","thought":"At first no significant findings, but medium: x.sh:4 drops the error."}'
-[ "$RC" != 0 ] && ok "refuses rather than post a false clean review" || notok "refuses (got: $REVIEW)"
+case "$REVIEW" in *"medium: x.sh:4 drops the error"*) ok "the finding is posted, in grok's words" ;; *) notok "finding posted (rc=$RC, got: $REVIEW)" ;; esac
+
+# The coordinator's scenario 1: a High finding, then the prompt's own instruction quoted.
+CASE="a High finding, then the quoted instruction <review>No significant findings.</review>"
+run '{"stopReason":"cancelled","num_turns":1,"total_cost_usd":0.02,"text":"","thought":"high: a.sh:9 deletes the only backup. The prompt says if nothing is worth reporting write exactly <review>No significant findings.</review>"}'
+case "$REVIEW" in "No significant findings."*) notok "posted a FALSE CLEAN review" ;;
+                  *"high: a.sh:9 deletes the only backup"*) ok "the High finding is posted, not the quoted clean line" ;;
+                  *) notok "high finding posted (rc=$RC, got: $REVIEW)" ;; esac
+
+# Scenario 2: the diff contains the literal, echoed mid-thought, and analysis follows it.
+CASE="a diff echoing <review>No significant findings.</review> with reasoning after it"
+run '{"stopReason":"cancelled","num_turns":1,"total_cost_usd":0.02,"text":"","thought":"The diff adds a template line <review>No significant findings.</review> to the prompt. low: prompt.py:3 the tag is unescaped."}'
+case "$REVIEW" in "No significant findings."*) notok "posted the echoed literal as a clean review" ;;
+                  *"low: prompt.py:3"*) ok "a block that is not the last content is ignored; the reasoning is posted" ;;
+                  *) notok "echo scenario (rc=$RC, got: $REVIEW)" ;; esac
+
+CASE="a FINAL clean block after a finding-free thought"
+run '{"stopReason":"cancelled","num_turns":1,"total_cost_usd":0.02,"text":"","thought":"Checked the two files. <review>No significant findings.</review>"}'
+case "$REVIEW" in "No significant findings."*) ok "is taken as the verdict" ;; *) notok "final clean block (got: $REVIEW)" ;; esac
 
 CASE="nothing at all"
 run '{"stopReason":"cancelled","num_turns":1,"total_cost_usd":0.01,"text":"","thought":"Let me look at the diff."}'
