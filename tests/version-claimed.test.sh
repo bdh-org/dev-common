@@ -15,8 +15,9 @@
 #
 # Three of these in one afternoon, 2026-09-20, all in finzeug/heller, all fixed
 # by hand. The middle one (#559) was a submodule bump carrying no version change
-# at all, which would also have cut no tag, because tag-version.yml triggers on
-# `paths: ['Makefile']` and the Makefile would have been byte-identical.
+# at all, which would also have cut no tag, because tag-version.yml then
+# triggered on `paths: ['Makefile']` and the Makefile would have been
+# byte-identical (filter dropped fleet-wide in bdh-org/home-infra#625).
 #
 # THE CASES RUN THE REAL STEP BODY, extracted from the workflow, with `curl`
 # stubbed on PATH -- not a re-implementation of its logic, which would pass while

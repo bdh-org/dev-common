@@ -150,10 +150,11 @@ touching `.github/workflows/` lands on main next to (typically seconds
 after) the version-bump merge, creating the tag trips the
 workflows-permission check. `GITHUB_TOKEN` can never be granted
 `workflows`, so no `permissions:` block helps and re-running the job
-cannot succeed. The workflow-change merge itself produces no tag run of
-its own — the `paths: Makefile` filter skips it — so the symptom is just
-a missing tag (bdh-org/dev-common#122; seen on finzeug/heller
-2026-07-22).
+cannot succeed. The symptom is just a missing tag (bdh-org/dev-common#122;
+seen on finzeug/heller 2026-07-22). Since bdh-org/home-infra#625 the
+wrappers carry no `paths:` filter, so a workflow-change merge runs the tag
+job too: bump VERSION in that same PR, so its squash commit is both the
+workflow change and the tagged commit, and the rule above cannot trip.
 
 The tag step detects this rejection and prints the remediation as a run
 annotation and job summary. The fix is a one-line manual push, from a
