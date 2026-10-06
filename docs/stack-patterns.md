@@ -103,9 +103,25 @@ for the container that DAG tasks call into.
 ### P8: Version propagation
 Each repo has `VERSION=x.y.z` in its Makefile. The primary repo extracts
 service versions at build time and exports them as environment variables for
-docker-compose image tagging. `make bump-patch` increments and auto-commits.
-The `tag-version.yml` workflow (reusable from dev-common) creates git tags
-on push to main.
+docker-compose image tagging. `make bump-patch` / `make bump-minor` increment
+and auto-commit. The `tag-version.yml` workflow (reusable from dev-common) creates
+git tags on every push to main (no `paths:` filter, bdh-org/home-infra#625).
+
+**Which level** (bdh-org/home-infra#693). Coarse on purpose, so it can be applied
+in five seconds:
+
+* **patch (`x.y.Z`)** -- nothing a consumer could observe: a fix that restores
+  intended behaviour, a refactor, tests, docs, comments, CI.
+* **minor (`x.Y.0`)** -- anything a consumer could observe: a new module or public
+  function, a new capability, a changed default, a changed output shape, an
+  amendment to an ADR or a documented convention.
+* **major (`X.0.0`)** -- reserved. The fleet is `0.x` ("no stability promise");
+  1.0 is a separate decision that a repo is finished, not a per-change call.
+
+The number exists to answer *did anything I depend on change?* -- which matters most
+for `ledger-io` and `ratecraft`, which reach production only as pins. Precedent:
+finzeug/slingshot#279 shipped as 0.2.0 (slingshot became a writer of the book).
+No backfill: earlier patch-only histories stay as they are.
 
 One known failure: if a commit touching `.github/workflows/` lands on main
 next to a bump merge, the tag push is rejected ("without `workflows`

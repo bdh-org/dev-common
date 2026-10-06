@@ -285,8 +285,12 @@ Generic pattern vocabulary; each stack's concrete instances are in its `stack-co
 - **P5 Compose via extends** — primary's compose extends `<svc>/docker-compose.stub.yml`.
 - **P6 Service discovery** — container names on the stack's shared network; one endpoint env var per upstream.
 - **P7 DAG management** — `dags/` per service; `make dags-install` / `dags-reserialize`.
-- **P8 Version propagation** — `VERSION=` in each Makefile; `make bump-patch`; `tag-version.yml`
-  tags on push (a workflow-file commit beside a bump breaks the tag push — see the doc).
+- **P8 Version propagation** — `VERSION=` in each Makefile; every PR bumps, and the LEVEL is a
+  choice: `make bump-minor` if a consumer could observe the change (new module, function or
+  capability; changed default or output shape; an ADR or convention amended), `make bump-patch`
+  if not (fix, refactor, tests, docs, CI); major is reserved (bdh-org/home-infra#693).
+  `tag-version.yml` tags every push to main (a workflow-file commit beside a bump breaks the tag
+  push — see the doc).
 - **P9 Devcontainer setup chain** — `init-host.sh` → `setup-base.sh` → `setup-python-dev.sh` →
   `setup-claude.sh`; P1/P2c skip the Python step.
 - **P10 Runner-on-merge deploy** — **merging to main IS the production deploy**; `make
