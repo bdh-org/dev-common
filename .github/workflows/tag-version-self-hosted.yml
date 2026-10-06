@@ -7,7 +7,6 @@ name: Tag Version (self-hosted)
 #     workflow_dispatch:
 #     push:
 #       branches: [main]
-#       paths: ['Makefile']
 #   permissions:
 #     contents: write
 #   jobs:
@@ -51,12 +50,13 @@ jobs:
       #                       after the guards were believed to close it.
       #                       Nothing anywhere went red. Fail loudly.
       #
-      # NOTE this step only helps once the workflow actually RUNS on the offending
-      # commit. It did not: consumers trigger on `paths: ['Makefile']`, and a
-      # colliding merge leaves Makefile byte-identical because the base already
-      # reached that version, so the filter never matched. Dropping that filter
-      # across the consumer wrappers is bdh-org/home-infra#625; without it this
-      # check is correct and unreachable.
+      # NOTE this step only helps if the workflow RUNS on the offending commit.
+      # Until bdh-org/home-infra#625 it did not: consumers triggered on
+      # `paths: ['Makefile']`, and a colliding merge leaves Makefile byte-identical
+      # because the base already reached that version, so the filter never
+      # matched. The filter is gone from every consumer wrapper (and from this
+      # repo's own trigger), so every push to main now reaches this check; a
+      # re-run on an already-tagged commit takes the benign branch above.
       #
       # `git rev-list -n1` rather than `git rev-parse`: it resolves an annotated
       # tag to its commit, so the comparison is commit-to-commit either way.

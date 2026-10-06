@@ -590,9 +590,9 @@ jobs:
           fi
           echo "::error::VERSION is still $base_v but this PR changes:"
           echo "$changed" | sed 's/^/  /'
-          echo "::error::Run 'make bump-patch' -- never edit the version by hand."
-          echo "::error::Without a bump, tag-version.yml does not fire and the"
-          echo "::error::deployed image reports a version belonging to another change."
+          echo "::error::Run 'make bump-patch' (or bump-minor, see P8) -- never edit the version by hand."
+          echo "::error::Without a bump, tag-version.yml fails on main with a VERSION"
+          echo "::error::COLLISION and the deployed image reports another change's version."
           exit 1
 
       # The half of the collision that the step above CANNOT see.
@@ -607,10 +607,11 @@ jobs:
       # Nor will git object. Two branches cut from the same main each run
       # `make bump-patch`, each writes the IDENTICAL VERSION line, and git merges
       # an identical edit as AGREEMENT rather than as a conflict. Both land, one
-      # of the two versions silently never exists, and because tag-version.yml
-      # triggers on `paths: ['Makefile']`, a bump whose Makefile ends up
-      # byte-identical gets no tag either -- silent at both ends
-      # (bdh-org/home-infra#617).
+      # of the two versions silently never exists. While tag-version.yml triggered
+      # on `paths: ['Makefile']`, a bump whose Makefile ended up byte-identical got
+      # no tag run either -- silent at both ends (bdh-org/home-infra#617). That
+      # filter is gone (bdh-org/home-infra#625), so the tag run now goes red on
+      # main; this step still catches it earlier, at the PR.
       #
       # Three in one afternoon, 2026-09-20, all in finzeug/heller, all repaired
       # by hand: #558 carried 1.3.268 against a main at 1.3.267; #559 was a
