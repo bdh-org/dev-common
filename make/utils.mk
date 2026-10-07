@@ -37,11 +37,21 @@ list ls: ## List all targets
 claude-install: ## install Claude Code CLI
 	curl -fsSL https://claude.ai/install.sh | bash
 
+# Commit wording matches the fleet sweep (home-infra bump-submodule-pins.sh):
+# "chore: bump common to <sha8> (<N> commits)". No [CC] prefix -- dropped from
+# every other automated commit on 2026-03-15 (dev-common#293).
 common-update: ## update dev-common submodule to latest
-	@cd common && git pull origin main && cd .. && \
+	@old=$$(git -C common rev-parse HEAD) && \
+	(cd common && git pull origin main) && \
 	git add common && \
-	(git diff --cached --quiet common || git commit -m "[CC] chore: update dev-common") && \
-	echo "dev-common is up to date"
+	if git diff --cached --quiet common; then \
+		echo "dev-common is up to date"; \
+	else \
+		new=$$(git -C common rev-parse --short=8 HEAD) && \
+		n=$$(git -C common rev-list --count "$$old..HEAD") && \
+		git commit -m "chore: bump common to $$new ($$n commits)" && \
+		echo "dev-common bumped to $$new ($$n commits)"; \
+	fi
 
 # Signpost only: incorporating devtemplate improvements needs human judgment
 # (each repo has bespoke customizations), so there is no automated target. This
