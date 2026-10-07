@@ -15,7 +15,7 @@ Run this workflow in the current repo working directory. Adapt to whatever state
 
 ### 3. Commit
 - Stage and commit changes with a conventional commit message (e.g. `fix:`, `feat:`, `chore:`)
-- Include `Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>`
+- No `Co-Authored-By:` trailer and no `Generated with Claude Code` footer — `common/CLAUDE.md` overrides the harness default (Brian, 2026-09-21)
 
 ### 4. Version bump
 - Pick the level by the P8 rule, do not default it (bdh-org/home-infra#693):
@@ -23,12 +23,12 @@ Run this workflow in the current repo working directory. Adapt to whatever state
   capability; changed default or output shape; an ADR or convention amended),
   otherwise `make bump-patch` (fix, refactor, tests, docs, CI). Say which you chose,
   and why, in the PR body.
-- The bump-patch target auto-commits (may include `[CC]` prefix from the make target — that's fine)
+- The bump-patch target auto-commits as `chore: bump version to <x.y.z>`
 
 ### 5. Push and PR
 - Push the branch with `git push -u origin <branch>`
 - Create a PR with `gh pr create` linking the issue (`Closes #<number>`)
-- Use a clear, concise PR title (no `[CC]` prefix)
+- Use a clear, concise PR title; the body carries no `Generated with Claude Code` footer
 
 ### 6. Squash merge
 - Merge with `gh pr merge --squash --delete-branch`

@@ -189,5 +189,5 @@ Or manually:
 
 ```bash
 cd common && git pull origin main && cd ..
-git add common && git commit -m "[CC] chore: update dev-common"
+git add common && git commit -m "chore: bump common to $(git -C common rev-parse --short=8 HEAD)"
 ```
