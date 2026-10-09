@@ -295,6 +295,9 @@ jobs:
                   source = "thought: no final block, posted folded"
                   shown = thought if len(thought) <= THOUGHT_CAP else (
                       thought[:THOUGHT_CAP] + "\n\n_(cut here; the whole text is in the run log)_")
+                  # A details tag inside the reasoning (quoted from a diff, say) would end
+                  # the fold early; show it as text instead.
+                  shown = re.sub(r"<(/?details)", r"&lt;\1", shown, flags=re.I)
                   review = (f"grok stopped before writing its review ({stopped}; "
                             f"bdh-org/home-infra#1255). Its reasoning is folded below. It is not a "
                             f"verdict, and it may name findings.\n\n"
