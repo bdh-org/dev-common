@@ -30,5 +30,10 @@ jobs:
        startsWith(github.event.comment.body, '/grok-review') &&
        (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) ||
         github.event.comment.user.id == 333881240))
-    uses: bdh-org/dev-common/.github/workflows/agent-pr-review.yml@main
+    # dev-common's OWN PRs run the reusable FROM THE PR: a local path resolves against
+    # the PR's merge ref, so a change to the reviewer is exercised by itself before it
+    # goes live for every caller at @main (bdh-org/home-infra#1255). The grok-install
+    # action inside it is still fetched at @main, so a pin bump is only measured after
+    # merge. Other repos keep `bdh-org/dev-common/.github/workflows/agent-pr-review.yml@main`.
+    uses: ./.github/workflows/agent-pr-review.yml
     secrets: inherit
