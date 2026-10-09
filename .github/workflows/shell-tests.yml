@@ -84,11 +84,17 @@ jobs:
       - name: Grok Build install checks the pinned integrity
         run: bash tests/grok-install.test.sh
 
-      # The reviewer's extraction step, lifted out of agent-pr-review.yml and run on grok
-      # output shaped like the runs that posted nothing from 2026-10-04 on: a one-turn
-      # answer lands in `thought` with `text` empty (bdh-org/home-infra#1217).
-      - name: The PR reviewer finds the review grok wrote, and still refuses an empty one
+      # The reviewer's extract and compose code, lifted out of agent-pr-review.yml: only
+      # grok's final message is a review (its reasoning never is), a finding is posted as
+      # REQUEST_CHANGES and handed back to an agent with /revise at most once, a clean
+      # review supersedes the reviewer's earlier request (bdh-org/home-infra#1217, #1256).
+      - name: The PR reviewer posts the review grok wrote, with the right event and hand-back
         run: bash tests/agent-pr-review-extract.test.sh
+
+      # A revision the reviewer asked for is put back in front of it by re-applying the
+      # label, and that step can never turn a run red (bdh-org/home-infra#1256).
+      - name: A reviewer-requested revision is re-reviewed
+        run: bash tests/agent-pr-revise-rereview.test.sh
 
       # The agent's PR is labelled for the reviewer, never a draft, never twice, and the
       # step can never turn a run red (bdh-org/home-infra#1188).

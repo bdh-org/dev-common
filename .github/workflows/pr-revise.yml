@@ -36,10 +36,13 @@ jobs:
     # 333881240 is bdh-org-headful[bot], the App headful sessions act as. Its comments
     # are author_association NONE, so without this line a session's verb is skipped
     # (bdh-org/dev-common#271). Keyed on the ID, which survives an App rename.
+    # 337812394 is bdh-org-reviewer[bot]: its /revise hands an agent PR back with the
+    # review's findings (bdh-org/home-infra#1256), at most once per PR.
     if: >
       github.event.issue.pull_request != null &&
       startsWith(github.event.comment.body, '/revise') &&
       (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) ||
-      github.event.comment.user.id == 333881240)
+      github.event.comment.user.id == 333881240 ||
+      github.event.comment.user.id == 337812394)
     uses: bdh-org/dev-common/.github/workflows/agent-pr-revise.yml@main
     secrets: inherit
