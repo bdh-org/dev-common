@@ -284,6 +284,19 @@ jobs:
               --disable-web-search \
               --cwd "$GITHUB_WORKSPACE" \
               > "$out" 2> "$RUNNER_TEMP/grok-err-$label.log" || rc=$?
+            # grok exits 1 on "max turns reached" and still prints its result object
+            # (the 2026-10-05 runs, and #297's first review of a large diff). That is
+            # a session that ended without its final message, not a broken run: carry
+            # on to extract, and the resume below asks it to write what it has.
+            if [ "$rc" -ne 0 ] && python3 - "$out" <<'PY' 2>/dev/null
+          import json, sys
+          d = json.load(open(sys.argv[1]))
+          sys.exit(0 if isinstance(d, dict) and ("num_turns" in d or "stopReason" in d) else 1)
+          PY
+            then
+              echo "::notice::grok ($label) exited ${rc} but returned its result ($(tail -n 1 "$RUNNER_TEMP/grok-err-$label.log")) -- reading it"
+              rc=0
+            fi
             if [ "$rc" -ne 0 ]; then
               echo "::error::grok ($label) exited ${rc}; its stderr and stdout follow"
               echo "--- stderr"; tail -n 50 "$RUNNER_TEMP/grok-err-$label.log"
