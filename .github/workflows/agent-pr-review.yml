@@ -350,16 +350,34 @@ jobs:
         run: |
           set -euo pipefail
           api="https://api.github.com/repos/${GITHUB_REPOSITORY}"
-          gh_get() {  # <path> <out>: 200, or the step fails showing GitHub's own words
-            local code
-            code="$(curl -sS -o "$2" -w '%{http_code}' -H "Authorization: Bearer ${GH_REVIEWER_TOKEN}" \
-                     -H "Accept: application/vnd.github+json" "${api}/$1")"
-            [ "$code" = "200" ] || { echo "::error::GET $1 returned HTTP ${code}:"; cat "$2"; exit 1; }
-          }
           # What this reviewer already said on the PR decides the event and the /revise
-          # round (bdh-org/home-infra#1256).
-          gh_get "pulls/${PR_NUMBER}/reviews?per_page=100" "$RUNNER_TEMP/prior-reviews.json"
-          gh_get "issues/${PR_NUMBER}/comments?per_page=100" "$RUNNER_TEMP/prior-comments.json"
+          # round (bdh-org/home-infra#1256). Every page: grok's own review of #297 noted
+          # that a long-lived PR with >100 comments would hide an earlier hand-back.
+          gh_pages() {  # <list path> <out>: all pages, or the step fails showing GitHub's own words
+            python3 - "$1" "$2" <<'PY'
+          import json, os, sys, urllib.error, urllib.request
+          path, out = sys.argv[1], sys.argv[2]
+          api = "https://api.github.com/repos/" + os.environ["GITHUB_REPOSITORY"]
+          items, page = [], 0
+          while page < 20:
+              page += 1
+              req = urllib.request.Request(f"{api}/{path}?per_page=100&page={page}",
+                  headers={"Authorization": "Bearer " + os.environ["GH_REVIEWER_TOKEN"],
+                           "Accept": "application/vnd.github+json"})
+              try:
+                  with urllib.request.urlopen(req, timeout=30) as resp:
+                      batch = json.load(resp)
+              except urllib.error.HTTPError as exc:
+                  sys.exit(f"::error::GET {path} page {page} returned HTTP {exc.code}: {exc.read().decode()[:300]}")
+              items.extend(batch)
+              if len(batch) < 100:
+                  break
+          json.dump(items, open(out, "w"))
+          print(f"{path}: {len(items)} item(s) over {page} page(s)")
+          PY
+          }
+          gh_pages "pulls/${PR_NUMBER}/reviews" "$RUNNER_TEMP/prior-reviews.json"
+          gh_pages "issues/${PR_NUMBER}/comments" "$RUNNER_TEMP/prior-comments.json"
           cat > "$RUNNER_TEMP/compose.py" <<'PY'
           import json, os, re
           # compose.py: review.md + what is already on the PR -> review.json (the POST
