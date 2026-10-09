@@ -89,6 +89,14 @@ on:
         type: string
         required: false
         default: claude-opus-5
+      reviewer_user_id:
+        description: >
+          User id of the automated reviewer (bdh-org-reviewer[bot]). A /revise from
+          it is the reviewer handing the PR back with its findings, and the revision
+          is re-reviewed (bdh-org/home-infra#1256).
+        type: number
+        required: false
+        default: 337812394
 
 jobs:
   revise:
@@ -569,6 +577,7 @@ jobs:
       # A revision that deliberately changes nothing lands here too, and is red on
       # purpose: /revise asks for commits, so "no commit" needs a human to look.
       - name: Verify the revision pushed
+        id: verify
         if: ${{ !cancelled() && steps.agent.outcome != 'skipped' }}
         env:
           GH_TOKEN: ${{ github.token }}
@@ -694,6 +703,50 @@ jobs:
       # Authoritative dev-tier gate (post-step), only for repos with a gate command.
       # gate_cmd is the full command sans branch (e.g. ".../svcdev-gate.sh hog");
       # the PR head ref is appended here.
+      # A revision the REVIEWER asked for (its own /revise, bdh-org/home-infra#1256) is
+      # re-reviewed: re-apply the `agent-review` label the per-repo reviewer wrapper
+      # triggers on. Remove, then add: a label already present fires no `labeled`
+      # event. Only for the reviewer's hand-backs; after a human's /revise, a review is
+      # asked for the way it always was.
+      - name: Ask for the re-review (agent-review label) when the reviewer asked for this revision
+        if: ${{ !cancelled() && steps.verify.outcome == 'success' && github.event.comment.user.id == inputs.reviewer_user_id }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ steps.coder_agent.outputs.coder_token || steps.coder.outputs.coder_token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.issue.number }}
+        run: |
+          set -eu
+          python3 - <<'PY'
+          import json, os, urllib.error, urllib.request
+
+          repo, number = os.environ["REPO"], os.environ["PR"]
+          # GITHUB_API_URL is set by Actions; tests point it at a stub.
+          base = os.environ.get("GITHUB_API_URL", "https://api.github.com").rstrip("/")
+
+          def api(path, method="GET", payload=None):
+              data = json.dumps(payload).encode() if payload is not None else None
+              req = urllib.request.Request(
+                  f"{base}/repos/{repo}/{path}", data=data, method=method,
+                  headers={"Authorization": "Bearer " + os.environ["GH_TOKEN"],
+                           "Accept": "application/vnd.github+json",
+                           "Content-Type": "application/json"})
+              with urllib.request.urlopen(req, timeout=30) as resp:
+                  return resp.status
+
+          try:
+              api(f"issues/{number}/labels/agent-review", method="DELETE")
+          except urllib.error.HTTPError as exc:
+              if exc.code != 404:
+                  print(f"::warning::could not remove agent-review from PR #{number} (HTTP {exc.code})")
+          try:
+              api(f"issues/{number}/labels", method="POST", payload={"labels": ["agent-review"]})
+          except urllib.error.HTTPError as exc:
+              print(f"::warning::could not re-label PR #{number} agent-review (HTTP {exc.code}) -- no re-review")
+              raise SystemExit(0)
+          print(f"::notice::asked for the re-review of PR #{number} (agent-review)")
+          PY
+
       - name: Dev-tier gate (deploy + smoke)
         if: steps.pr.outputs.skip != 'true' && inputs.gate_cmd != ''
         env:
