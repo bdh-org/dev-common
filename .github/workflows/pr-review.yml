@@ -17,10 +17,6 @@ permissions:
   contents: read         # check out the PR head
   pull-requests: read    # resolve the PR; the review is posted with the App's own token
 
-concurrency:
-  group: agent-review-${{ github.event.pull_request.number || github.event.issue.number }}
-  cancel-in-progress: true
-
 jobs:
   review:
     if: >
@@ -35,5 +31,12 @@ jobs:
     # goes live for every caller at @main (bdh-org/home-infra#1255). The grok-install
     # action inside it is still fetched at @main, so a pin bump is only measured after
     # merge. Other repos keep `bdh-org/dev-common/.github/workflows/agent-pr-review.yml@main`.
+    # Job-level, under the if: a run the filter skips (any other label, any PR
+    # comment) never takes the group, so it cannot cancel a review in flight; the
+    # reviewer's own /revise comment did exactly that at workflow level
+    # (bdh-org/home-infra#1258). A second request on the same PR still replaces it.
+    concurrency:
+      group: agent-review-${{ github.event.pull_request.number || github.event.issue.number }}
+      cancel-in-progress: true
     uses: ./.github/workflows/agent-pr-review.yml
     secrets: inherit
