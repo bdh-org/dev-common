@@ -510,7 +510,10 @@ jobs:
           # initiated by non-human actor" -- which silently cut sessions off from the
           # agent (bdh-org/dev-common#271). Named, never '*': this repo is public, and
           # bdh-org-coder must NOT be listed, or its own status comments could re-trigger.
-          allowed_bots: "bdh-org-headful"
+          # bdh-org-reviewer: the automated reviewer hands an agent PR back with its own
+          # /revise (bdh-org/home-infra#1256); without it here the action refused the run
+          # one second in, "initiated by non-human actor" (bdh-org/home-infra#1259).
+          allowed_bots: "bdh-org-headful,bdh-org-reviewer"
           # Same reasoning as agent-issue-to-pr.yml -- see the full note there.
           # The action's default bot_id (41898282) is `github-actions[bot]` behind a
           # `claude[bot]` display name, and attribution keys on the number, so the
