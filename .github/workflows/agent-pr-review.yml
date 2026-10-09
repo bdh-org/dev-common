@@ -31,9 +31,13 @@ name: agent-pr-review (reusable)
 # SuperGrok subscription, whose consumer terms bar bot access (home-infra#1188).
 #
 # COST is per turn: every turn re-reads the whole conversation so far. The first
-# live review took 26 turns and cost $0.51 for a small PR, so the turn ceiling is
-# low and the prompt says to work from the diff. Each review's first line carries
-# its own cost.
+# live review took 26 turns and cost $0.51 for a small PR, and the ceiling was cut
+# to 12 for that. On 2026-10-09 four of nine reviews hit 12 on larger diffs and
+# were cut off mid-read, each still costing ~$0.25; the ones that finished on
+# their own (9 and 11 turns) were the ones with findings. Brian: the point is to
+# be useful, not to burn tokens and surrender. So the ceiling is 40 again
+# (home-infra#1261); the prompt still says to work from the diff, and each
+# review's first line carries its own cost and turn count, so this stays measured.
 on:
   workflow_call:
     inputs:
@@ -46,11 +50,12 @@ on:
         description: >
           grok --max-turns ceiling for one review, and the step budget the prompt
           states. Cost grows faster than linearly with turns (each re-reads the
-          context), so this is the main cost lever. 40 -> 12 after a 26-turn,
-          $0.51 first review (home-infra#1188).
+          context). 40 -> 12 after a 26-turn, $0.51 first review (home-infra#1188);
+          back to 40 when 12 was cutting reviews of larger diffs short
+          (home-infra#1261). A review that is cut off is paid for and useless.
         type: number
         required: false
-        default: 12
+        default: 40
       max_diff_bytes:
         description: >
           Diff bytes inlined into the prompt. A larger diff is cut there and the
@@ -91,7 +96,8 @@ jobs:
     # `forge-agent`, not `forge`: instance 1 stays free for ci-build deploys
     # (see agent-pr-revise.yml for the incident behind this label).
     runs-on: [self-hosted, forge-agent]
-    timeout-minutes: 30
+    # 60, not 30: a 26-turn review took 18 minutes, and the ceiling is 40 again.
+    timeout-minutes: 60
     steps:
       # The PR number comes from either trigger: pull_request (labeled) or
       # issue_comment. curl+python3 because gh is not on every runner's PATH.
