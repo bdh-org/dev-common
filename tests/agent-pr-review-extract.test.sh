@@ -127,6 +127,14 @@ run "$(python3 -c 'import json; print(json.dumps({"stopReason":"cancelled","num_
 case "$REVIEW" in *"_(cut here; the whole text is in the run log)_"*"</details>") ok "says it was cut, and the fold still closes" ;; *) notok "cut note / fold close (tail: ${REVIEW: -120})" ;; esac
 folded "medium: a.sh:1 the lock is never released."
 
+CASE="a details tag inside the reasoning cannot end the fold early"
+run '{"stopReason":"cancelled","num_turns":2,"total_cost_usd":0.02,"text":"","thought":"The diff adds </details> after the table. medium: page.py:8 the fold never closes."}'
+[ "$RC" = 0 ] && ok "posts" || notok "posts (rc=$RC: $LOG)"
+n="$(grep -o '</details>' <<<"$REVIEW" | wc -l)"
+[ "$n" = 1 ] && ok "exactly one closing tag, the fold's own" || notok "closing tags: $n"
+case "$REVIEW" in *"&lt;/details> after the table"*) ok "the quoted tag is shown as text" ;; *) notok "quoted tag not neutralised" ;; esac
+folded "medium: page.py:8 the fold never closes."
+
 CASE="nothing at all"
 run '{"stopReason":"cancelled","num_turns":1,"total_cost_usd":0.01,"text":"","thought":"Let me look at the diff."}'
 [ "$RC" != 0 ] && ok "still refuses an empty review" || notok "refuses empty"
