@@ -12,14 +12,14 @@ inputs:
   version:
     description: "Grok Build version (npm @xai-official/grok-linux-x64)."
     required: false
-    default: "1.0.46"
+    default: "1.0.50"
   integrity:
     description: >
       npm dist.integrity for that version's linux-x64 tarball. Change it
       TOGETHER with `version`:
       npm view @xai-official/grok-linux-x64@<v> dist.integrity
     required: false
-    default: "sha512-a9HSDEiXmCFW1sou2xYBZAM1jCDALWU2aNacmsFHztI6kukb8akdI0SlTI43q2uULHzNQlwhrI7GkPcraxM6bQ=="
+    default: "sha512-iSAgXgLAJWitOA/ySLEXWbRDB9c0kQioHSdYmXaHfyIoAIStNHAEYf9eeFkyg+ZjxoWO8YHMt5SHnA5XCwpJVA=="
 
 outputs:
   path:
