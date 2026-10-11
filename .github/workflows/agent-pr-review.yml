@@ -6,8 +6,11 @@ name: agent-pr-review (reusable)
 #
 # The reviewer is a SECOND VENDOR on purpose: nearly every PR in the fleet is
 # written by Claude, so Grok Build (xAI) brings different blind spots. It posts
-# ONE review -- REQUEST_CHANGES when it names a finding, COMMENT when it names
-# none, never APPROVE (a Grok approval must not satisfy the one-review rule) --
+# ONE review -- REQUEST_CHANGES when it names a finding, APPROVE when it names
+# none (Brian, 2026-10-11: a proper review, not a comment; home-infra#1283). The
+# App has pull-request permission only, so GitHub counts its approval toward no
+# merge requirement: merging stays with a human or a session, whose own approving
+# review is still what the merge rule for an agent PR means --
 # as the `bdh-org-reviewer` GitHub App, an identity separate from the author's.
 # On an agent-authored PR a finding also posts `/revise`, so the agent fixes it
 # and the revision is re-reviewed, at most `max_revise_rounds` times
@@ -427,7 +430,12 @@ jobs:
           else:
               body = review
               has_finding = bool(FINDING.search(review))
-              event = "REQUEST_CHANGES" if (has_finding and want_rc) else "COMMENT"
+              # A clean review is an approval (home-infra#1283); request_changes:false
+              # restores the comment-only trial for both outcomes.
+              if not want_rc:
+                  event = "COMMENT"
+              else:
+                  event = "REQUEST_CHANGES" if has_finding else "APPROVE"
               if event == "REQUEST_CHANGES":
                   body += ("\n\n_Changes requested. This reviewer's next review on a new push, or a session's "
                            "own review, supersedes it (bdh-org/home-infra#1256)._")
