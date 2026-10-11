@@ -448,9 +448,13 @@ jobs:
               print(f"superseding {len(dismiss)} earlier CHANGES_REQUESTED review(s): {', '.join(dismiss)}")
 
           # Hand an agent-authored PR back to the agent, at most max_rounds times per PR.
+          # A merge-conflict nudge is posted under this same App by home-infra's hourly
+          # stuck-pr-nudge (bdh-org/home-infra#1273) and is not a review hand-back, so its
+          # marker keeps it out of the count; it carries its own cap.
           author = (pr.get("user") or {}).get("id")
           rounds = sum(1 for c in prior_comments
-                       if (c.get("user") or {}).get("id") == me and (c.get("body") or "").lstrip().startswith("/revise"))
+                       if (c.get("user") or {}).get("id") == me and (c.get("body") or "").lstrip().startswith("/revise")
+                       and "stuck-pr-nudge:" not in (c.get("body") or ""))
           revise_path = os.path.join(T, "revise.md")
           if os.path.exists(revise_path):
               os.remove(revise_path)
