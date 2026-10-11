@@ -145,11 +145,11 @@ compose
 [ "$EVENT" = REQUEST_CHANGES ] && ok "REQUEST_CHANGES" || notok "event (got: $EVENT)"
 [ ! -e "$T/revise.md" ] && ok "no /revise: the session takes it" || notok "revise.md on a session PR"
 
-CASE="a clean review supersedes this reviewer's earlier CHANGES_REQUESTED"
+CASE="a clean review APPROVES and supersedes this reviewer's earlier CHANGES_REQUESTED"
 setup; review 'No significant findings.'
 reviews "[{\"id\":11,\"user\":{\"id\":$ME},\"state\":\"CHANGES_REQUESTED\"},{\"id\":12,\"user\":{\"id\":999},\"state\":\"CHANGES_REQUESTED\"},{\"id\":13,\"user\":{\"id\":$ME},\"state\":\"COMMENTED\"}]"
 compose
-[ "$EVENT" = COMMENT ] && ok "COMMENT" || notok "event (got: $EVENT)"
+[ "$EVENT" = APPROVE ] && ok "APPROVE: a proper review, not a comment (home-infra#1283)" || notok "event (got: $EVENT)"
 [ "$(cat "$T/dismiss.txt")" = "11" ] && ok "dismisses its own CHANGES_REQUESTED only, not another reviewer's" || notok "dismiss.txt: $(cat "$T/dismiss.txt")"
 [ ! -e "$T/revise.md" ] && ok "no /revise" || notok "revise.md"
 case "$BODY" in *"Changes requested"*) notok "a clean review must not carry the change-request note" ;; *) ok "no change-request note" ;; esac
@@ -173,6 +173,9 @@ setup; review '- **high** a.sh:1 -- wrong'
 compose REQUEST_CHANGES=false
 [ "$EVENT" = COMMENT ] && ok "COMMENT" || notok "event (got: $EVENT)"
 [ ! -e "$T/revise.md" ] && ok "and no hand-back" || notok "revise.md"
+setup; review 'No significant findings.'
+compose REQUEST_CHANGES=false
+[ "$EVENT" = COMMENT ] && ok "and a clean review is a COMMENT too, not an approval" || notok "event (got: $EVENT)"
 
 CASE="no review at all, even after the resume"
 setup; : > "$T/review.md"
