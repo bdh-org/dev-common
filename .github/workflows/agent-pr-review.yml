@@ -1,7 +1,7 @@
 name: agent-pr-review (reusable)
 # Reusable (workflow_call) automated PR REVIEWER (bdh-org/dev-common#283, design
 # and decisions in bdh-org/home-infra#1188). A thin per-repo wrapper owns the
-# trigger -- the `agent-review` label on a PR, or a `/grok-review` comment from a
+# trigger -- the `agent-review` label on a PR, or a `/agent-review` comment from a
 # trusted author -- and CALLS this.
 #
 # The reviewer is a SECOND VENDOR on purpose: nearly every PR in the fleet is
