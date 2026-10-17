@@ -104,6 +104,15 @@ CASE="the workflow"
 if [ -f "$WF" ]; then ok "ci-build.yml exists"
 else notok "no .github/workflows/ci-build.yml"; printf '1..%d\n' "$((pass + fail))"; exit 1; fi
 
+jobs_block="$(awk '/^jobs:/{inj = 1; next} inj' "$WF" | grep -E '^  [a-z][a-z0-9_-]*:' || true)"
+assert_eq "  build-and-push:
+  deploy:" "$jobs_block" "it declares exactly the two jobs, build-and-push and deploy"
+
+# PyYAML is a BONUS here, not the gate: every structural property this would
+# catch is also asserted textually below, and a suite that goes red on whether
+# the runner image ships a library is a suite that gets ignored. When it is
+# present it catches the one thing grep cannot -- that the file is valid YAML at
+# all, which otherwise surfaces as a consumer's build failing to start.
 if python3 -c 'import yaml' 2>/dev/null; then
   if python3 -I -c '
 import sys, yaml
@@ -118,9 +127,7 @@ assert set(d["jobs"]) == {"build-and-push", "deploy"}, list(d["jobs"])
     notok "YAML/shape check failed:"; sed 's/^/         /' "$TMP/yamlerr"
   fi
 else
-  # Not a silent skip: say so, and fall through to the textual checks below,
-  # which do not need a parser.
-  notok "PyYAML is unavailable, so the structural parse did not run (textual checks below still did)"
+  ok "valid-YAML parse not run (no PyYAML here); the textual checks below still ran"
 fi
 
 # Every step body must at least parse as bash: a `run:` that does not is a
@@ -156,33 +163,45 @@ assert_absent "$code" "ci-test" "the dead test branch is named nowhere in the co
 
 # --- 2. inputs and wiring --------------------------------------------------
 
+# A default is part of the contract: a consumer wrapper that passes nothing gets
+# these, and a changed default changes every wrapper at once. The runner labels
+# and the docker endpoint matter most -- `forge` is the priority reservation that
+# keeps a deploy ahead of queued agent work (home-infra#357), and 996 is the
+# forge RUNNER's uid, whose rootless socket is the only one the build can reach.
 CASE="inputs"
-if python3 -c 'import yaml' 2>/dev/null; then
-  got="$(python3 -I -c '
-import sys, yaml, json
-d = yaml.safe_load(open(sys.argv[1]))
-trig = d[True] if True in d else d["on"]
-ins = trig["workflow_call"]["inputs"]
-print(json.dumps({k: (v.get("default"), v.get("required", False), v["type"]) for k, v in ins.items()}, sort_keys=True))
-' "$WF")"
-  for want in \
-    '"image": [null, true, "string"]' \
-    '"dockerfile": ["Dockerfile", false, "string"]' \
-    '"build_args": ["", false, "string"]' \
-    '"submodules": ["", false, "string"]' \
-    '"deploy_command": ["", false, "string"]' \
-    '"deploy_ssh_key": [false, false, "boolean"]' \
-    '"runs_on": ["[\"self-hosted\", \"forge\"]", false, "string"]' \
-    '"docker_host": ["unix:///run/user/996/docker.sock", false, "string"]'
-  do
-    name="${want%%:*}"
-    # Compare on the compact JSON this python prints.
-    compact="$(printf '%s' "$want" | python3 -I -c 'import sys,json;k,v=sys.stdin.read().split(": ",1);print(json.dumps({json.loads(k):json.loads(v)})[1:-1])')"
-    assert_contains "$got" "$compact" "input ${name//\"/} has the expected type and default"
-  done
-else
-  notok "PyYAML is unavailable, so the input defaults were not checked"
-fi
+input_block() { # name -> that input's own block, properties only
+  awk -v n="      $1:" '
+    $0 == n              { ins = 1; next }
+    ins && /^      [a-z_]+:$/ { exit }
+    ins                  { print }
+  ' "$WF"
+}
+assert_input() { # name type default-line ('<required>' for a required input)
+  local b; b="$(input_block "$1")"
+  if [ -z "$b" ]; then notok "there is no '$1' input"; return 0; fi
+  assert_contains "$b" "type: $2" "input $1 is a $2"
+  if [ "$3" = "<required>" ]; then
+    assert_contains "$b" "required: true" "input $1 is required"
+    assert_absent "$b" "default:" "and carries no default -- there is no sensible image to build"
+  else
+    assert_contains "$b" "$3" "input $1 defaults to ${3#default: }"
+  fi
+}
+assert_input image          string  '<required>'
+assert_input dockerfile     string  'default: Dockerfile'
+assert_input build_args     string  'default: ""'
+assert_input submodules     string  'default: ""'
+assert_input deploy_command string  'default: ""'
+assert_input deploy_ssh_key boolean 'default: false'
+assert_input runs_on        string  "default: '[\"self-hosted\", \"forge\"]'"
+assert_input docker_host    string  'default: unix:///run/user/996/docker.sock'
+
+# And nothing else: an input this file does not need is one every consumer has to
+# read before writing a wrapper (the issue's rule -- a repo that needs more keeps
+# its own file).
+got_inputs="$(awk '/^    inputs:/{ini = 1; next} ini && /^  [a-z]/{exit} ini && /^      [a-z_]+:$/{gsub(/[ :]/, ""); print}' "$WF" | LC_ALL=C sort | tr '\n' ' ')"
+assert_eq "build_args deploy_command deploy_ssh_key docker_host dockerfile image runs_on submodules " \
+  "$got_inputs" "those eight inputs and no more"
 
 CASE="job wiring"
 assert_contains "$code" 'runs-on: ${{ fromJSON(inputs.runs_on) }}' \
