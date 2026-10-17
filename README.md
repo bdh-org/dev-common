@@ -80,6 +80,20 @@ that fire on *other* repos' events. `shell-tests.yml` is the exception: it is
 dev-common's own PR gate over the shell it ships, and should not be copied into
 a consumer repo.
 
+#### `ci-build.yml` — build, push, deploy
+
+The reusable build leg for a registry-image service: build on the forge runner,
+push `<image>:<sha>`, move `:latest` **only** from `refs/heads/main`, then deploy
+that sha. Every consumer used to carry its own copy, so the one-line `:latest`
+fix took 14 PRs (bdh-org/home-infra#1323); a wrapper is now five lines of inputs
+over this file. The wrapper — triggers included, because the events that start a
+build are the caller's — is written out in full at the top of the workflow, which
+also lists what changes for a repo moving onto it.
+
+Inputs: `image`, `dockerfile`, `build_args`, `submodules`, `deploy_command`,
+`deploy_ssh_key`, `runs_on`, `docker_host`. A repo that needs more than these
+keeps its own `ci-build.yml` — cheaper than an input nobody else passes.
+
 ### tests/
 
 dev-common's own tests, run by `make test` and by `shell-tests.yml` on every PR.
@@ -89,6 +103,7 @@ dev-common's own tests, run by `make test` and by `shell-tests.yml` on every PR.
 | `setup-claude-identity.test.sh` | `devcontainer/setup-claude-identity.sh` — role naming per `PROJECT_NAME`, `user.email` left alone, the `~/.gitconfig-seat` → `~/.gitconfig-role` migration, and idempotency across repeated runs |
 | `version-bumped.test.sh` | the "Version bumped" step embedded in `ci.yml`, `self-hosted-ci.yml` and `version-guard.yml` — VERSION strictly greater than the base's, and byte-identical across all three copies |
 | `version-claimed.test.sh` | the "Version claimed by another open PR" step in the same three files — a version already claimed by an **open** PR, which the step above cannot see because both PRs' bases are still untouched |
+| `ci-build.test.sh` | `ci-build.yml` — runs its extracted step bodies against a stub `docker`: `:latest` moved only from `refs/heads/main` (behaviourally **and** by a static scan, so a third `:latest` anywhere fails), the build tagging the sha alone, `build_args` substitution, the deploy gate and key handling, and submodule hydration end to end |
 
 Each case runs the real script against a throwaway `$HOME` — the script's only
 inputs are `$HOME` and `$PROJECT_NAME`, so nothing needs stubbing and nothing
