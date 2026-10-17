@@ -570,6 +570,11 @@ CASE="e2e: an empty list still clears the context"
 # into the image by a Dockerfile that COPYs a whole directory.
 git clone -q "$TMP/remotes/consumer.git" "$TMP/co-empty"
 git -C "$TMP/co-empty" submodule update --init --recursive >/dev/null 2>&1
+# An expired insteadOf rewrite, the way the previous job on this persistent
+# runner left one -- the cleanup must not sit below the no-submodules exit.
+git -C "$TMP/co-empty" config --local \
+  "url.https://x-access-token:dead@github.com/bdh-org/.insteadOf" \
+  "https://github.com/bdh-org/"
 if run_hydrate "$TMP/co-empty" ""; then
   assert_contains "$OUT" "build context carries none" "it says so rather than passing silently"
   leftover=""
@@ -578,6 +583,8 @@ if run_hydrate "$TMP/co-empty" ""; then
   done
   assert_eq "" "$leftover" "every submodule left by an earlier job is gone"
   assert_eq "" "$(cat "$MINT_LOG")" "and nothing is minted for a build that asked for nothing"
+  assert_eq "" "$(git -C "$TMP/co-empty" config --local --name-only --get-regexp '^url\.' || true)" \
+    "and a dead credential rewrite is unset even on this exit, not left for the next job"
 else notok "hydration failed with an empty submodules input" "$OUT"; fi
 
 CASE="e2e: a path that is not a submodule"
@@ -585,9 +592,44 @@ CASE="e2e: a path that is not a submodule"
 # Dockerfile is about to COPY from that path, and the failure 40 lines later
 # names a file, not the input that was wrong.
 git clone -q "$TMP/remotes/consumer.git" "$TMP/co-typo"
+git -C "$TMP/co-typo" config --local \
+  "url.https://x-access-token:dead@github.com/bdh-org/.insteadOf" \
+  "https://github.com/bdh-org/"
 if run_hydrate "$TMP/co-typo" "commmon"; then
   notok "a misspelt submodule path was waved through to docker build"
 else assert_contains "$OUT" "is not a submodule of this repo" "it fails, naming the path"; fi
+assert_eq "" "$(git -C "$TMP/co-typo" config --local --name-only --get-regexp '^url\.' || true)" \
+  "and the dead rewrite is unset before that failure too"
+
+CASE="e2e: residue a failed deinit left behind"
+# `deinit -f` clears the working tree as well as unregistering the path, which
+# the first e2e case above proves. Its rc is nonetheless swallowed in the step,
+# so this case asks what happens when it does NOT: git is shadowed by a stub
+# that refuses `submodule deinit`, leaving vendor/thing fully populated.
+git clone -q "$TMP/remotes/consumer.git" "$TMP/co-residue"
+git -C "$TMP/co-residue" submodule update --init --recursive >/dev/null 2>&1
+mkdir -p "$TMP/bin"
+cat > "$TMP/bin/git" <<EOF
+#!/usr/bin/env bash
+# everything but deinit goes to the real git
+if [ "\${1:-}" = submodule ] && [ "\${2:-}" = deinit ]; then
+  echo "stub: refusing deinit" >&2; exit 1
+fi
+exec $(command -v git) "\$@"
+EOF
+chmod +x "$TMP/bin/git"
+if PATH="$TMP/bin:$PATH" run_hydrate "$TMP/co-residue" "common"; then
+  assert_contains "$OUT" "survived deinit" "the step says it found residue rather than building with it"
+  if [ -n "$(ls -A "$TMP/co-residue/vendor/thing" 2>/dev/null || true)" ]; then
+    notok "vendor/thing is still populated -- docker build would COPY an earlier job's checkout"
+  else ok "residue a failed deinit left is cleared out of the build context"; fi
+  [ -f "$TMP/co-residue/common/file" ] && ok "and the submodule this build named is still hydrated" \
+    || notok "common is empty -- clearing the residue broke the wanted path"
+else notok "hydration failed when deinit did" "$OUT"; fi
+# The unclearable case needs a directory root cannot empty, so assert the guard
+# refuses to build rather than warning and carrying on.
+assert_contains "$hydrate_body" "cannot be cleared -- refusing to build" \
+  "and residue that will not clear fails the build instead of reaching it"
 
 CASE="e2e: an emptied working tree"
 # dev-common#176's shape: .git and HEAD survive at the pin while every tracked

@@ -261,6 +261,15 @@ jobs:
           # tests/ci-build.test.sh sources everything above and stops here.
           if [ -n "${HYDRATE_LIB_ONLY:-}" ]; then return 0; fi
 
+          # Credential rewrites an earlier job on this persistent runner left behind
+          # (its token is long expired, and it would shadow the ones minted below).
+          # FIRST, above every exit in this step: a build that asks for no
+          # submodules, or names one that does not exist, would otherwise leave a
+          # dead token in the workspace .git/config for the next job to inherit.
+          for k in $(git config --local --name-only --get-regexp '^url\.' || true); do
+            git config --local --unset-all "$k" || true
+          done
+
           # Drop every submodule this build did not ask for, THEN init the ones it
           # did. checkout's clean:true does not touch a populated submodule -- its
           # contents are a tracked gitlink rather than untracked files, and reset
@@ -277,6 +286,27 @@ jobs:
           if [ -n "$drop" ]; then
             printf '%s\n' "$drop" | xargs -r git submodule deinit -f -- 2>/dev/null || true
             echo "deinitialised, not in the build context:" $drop
+            # `deinit -f` removes the working tree as well as unregistering the
+            # path -- that is its documented job ("together with their work
+            # tree"), and it holds for a path populated recursively or left
+            # unregistered with stray files. But its rc is swallowed just above,
+            # deliberately, so that one path git refuses cannot sink the rest.
+            # So VERIFY rather than assume: residue here is what reaches
+            # `docker build` as stale code inside a COPY of the directory.
+            # Clearing it beats failing -- the leftovers are by definition an
+            # earlier job's garbage on a shared workspace, and a red build here
+            # would be unactionable from the consumer repo.
+            while IFS= read -r p; do
+              case "$p" in ''|/*|*..*) continue;; esac
+              [ -d "$p" ] || continue
+              [ -n "$(ls -A "$p" 2>/dev/null || true)" ] || continue
+              echo "::warning::${p} survived deinit -- clearing it, this build did not ask for it"
+              find "$p" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
+              if [ -n "$(ls -A "$p" 2>/dev/null || true)" ]; then
+                echo "::error::${p} is not in this build's submodule list and cannot be cleared -- refusing to build with it in the context"
+                exit 1
+              fi
+            done <<< "$drop"
           fi
 
           if [ -z "$keep" ]; then
@@ -299,11 +329,6 @@ jobs:
             fi
           done
 
-          # Credential rewrites an earlier job on this persistent runner left behind
-          # (its token is long expired, and it would shadow the ones minted below).
-          for k in $(git config --local --name-only --get-regexp '^url\.' || true); do
-            git config --local --unset-all "$k" || true
-          done
           # sync FIRST: the persistent runner workspace keeps submodule URLs in
           # .git/modules/*/config and `submodule init` never overwrites them, so
           # a URL corrected in .gitmodules would otherwise stay broken forever
