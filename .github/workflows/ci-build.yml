@@ -1,0 +1,541 @@
+name: ci-build
+
+# Reusable BUILD -> PUSH -> DEPLOY for a registry-image service: the P10 half of
+# CI, where merging to main IS the production deploy.
+#
+# WHY THIS IS HERE AND NOT IN EACH REPO. Every consumer carried its own
+# hand-copied ci-build.yml, so a defect spread by copy and a fix needed one PR
+# per repo: "only main may move :latest" (bdh-org/home-infra#1323) cost 14 of
+# them. ci.yml / self-hosted-ci.yml already have the right shape -- a thin
+# per-repo wrapper over one implementation here -- and this file gives the build
+# leg the same treatment.
+#
+# A consumer wrapper, in full:
+#
+#   name: ci-build
+#   on:
+#     push:
+#       branches: [main]
+#     workflow_dispatch:
+#   jobs:
+#     build:
+#       uses: bdh-org/dev-common/.github/workflows/ci-build.yml@main
+#       secrets: inherit
+#       with:
+#         image: registry.home.arpa/roy
+#         submodules: common
+#         build_args: |
+#           ROY_VERSION=${VERSION}
+#           ROY_BUILD=${GITHUB_SHA}
+#         deploy_command: >-
+#           sudo -u svc-roy /srv/svc-roy/state/roy/deploy-roy.sh "$GITHUB_SHA"
+#
+# `secrets: inherit` costs nothing today -- the registry and deploy credentials
+# come from Vault via the runner's own AppRole, and VAULT_ADDR / DEPLOY_HOST are
+# repo VARIABLES, which a called workflow reads from the caller without being
+# passed anything. It is in the example so that a deploy_command which does need
+# a caller secret works without a wrapper change, and so every wrapper looks the
+# same.
+#
+# THE TRIGGERS STAY IN THE WRAPPER. `on:` here is workflow_call only -- the
+# events that start a build are the caller's. That is also where the second half
+# of #1323 lived: a leftover `branches: [main, ci-test]` meant a push to a
+# long-dead test branch built, pushed, and (before the guard below) moved
+# :latest. Nothing in this file can bring that back, but nothing in this file
+# can remove it from a wrapper either; the per-repo sweep has to.
+#
+# Per-repo differences are inputs, never branches inside this file. A repo that
+# needs more than these inputs keeps its own ci-build.yml -- that is a cheaper
+# answer than an input nobody else uses.
+#
+# WHAT CHANGES FOR A REPO THAT MOVES ONTO THIS FILE (phase 2, one PR per repo):
+#   - `:latest` moves only from refs/heads/main.
+#   - A workflow_dispatch at main DEPLOYS. Two consumers excluded it, which made
+#     a manual re-fire build and push and then silently skip the deploy -- a
+#     green run with no deployment, and the reason you reach for a manual
+#     re-fire is that a merge produced no run at all (bdh-org/home-infra#140).
+#   - Deploys of one repo serialise (the concurrency block below).
+#   - Only the submodules a repo NAMES are in the build context; see the
+#     hydration step.
+
+on:
+  workflow_call:
+    inputs:
+      image:
+        description: >
+          Full registry path for the image, with NO tag, e.g.
+          `registry.home.arpa/roy`. The registry to log in to is read back out of
+          it, so there is no second input to keep in step with this one.
+        type: string
+        required: true
+      runs_on:
+        description: >
+          JSON array of runner labels, read with fromJSON. Default is the forge
+          runner's `forge` label.
+
+          `forge` is the priority mechanism, not decoration: forge runner
+          instance 1 carries `forge` only and instances 2..N also carry
+          `forge-agent`, so the agent workflows cannot fill the pool ahead of a
+          deploy (bdh-org/home-infra#357). A build moved off `forge` gives that
+          reservation up. A label no runner offers does not error -- it queues
+          forever with runner_name: null (finzeug/ratecraft sat 22h that way).
+        type: string
+        default: '["self-hosted", "forge"]'
+      docker_host:
+        description: >
+          The Docker endpoint to build against. The default is the forge RUNNER's
+          rootless socket: 996 is the github-runner UID, not any service's
+          runtime UID. A runner whose UID differs overrides this rather than
+          leaving this file.
+        type: string
+        default: unix:///run/user/996/docker.sock
+      dockerfile:
+        description: >
+          Path to the Dockerfile. The build CONTEXT is always the repo root, so a
+          Dockerfile in a subdirectory (home-site's `apache/Dockerfile`) can still
+          COPY from anywhere in the repo.
+        type: string
+        default: Dockerfile
+      build_args:
+        description: >
+          Newline-separated KEY=VALUE pairs, one `--build-arg` each. Blank lines
+          and `#` comments are skipped.
+
+          Values are LITERAL except for two tokens, which are substituted:
+          `${VERSION}` (the Makefile's VERSION line) and `${GITHUB_SHA}`. Nothing
+          else expands -- a wrapper cannot run shell in a `with:` block, and the
+          two things every consumer passes are exactly its version and its
+          commit. Any other `$` left in a line is reported as a warning, because
+          it reaches docker as those characters.
+
+          NOT for secrets: a build arg is recoverable from the built image.
+        type: string
+        default: ""
+      submodules:
+        description: >
+          Space-separated submodule paths to hydrate into the build context, e.g.
+          "common". Each is fetched with a token minted for the org in ITS OWN
+          .gitmodules URL, so a private sibling in another org works
+          (bdh-org/dev-common#170).
+
+          Everything NOT listed here is deinitialised first, including when this
+          input is empty. The forge workspace is shared by every workflow for a
+          repo and the agent workflows init `--recursive`, so an unlisted
+          submodule left on disk would otherwise be baked into the image at
+          whatever commit that job left it on (finzeug/heller#356). A Dockerfile
+          that COPYs from a submodule nobody listed now fails on the missing
+          file instead of shipping stale code.
+        type: string
+        default: ""
+      deploy_command:
+        description: >
+          Shell for the deploy job to run, on the runner, as the runner. Empty
+          (the default) means this repo builds and pushes and nothing else -- the
+          deploy job then does not run at all.
+
+          `$GITHUB_SHA` is in the environment and is what you deploy; the image
+          this run pushed is `<image>:$GITHUB_SHA`. Deploying `:latest` is
+          refused (see the deploy step) -- it is whatever main pushed last, which
+          on a re-fire is not this run.
+
+          There is NO checkout in the deploy job: the command must be a host
+          script or an ssh invocation, not something that reads the workspace
+          (what is in the workspace is whatever the build job left there).
+
+          With deploy_ssh_key: true, `$DEPLOY_KEY` is a mode-600 private key file
+          and `$DEPLOY_HOST` is the caller's DEPLOY_HOST variable.
+        type: string
+        default: ""
+      deploy_ssh_key:
+        description: >
+          Fetch the deploy@ SSH key from Vault for the deploy job and expose it as
+          `$DEPLOY_KEY`. True for a CROSS-HOST deploy (ssh deploy@minerva), false
+          for a deploy that runs on the runner itself through sudo -- which needs
+          no credential at all, and must not be handed one.
+        type: boolean
+        default: false
+
+# Deploys of ONE repo must not overlap (bdh-org/home-infra#414): the loser of a
+# race at the deploy step is whichever finishes LAST, so prod can land on the
+# older commit with every check green.
+#
+# cancel-in-progress: false, deliberately -- a deploy in flight is half applied
+# on the host and must finish. Same reason self-hosted-ci.yml confines its
+# cancellation to pull_request.
+#
+# `github.repository` is the CALLER's inside a reusable workflow, which is what
+# this needs: one group per consumer repo, not one for the whole fleet. A wrapper
+# does not need a concurrency block of its own for this.
+concurrency:
+  group: ci-build-${{ github.repository }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-push:
+    runs-on: ${{ fromJSON(inputs.runs_on) }}
+    env:
+      DOCKER_HOST: ${{ inputs.docker_host }}
+      # Run-scoped docker config: login/push/logout stay private to THIS run, so
+      # overlapping runs on the shared forge runner cannot wipe each other's
+      # registry credentials (bdh-org/home-infra#154).
+      DOCKER_CONFIG: /tmp/docker-config-${{ github.run_id }}
+      IMAGE: ${{ inputs.image }}
+    steps:
+      # The registry is DERIVED from the image rather than passed beside it: two
+      # inputs that must agree are two inputs that can disagree, and the symptom
+      # would be a push to a registry this run never logged in to.
+      - name: Resolve the registry from the image path
+        run: |
+          set -eu
+          case "$IMAGE" in
+            */*) ;;
+            *) echo "::error::image must be a full registry path like registry.home.arpa/roy -- got '$IMAGE'"; exit 1;;
+          esac
+          REGISTRY="${IMAGE%%/*}"
+          # A registry host, not a Docker Hub namespace: it has a dot or a port.
+          case "$REGISTRY" in
+            *.*|*:*) ;;
+            *) echo "::error::'$REGISTRY' is not a registry host -- image must start with one, e.g. registry.home.arpa/roy"; exit 1;;
+          esac
+          # A tag in the input would build "<image>:latest:<sha>", which docker
+          # rejects 40 lines into a log that says nothing about this input.
+          case "${IMAGE#*/}" in
+            *:*) echo "::error::image must carry NO tag -- this workflow tags \$GITHUB_SHA and (on main) latest. Got '$IMAGE'"; exit 1;;
+          esac
+          echo "REGISTRY=$REGISTRY" >> "$GITHUB_ENV"
+          echo "registry $REGISTRY, image $IMAGE"
+
+      - uses: actions/checkout@v4
+        with:
+          # Hydration below needs per-org tokens, which checkout cannot mint.
+          submodules: false
+          clean: true
+
+      # Hydrate the submodules this repo NAMED, each with a token minted for the
+      # org in its own .gitmodules URL -- never the caller's org
+      # (bdh-org/dev-common#170, finzeug/panoptikon#700). GITHUB_TOKEN is scoped
+      # to the calling repo alone, so it cannot read a sibling repo, which is
+      # what every cross-repo submodule is; the coder App is installed in every
+      # org and mints a ~1h installation token per org (bdh-org/home-infra#91).
+      #
+      # `common` is bdh-org/dev-common however finzeug the caller is, so neither
+      # the caller's org nor a hardcoded bdh-org is the right signal for any of
+      # them -- only the URL is.
+      #
+      # sm_map / sm_org below are bdh-org/dev-common#169's functions, verbatim;
+      # tests/ci-build.test.sh enforces that they stay byte-identical to the
+      # copies in self-hosted-ci.yml and agent-issue-to-pr.yml, which is what
+      # lets tests/hydrate-submodules.test.sh's coverage stand for this copy too.
+      - name: Hydrate the selected submodules (per-submodule org tokens)
+        env:
+          VAULT_ADDR: ${{ vars.VAULT_ADDR }}
+          SUBMODULES: ${{ inputs.submodules }}
+        run: |
+          set -euo pipefail
+          MINT="${MINT:-/srv/github-runner/bin/mint-coder-app-token.sh}"
+
+          # path<TAB>url for every submodule any .gitmodules on disk declares. Nested
+          # paths are printed parent-prefixed, exactly the way `git submodule status
+          # --recursive` reports them, so the check at the end can look a path up here.
+          sm_map() {
+            local f dir k p u
+            while IFS= read -r f; do
+              case "$f" in */.gitmodules) dir="${f%.gitmodules}";; *) dir="";; esac
+              while IFS= read -r k; do
+                p="$(git config -f "$f" --get "$k")" || continue
+                u="$(git config -f "$f" --get "${k%.path}.url")" || u=""
+                printf '%s\t%s\n' "${dir}${p}" "$u"
+              done < <(git config -f "$f" --name-only --get-regexp '^submodule\..*\.path$' 2>/dev/null || true)
+            done < <(find . -name .gitmodules -not -path './.git/*' -printf '%P\n' | sort)
+          }
+
+          # The GitHub org owning a submodule URL; empty for anything else -- a relative
+          # or non-GitHub URL needs no token of ours and must not cost a mint attempt.
+          sm_org() {
+            printf '%s\n' "$1" | sed -nE 's#^(https://github\.com/|git@github\.com:)([^/]+)/.*#\2#p'
+          }
+
+          # tests/ci-build.test.sh sources everything above and stops here.
+          if [ -n "${HYDRATE_LIB_ONLY:-}" ]; then return 0; fi
+
+          # Drop every submodule this build did not ask for, THEN init the ones it
+          # did. checkout's clean:true does not touch a populated submodule -- its
+          # contents are a tracked gitlink rather than untracked files, and reset
+          # does not recurse -- so an agent job's `--recursive` init survives into
+          # this build's context at whatever commit it left behind.
+          keep="${SUBMODULES:-}"
+          on_disk="$(git submodule status 2>/dev/null | awk '{print $2}' || true)"
+          if [ -n "$keep" ]; then
+            drop="$(printf '%s\n' "$on_disk" | grep -vxF -f <(printf '%s\n' $keep) || true)"
+          else
+            drop="$on_disk"
+          fi
+          drop="$(printf '%s\n' "$drop" | sed '/^[[:space:]]*$/d')"
+          if [ -n "$drop" ]; then
+            printf '%s\n' "$drop" | xargs -r git submodule deinit -f -- 2>/dev/null || true
+            echo "deinitialised, not in the build context:" $drop
+          fi
+
+          if [ -z "$keep" ]; then
+            echo "no submodules requested -- build context carries none"
+            exit 0
+          fi
+
+          # Read the map AFTER the deinit, so a nested .gitmodules belonging to a
+          # submodule this build does not want is gone before it can name an org
+          # nobody here needs a token for.
+          MAP="$(sm_map)"
+
+          WANT=()
+          for p in $keep; do
+            if printf '%s\n' "$MAP" | cut -f1 | grep -qxF -- "$p"; then
+              WANT+=("$p")
+            else
+              echo "::error::${p} is not a submodule of this repo -- the Dockerfile cannot COPY from it"
+              exit 1
+            fi
+          done
+
+          # Credential rewrites an earlier job on this persistent runner left behind
+          # (its token is long expired, and it would shadow the ones minted below).
+          for k in $(git config --local --name-only --get-regexp '^url\.' || true); do
+            git config --local --unset-all "$k" || true
+          done
+          # sync FIRST: the persistent runner workspace keeps submodule URLs in
+          # .git/modules/*/config and `submodule init` never overwrites them, so
+          # a URL corrected in .gitmodules would otherwise stay broken forever
+          # (bdh-org/dev-common#105).
+          git submodule sync -- "${WANT[@]}" || true
+
+          CFG=()
+          minted=""
+
+          mint() { # org -> append an insteadOf rewrite carrying a token for that org
+            local org="$1" out tok
+            out="$(mktemp "${RUNNER_TEMP:-/tmp}/hydrate-XXXXXX")"
+            # The mint script masks its token by printing ::add-mask:: on STDOUT, so
+            # stdout must reach the job log; the value itself only lands in $out, never
+            # in a step output (a hydration token is nobody else's business).
+            if ! GITHUB_OUTPUT="$out" CODER_TOKEN_ENV_NAME="" "$MINT" "$org"; then
+              rm -f "$out"; return 1
+            fi
+            tok="$(sed -n 's/^coder_token=//p' "$out" | head -1)"
+            rm -f "$out"
+            [ -n "$tok" ] || return 1
+            CFG+=(-c "url.https://x-access-token:${tok}@github.com/${org}/.insteadOf=https://github.com/${org}/")
+          }
+
+          for p in "${WANT[@]}"; do
+            url="$(printf '%s\n' "$MAP" | awk -F'\t' -v p="$p" '$1 == p {print $2; exit}')"
+            org="$(sm_org "$url")"
+            [ -n "$org" ] || continue
+            case " $minted " in *" $org "*) continue;; esac
+            minted="$minted $org"
+            # Tolerant: a repo whose VAULT_ADDR variable is unset cannot mint, and a
+            # PUBLIC submodule (dev-common is one) needs no credential at all. The
+            # check below is the only thing that decides this step.
+            mint "$org" || echo "::warning::could not mint a ${org} token -- falling back to the checkout credential"
+          done
+
+          # --force is LOAD-BEARING (bdh-org/dev-common#176). Without it, `submodule
+          # update --init` is a NO-OP whenever the module HEAD already equals the pin --
+          # it never looks at the working tree. On this persistent runner an earlier job
+          # can leave a submodule directory emptied of tracked files while .git and HEAD
+          # survive, and every later hydration then "succeeds" against an empty directory.
+          git ${CFG[@]+"${CFG[@]}"} submodule update --init --force -- "${WANT[@]}" || true
+
+          # Fail LOUDLY, naming the submodule and the org it needed. A submodule this
+          # build asked for and did not populate must never reach `docker build` as an
+          # empty directory: the Dockerfile's COPY then fails with a path, 40 lines
+          # from the cause (bdh-org/home-infra#343, #359) -- or worse, succeeds,
+          # because the COPY was of a whole directory and an empty one is still a
+          # directory. `submodule status` prefixes '-' for one never initialised and
+          # '+' for one left at a commit other than the pin, and reports a path CLEAN
+          # when .git exists and HEAD matches even with every tracked file deleted. So
+          # ask the WORKING TREE whether it holds anything, which is the question the
+          # build is really asking.
+          bad="$(git submodule status -- "${WANT[@]}" 2>/dev/null | grep -E '^[-+]' || true)"
+          for _p in "${WANT[@]}"; do
+            # Anything other than .git itself counts as populated.
+            if [ -z "$(ls -A "$_p" 2>/dev/null | grep -vx '.git' || true)" ]; then
+              bad="${bad}"$'\n'" ${_p}"
+              echo "::error::${_p} is checked out at its pin but its working tree is EMPTY"
+            fi
+          done
+          bad="$(printf '%s\n' "$bad" | sed '/^[[:space:]]*$/d')"
+          if [ -n "$bad" ]; then
+            echo "::error::submodule hydration incomplete -- refusing to build against a partial checkout"
+            while read -r rev path _; do
+              [ -n "${path:-}" ] || continue
+              url="$(printf '%s\n' "$MAP" | awk -F'\t' -v p="$path" '$1 == p {print $2; exit}')"
+              org="$(sm_org "$url")"
+              case "$rev" in -*) why="never initialised";; *) why="not at the pinned commit";; esac
+              echo "::error::  ${path}: ${why} -- url ${url:-unknown}, org ${org:-unknown}"
+            done <<< "$bad"
+            echo "If the org is right, check that the bdh-org-coder App is installed there" >&2
+            echo "(Vault kv/ai/coder/github-app needs an install_<org> field for it)," >&2
+            echo "and that this repo sets the VAULT_ADDR variable." >&2
+            exit 1
+          fi
+          git submodule status -- "${WANT[@]}" | sed 's/^/  /'
+          echo "submodule hydration OK"
+
+      # The registry push credential comes from Vault at kv/ci/deploy via the
+      # deploy-ci AppRole (bdh-org/home-infra#78/#264), fetched per-run by the
+      # runner's own script -- no write-only per-repo GitHub secret to duplicate
+      # and rotate across the fleet.
+      - name: Fetch registry push credential from Vault (deploy-ci)
+        id: vault
+        env:
+          # Non-secret and defaulted inside the script, so an unset repo variable
+          # is harmless -- it arrives empty and the script's ${VAULT_ADDR:-...}
+          # fallback takes over.
+          VAULT_ADDR: ${{ vars.VAULT_ADDR }}
+          CODER_ROLE: deploy-ci
+          CODER_SECRET_PATH: kv/ci/deploy
+          CODER_SECRET_FIELD: registry_pw
+          SECRET_OUTPUT_NAME: registry_pw
+          SECRET_ENV_NAME: ""
+        run: /srv/github-runner/bin/vault-fetch-ci-secret.sh
+
+      - name: Log in to the registry
+        env:
+          REGISTRY_PW: ${{ steps.vault.outputs.registry_pw }}
+        run: printf '%s' "$REGISTRY_PW" | docker login "$REGISTRY" -u runner --password-stdin
+
+      - name: Build
+        env:
+          DOCKERFILE: ${{ inputs.dockerfile }}
+          BUILD_ARGS: ${{ inputs.build_args }}
+        run: |
+          set -euo pipefail
+          if [ ! -f "$DOCKERFILE" ]; then
+            echo "::error::no Dockerfile at '$DOCKERFILE' -- pass the dockerfile input (the context is always the repo root)"
+            exit 1
+          fi
+          # The Makefile's VERSION, for ${VERSION} in build_args. Absent is fine
+          # until a build_arg actually asks for it.
+          VERSION="$(grep -m1 -E '^VERSION[[:space:]]*=' Makefile 2>/dev/null | sed -E 's/^VERSION[[:space:]]*=[[:space:]]*//' | tr -d ' \r' || true)"
+          args=()
+          while IFS= read -r line; do
+            case "$line" in ''|'#'*) continue;; esac
+            case "$line" in
+              *'${VERSION}'*)
+                if [ -z "$VERSION" ]; then
+                  echo "::error::build_args asks for \${VERSION} and this repo has no VERSION line in its Makefile: $line"
+                  exit 1
+                fi;;
+            esac
+            line="${line//'${VERSION}'/$VERSION}"
+            line="${line//'${GITHUB_SHA}'/$GITHUB_SHA}"
+            case "$line" in
+              *=*) ;;
+              *) echo "::error::build_args line is not KEY=VALUE: $line"; exit 1;;
+            esac
+            # An unexpanded '$' reaches docker as those characters, which bakes
+            # the literal text into the image and reads as a wrong value rather
+            # than as a mistake here.
+            case "$line" in
+              *'$'*) echo "::warning::build-arg keeps a literal '\$' -- only \${VERSION} and \${GITHUB_SHA} are substituted: $line";;
+            esac
+            echo "build-arg $line"
+            args+=(--build-arg "$line")
+          done <<< "${BUILD_ARGS:-}"
+          # Tagged with the SHA and NOTHING else. :latest is moved by the push
+          # step, and only from main -- tagging it here would put the name on a
+          # branch build's image even when the push below declines to move it.
+          docker build -f "$DOCKERFILE" ${args[@]+"${args[@]}"} -t "$IMAGE:$GITHUB_SHA" .
+
+      - name: Push
+        run: |
+          set -euo pipefail
+          docker push "$IMAGE:$GITHUB_SHA"
+          # :latest means "what is on main" -- never a branch and never a
+          # dispatch at another ref. Airflow DAGs force_pull :latest, so a branch
+          # build moving it would run unreviewed code in prod with no merge
+          # (bdh-org/home-infra#1323). This guard is the whole reason this file
+          # exists in dev-common: it took 14 PRs to apply by hand.
+          if [ "$GITHUB_REF" = "refs/heads/main" ]; then
+            docker tag "$IMAGE:$GITHUB_SHA" "$IMAGE:latest"
+            docker push "$IMAGE:latest"
+            echo "moved :latest to $GITHUB_SHA"
+          else
+            echo "$GITHUB_REF is not refs/heads/main -- :latest left where it is"
+          fi
+
+      - name: Log out
+        if: always()
+        run: |
+          docker logout "$REGISTRY" || true
+          # The run-scoped config directory goes with the credential it held.
+          [ -n "${DOCKER_CONFIG:-}" ] && rm -rf "$DOCKER_CONFIG" || true
+
+  deploy:
+    needs: build-and-push
+    runs-on: ${{ fromJSON(inputs.runs_on) }}
+    # Only main, only a real push or a manual dispatch, and only when the caller
+    # gave a command. workflow_dispatch is INCLUDED: excluding it made a manual
+    # re-fire build and push and then silently skip the deploy, and a green run
+    # with no deployment is the worst shape of failure this stack has
+    # (bdh-org/home-infra#140, hit live 2026-07-19 when GitHub created no runs
+    # for a merge push -- exactly when you reach for a re-fire).
+    if: ${{ inputs.deploy_command != '' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
+    steps:
+      - name: Fetch deploy SSH key from Vault (deploy-ci)
+        id: key
+        if: inputs.deploy_ssh_key
+        env:
+          VAULT_ADDR: ${{ vars.VAULT_ADDR }}
+          CODER_ROLE: deploy-ci
+          CODER_SECRET_PATH: kv/ci/deploy
+          CODER_SECRET_FIELD: deploy_ssh_key_b64
+          SECRET_OUTPUT_NAME: deploy_ssh_key_b64
+          SECRET_ENV_NAME: ""
+        run: /srv/github-runner/bin/vault-fetch-ci-secret.sh
+
+      - name: Deploy
+        env:
+          DEPLOY_COMMAND: ${{ inputs.deploy_command }}
+          NEED_KEY: ${{ inputs.deploy_ssh_key }}
+          KEY_B64: ${{ steps.key.outputs.deploy_ssh_key_b64 }}
+          # The caller repo's variable. Non-secret on purpose: the fetch script
+          # masks its outputs, and masking the literal "min" would redact every
+          # "min" substring in every later log.
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+        run: |
+          set -euo pipefail
+          # Deploying :latest is deploying whatever main pushed LAST, which on a
+          # re-fire or a queued dispatch is not this run's image.
+          case "$DEPLOY_COMMAND" in
+            *:latest*)
+              echo "::error::deploy_command names :latest -- deploy \$GITHUB_SHA, the image this run pushed"
+              exit 1;;
+          esac
+          case "$DEPLOY_COMMAND" in
+            *GITHUB_SHA*) ;;
+            *) echo "::warning::deploy_command does not mention \$GITHUB_SHA -- check it is not deploying whatever the host already had";;
+          esac
+          if [ "${NEED_KEY:-false}" = "true" ]; then
+            if [ -z "${KEY_B64:-}" ]; then
+              echo "::error::deploy_ssh_key is true but Vault returned no key -- check the deploy-ci role and that this repo sets VAULT_ADDR"
+              exit 1
+            fi
+            DEPLOY_KEY="$(mktemp "${RUNNER_TEMP:-/tmp}/deploy-key-XXXXXX")"
+            trap 'rm -f "$DEPLOY_KEY"' EXIT
+            # Stored base64 so the key survives Vault/Actions round-tripping
+            # intact: -A tolerates the single-line form, and printf adds no
+            # trailing newline before the decode (a key with a mangled trailer
+            # fails at LOAD, not at connect, which reads like a server-side
+            # refusal).
+            printf '%s' "$KEY_B64" | openssl base64 -d -A > "$DEPLOY_KEY"
+            chmod 600 "$DEPLOY_KEY"
+            export DEPLOY_KEY
+          fi
+          echo "deploying $GITHUB_SHA"
+          # Via the environment, never interpolated into this script: the command
+          # is the caller's text, and a `with:` value spliced into YAML would
+          # change what this script IS rather than what it runs.
+          bash -c "$DEPLOY_COMMAND"
