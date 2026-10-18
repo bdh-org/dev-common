@@ -38,6 +38,11 @@ PY
 [ -s "$TMP/step.py" ] || { echo "NOT OK - could not lift the step from $WF"; exit 1; }
 
 CASE="the step only runs for the reviewer's own hand-back"
+# Re-review is opt-in (Brian, 2026-10-18: no automatic agent reviews).
+grep -q "github.event.comment.user.id == inputs.reviewer_user_id && inputs.auto_rereview" "$WF" \
+  && ok "the re-review step is gated on auto_rereview" || notok "the re-review step is not gated on inputs.auto_rereview"
+awk '/^      auto_rereview:/{f=1} f && /default:/{print; exit}' "$WF" | grep -q 'default: false' \
+  && ok "auto_rereview defaults to false" || notok "auto_rereview must default to false"
 grep -q "github.event.comment.user.id == inputs.reviewer_user_id" "$WF" \
   && ok "gated on the /revise author being the reviewer" || notok "gate on the comment author"
 grep -q "steps.verify.outcome == 'success'" "$WF" \
