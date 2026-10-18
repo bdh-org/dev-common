@@ -97,6 +97,15 @@ on:
         type: number
         required: false
         default: 337812394
+      auto_rereview:
+        description: >
+          After the REVIEWER's own /revise, re-apply `agent-review` so the revision is
+          reviewed again (bdh-org/home-infra#1256). Default OFF, for the same reason as
+          agent-issue-to-pr's auto_review: reviews are metered and run only when asked
+          (Brian, 2026-10-18). Ask for the next review with the label or /agent-review.
+        type: boolean
+        required: false
+        default: false
 
 jobs:
   revise:
@@ -712,7 +721,7 @@ jobs:
       # event. Only for the reviewer's hand-backs; after a human's /revise, a review is
       # asked for the way it always was.
       - name: Ask for the re-review (agent-review label) when the reviewer asked for this revision
-        if: ${{ !cancelled() && steps.verify.outcome == 'success' && github.event.comment.user.id == inputs.reviewer_user_id }}
+        if: ${{ !cancelled() && steps.verify.outcome == 'success' && github.event.comment.user.id == inputs.reviewer_user_id && inputs.auto_rereview }}
         continue-on-error: true
         env:
           GH_TOKEN: ${{ steps.coder_agent.outputs.coder_token || steps.coder.outputs.coder_token }}

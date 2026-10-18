@@ -105,6 +105,13 @@ start '[]' 200 502; run
 [ "$RC" = 0 ] && ok "never fails the run" || notok "lookup failure exit 0 (rc=$RC)"
 case "$OUT" in *"::warning::could not look up the PR"*) ok "and warns" ;; *) notok "warns ($OUT)" ;; esac
 
+
+# Automatic labelling is opt-in (Brian, 2026-10-18: "I do not want automatic agent reviews").
+CASE="default"
+WF_I2P="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.github/workflows/agent-issue-to-pr.yml"
+awk '/^      auto_review:/{f=1} f && /default:/{print; exit}' "$WF_I2P" | grep -q 'default: false' \
+  && ok "auto_review defaults to false" || notok "auto_review must default to false"
+
 echo
 echo "agent-review-label: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

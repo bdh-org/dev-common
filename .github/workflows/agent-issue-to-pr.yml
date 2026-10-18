@@ -114,12 +114,15 @@ on:
         default: claude-opus-5
       auto_review:
         description: >
-          Label the agent's (non-draft) PR `agent-review`, which the per-repo Grok
-          reviewer wrapper triggers on (bdh-org/home-infra#1188). Default on; a wrapper
-          can pass false to opt out. Harmless in a repo with no reviewer wrapper.
+          Label the agent's (non-draft) PR `agent-review`, which the per-repo
+          reviewer wrapper triggers on (bdh-org/home-infra#1188). Default OFF: Brian,
+          2026-10-18, "I do not want automatic agent reviews. I can ask you to label
+          them for agent reviews as desired." Each review is metered, so a review runs
+          only when someone asks (the label or an /agent-review comment). A wrapper
+          can pass true to opt one repo back in.
         type: boolean
         required: false
-        default: true
+        default: false
 
 jobs:
   # Decide whether the /agent verb was actually said, BEFORE anything expensive.
