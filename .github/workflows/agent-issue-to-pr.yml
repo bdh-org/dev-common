@@ -609,7 +609,12 @@ jobs:
           # bdh-org-coder must NOT be listed, or its own status comments could re-trigger.
           # This input matches by NAME (the action offers no id form): an App rename
           # must update it, while the wrapper gates key on the id and survive one.
-          allowed_bots: "bdh-org-headful"
+          # bdh-org-roy hands work over by applying `agent-pr` itself, so it is named
+          # on that path -- the result is a PR that still needs a review and a merge.
+          # It is NOT named on `agent-deploy`, which auto-merges after the gate: roy
+          # reads outside content and must not start a self-merging deploy
+          # (bdh-org/dev-common#308).
+          allowed_bots: ${{ github.event.label.name == 'agent-deploy' && 'bdh-org-headful' || 'bdh-org-headful,bdh-org-roy' }}
           # Attribute the commit to the App whose token actually made it.
           #
           # The action's DEFAULT bot_id is 41898282, which is `github-actions[bot]` --
