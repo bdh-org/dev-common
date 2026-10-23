@@ -44,6 +44,13 @@ all 13 open offenders — loads this file too. **Unlike the commit rule, strip i
 when you see one: a body is mutable text. Leave merged PRs alone. The `<sub>filed from the
 &lt;repo&gt; devcontainer</sub>` line is different and stays.
 
+## Spelling: American English, never British
+Everything you write -- page text, docs, comments, issues, PRs, chat -- uses American spelling:
+annualized, modeled, color, behavior, catalog, favorable, analyze, labeled (Brian, 2026-10-23:
+*"do not use British English, use American English"*; bdh-org/dev-common#310). Fix British
+spellings in prose you touch; do NOT rename identifiers or stored keys (`realised_gain`) for it
+-- that is a data change, not spelling.
+
 ## Check `ARCHITECT-INBOX.md` at session start
 If the repo root has one, **read it before anything else** — it is gitignored, so nothing will
 prompt you. Reply in the same file when asked (append; do not rewrite another's section), **and
