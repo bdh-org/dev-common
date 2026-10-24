@@ -293,9 +293,11 @@ Generic pattern vocabulary; each stack's concrete instances are in its `stack-co
 - **P6 Service discovery** — container names on the stack's shared network; one endpoint env var per upstream.
 - **P7 DAG management** — `dags/` per service; `make dags-install` / `dags-reserialize`.
 - **P8 Version propagation** — `VERSION=` in each Makefile; every PR bumps, and the LEVEL is a
-  choice: `make bump-minor` if a consumer could observe the change (new module, function or
-  capability; changed default or output shape; an ADR or convention amended), `make bump-patch`
-  if not (fix, refactor, tests, docs, CI); major is reserved (bdh-org/home-infra#693).
+  choice, plain semver: **major** for a backward-incompatible change (a consumer must change to
+  keep working); `make bump-minor` for new backward-compatible capability (new module, function,
+  setting or output field; changed default; an ADR or convention amended); `make bump-patch` for
+  a fix (even one that changes the values a consumer reads), refactor, tests, docs, CI
+  (bdh-org/home-infra#693, bdh-org/dev-common#312).
   `tag-version.yml` tags every push to main (a workflow-file commit beside a bump breaks the tag
   push — see the doc).
 - **P9 Devcontainer setup chain** — `init-host.sh` → `setup-base.sh` → `setup-python-dev.sh` →

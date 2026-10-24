@@ -110,13 +110,18 @@ git tags on every push to main (no `paths:` filter, bdh-org/home-infra#625).
 **Which level** (bdh-org/home-infra#693). Coarse on purpose, so it can be applied
 in five seconds:
 
-* **patch (`x.y.Z`)** -- nothing a consumer could observe: a fix that restores
-  intended behaviour, a refactor, tests, docs, comments, CI.
-* **minor (`x.Y.0`)** -- anything a consumer could observe: a new module or public
-  function, a new capability, a changed default, a changed output shape, an
-  amendment to an ADR or a documented convention.
-* **major (`X.0.0`)** -- reserved. The fleet is `0.x` ("no stability promise");
-  1.0 is a separate decision that a repo is finished, not a per-change call.
+Plain semver:
+
+* **patch (`x.y.Z`)** -- a fix that restores intended behaviour, **even when it
+  changes the values a consumer reads** (re-dated prices are a fix, not a feature:
+  Brian on finzeug/heller#707), a refactor, tests, docs, comments, CI.
+* **minor (`x.Y.0`)** -- new backward-compatible capability: a new module or public
+  function, a new setting or output field, a changed default, an amendment to an
+  ADR or a documented convention.
+* **major (`X.0.0`)** -- a backward-incompatible change: a consumer must change to
+  keep working (a removed or renamed function, setting or output field, a changed
+  meaning). This was "reserved" until bdh-org/dev-common#312, which read as "never";
+  Brian, 2026-10-24: major bumps are for backward-incompatible features.
 
 The number exists to answer *did anything I depend on change?* -- which matters most
 for `ledger-io` and `ratecraft`, which reach production only as pins. Precedent:
