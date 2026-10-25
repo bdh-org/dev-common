@@ -106,6 +106,12 @@ jobs:
       - name: The NO-WORK note file is wired from the agent to the reporter
         run: bash tests/agent-no-work-wiring.test.sh
 
+      # The agent lints and tests its own edits in the repo's CI env, handed to the agent
+      # step alone as CONDA_PREFIX; a rename on one side puts it back on a ruff that does
+      # not exist (bdh-org/dev-common#314).
+      - name: The agent step gets the repo's CI env for lint and test
+        run: bash tests/agent-ci-env-wiring.test.sh
+
       - name: claude-prod / claude-dev host shims
         run: bash tests/claude-host-shim.test.sh
 
