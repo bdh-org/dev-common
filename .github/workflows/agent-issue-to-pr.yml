@@ -83,6 +83,16 @@ on:
         type: string
         required: false
         default: ""
+      ci_env:
+        description: >
+          Name of this repo's self-hosted-ci conda env (its `conda-env-name`), which
+          the agent uses READ-ONLY to run `make lint` / `make test` on its own edits
+          (bdh-org/dev-common#314). Empty = `<repo>-ci`, the name every
+          self-hosted-ci caller uses. A repo on hosted CI has no such env on forge;
+          the agent is then told it cannot run the checks, and says so.
+        type: string
+        required: false
+        default: ""
       max_turns:
         description: >
           Default Claude Code --max-turns budget for the agent run, and the fallback
@@ -554,6 +564,32 @@ jobs:
       # timeout-minutes is the first term of lock.sh's ordering invariant (step
       # timeout < stale < wait) -- raising it past the lock's stale-seconds lets a
       # slow install be stolen from. tests/claude-install-lock.test.sh asserts it.
+      # The agent's own lint/test env (bdh-org/dev-common#314). Without one it pushed
+      # edits it could not check: `make lint` reached the devcontainer default
+      # /home/vscode/miniforge3/bin/ruff and failed, and there was no pytest (the
+      # /revise on finzeug/heller#710). self-hosted-ci keeps the repo's conda env on
+      # this host's disk, under the same runner user, so the agent USES that one
+      # rather than building its own. READ-ONLY: CI rebuilds it in place, conda is not
+      # safe under concurrent writers (scripts/forge/register-forge-runner.sh in
+      # home-infra), so the prompt forbids installing into it. Passed to the agent
+      # step alone, as CONDA_PREFIX -- which every repo Makefile's `?=` defers to --
+      # so no other step's python changes.
+      - name: Locate the repo's CI env for the agent (read-only use)
+        id: cienv
+        env:
+          CI_ENV: ${{ inputs.ci_env || format('{0}-ci', github.event.repository.name) }}
+        run: |
+          p="$HOME/miniforge3/envs/$CI_ENV"
+          if [ -x "$p/bin/python" ] && [ -x "$p/bin/ruff" ]; then
+            echo "prefix=$p" >> "$GITHUB_OUTPUT"
+            echo "status=ok" >> "$GITHUB_OUTPUT"
+            echo "agent checks run in CI env $CI_ENV: $("$p/bin/python" --version 2>&1), ruff $("$p/bin/ruff" --version 2>&1 | awk '{print $2}')"
+          else
+            echo "prefix=" >> "$GITHUB_OUTPUT"
+            echo "status=missing" >> "$GITHUB_OUTPUT"
+            echo "::notice::no CI env '$CI_ENV' with python+ruff at $p -- the agent cannot lint or test its edits here (hosted-CI repo, or CI never built it); it is told to say so"
+          fi
+
       - name: Install Claude Code (holds the host-wide install lock for this step only)
         id: claude_cli
         timeout-minutes: 10
@@ -585,6 +621,9 @@ jobs:
           # which is the race the install step exists to prevent.
           DISABLE_AUTOUPDATER: "1"
           GATE_CMD: ${{ inputs.gate_cmd }}
+          # The repo's CI conda env, read-only (bdh-org/dev-common#314; see cienv).
+          CONDA_PREFIX: ${{ steps.cienv.outputs.prefix }}
+          AGENT_CI_ENV: ${{ steps.cienv.outputs.status }}
           # Where the agent writes its finding when the issue needs NO change (a decision
           # already implemented, a question answered): the reporter step reads it and ends
           # the run green with that note on the issue, instead of a red "no PR"
@@ -659,11 +698,18 @@ jobs:
             with conventional-commit style, and PUSH it. Follow this repository's CLAUDE.md
             conventions. Never commit directly to main.
 
-            Run the repo's fast local checks and fix any failures FIRST: `make
-            version-check` and `make lint` (ignore "No rule to make target" if a repo
-            doesn't have one). For any version change ALWAYS use `make bump-patch` --
+            Run the repo's checks and fix any failures FIRST: `make version-check`,
+            `make lint` and `make test` (ignore "No rule to make target" if a repo
+            doesn't have one). They run in the repo's CI conda env, exposed to you as
+            CONDA_PREFIX (env var AGENT_CI_ENV is `ok`); NEVER `pip install` or `conda
+            install` into it -- CI owns it and rebuilds it in place. If AGENT_CI_ENV is
+            `missing`, there is no env to run them in: say so in your completion comment
+            rather than substituting a weaker check silently. Bump the version with
+            `make bump-patch` for a fix, refactor, tests or docs, `make bump-minor` for
+            new backward-compatible capability, major only for a backward-incompatible
+            change (bdh-org/dev-common#312) --
             never hand-edit version strings, or the Makefile VERSION and __version__ drift
-            and CI's version-check fails. Re-run until both pass.
+            and CI's version-check fails. Re-run until they all pass.
 
             If (and only if) the env var GATE_CMD is non-empty, VERIFY on the dev tier
             BEFORE opening the PR by running this exact command:
