@@ -56,7 +56,7 @@ extract() { # workflow-file step-name
 
 # repo_with <version> <where-the-tag-points: none|head|other|annotated|branch>
 repo_with() {
-  local ver="$1" where="$2" d="$TMP/r$RANDOM$RANDOM"
+  local ver="$1" where="$2" d="$(mktemp -d "$TMP/r-XXXXXX")"
   mkdir -p "$d" && cd "$d" || return 1
   git init -q -b main .
   echo one > f; git add f; git commit -qm first

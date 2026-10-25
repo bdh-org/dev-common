@@ -33,7 +33,7 @@ SID="eea68fda-c4e7-49af-8443-f3cda303785c"
 
 # A HOME whose global gitconfig carries NAME, and an empty env file.
 setup() { # name
-  H="$TMP/home-$RANDOM"; mkdir -p "$H"; ENVF="$H/session-env.sh"; : > "$ENVF"
+  H="$(mktemp -d "$TMP/home-XXXXXX")"; ENVF="$H/session-env.sh"; : > "$ENVF"
   if [ -n "$1" ]; then printf '[user]\n\tname = %s\n\temail = bdh-ai@example.invalid\n' "$1" > "$H/.gitconfig"; fi
 }
 
