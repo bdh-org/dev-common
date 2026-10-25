@@ -55,7 +55,7 @@ extract() { # workflow-file step-name
 
 # A directory with a Makefile containing the given lines (or no Makefile at all).
 make_repo() { # [makefile-line ...]
-  local d="$TMP/repo-$RANDOM$RANDOM"
+  local d; d="$(mktemp -d "$TMP/repo-XXXXXX")"
   mkdir -p "$d" || return 1
   if [ "$#" -gt 0 ]; then
     printf '%s\n' "$@" > "$d/Makefile"

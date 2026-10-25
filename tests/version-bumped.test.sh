@@ -93,7 +93,7 @@ for WF_NAME in $WORKFLOWS; do
   # A repo with `main` at $1, a branch at $2, and (optionally) a code change.
   # Origin is a local clone of itself, because the step does `git fetch origin`.
   make_repo() { # base_version head_version [extra_file]
-    local base="$1" head="$2" extra="${3:-}" d="$TMP/repo-$RANDOM"
+    local base="$1" head="$2" extra="${3:-}" d="$(mktemp -d "$TMP/repo-XXXXXX")"
     mkdir -p "$d" && cd "$d" || return 1
     git init -q -b main .
     printf 'VERSION=%s\n' "$base" > Makefile
@@ -118,7 +118,7 @@ for WF_NAME in $WORKFLOWS; do
   # make_repo's "collision" case sets base == head == merge base, so it never
   # reaches the collision branch at all -- which is how dev-common#232 hid.
   make_collision_repo() { # fork_version taken_version
-    local fork="$1" taken="$2" d="$TMP/collide-$RANDOM"
+    local fork="$1" taken="$2" d="$(mktemp -d "$TMP/collide-XXXXXX")"
     mkdir -p "$d" && cd "$d" || return 1
     git init -q -b main .
     printf 'VERSION=%s\n' "$fork" > Makefile

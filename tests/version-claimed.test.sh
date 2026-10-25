@@ -107,7 +107,8 @@ mk() { printf 'VERSION=%s\n' "$2" > "$STUB_MK_DIR/$1"; }
 
 # An open-PR list. Each arg is "number:sha:draft:title".
 prs() {
-  local out="$TMP/prs-$RANDOM.json" first=1
+  local out first=1
+  out="$(mktemp --suffix=.json "$TMP/prs-XXXXXX")"
   { printf '['
     for spec in "$@"; do
       IFS=: read -r n sha draft title <<< "$spec"
@@ -123,7 +124,7 @@ prs() {
 
 # The repo the step runs IN: a working tree with a Makefile at $1.
 workdir() {
-  local d="$TMP/wd-$RANDOM"
+  local d; d="$(mktemp -d "$TMP/wd-XXXXXX")"
   mkdir -p "$d"
   [ "$1" = "NOVERSION" ] && printf 'all:\n\techo hi\n' > "$d/Makefile" \
                          || printf 'VERSION=%s\n' "$1" > "$d/Makefile"
