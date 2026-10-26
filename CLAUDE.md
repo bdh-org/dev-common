@@ -51,6 +51,16 @@ annualized, modeled, color, behavior, catalog, favorable, analyze, labeled (Bria
 spellings in prose you touch; do NOT rename identifiers or stored keys (`realised_gain`) for it
 -- that is a data change, not spelling.
 
+## Code: build only what is asked
+Agents over-build; these push back (Brian, 2026-10-26; bdh-org/dev-common#318).
+- **YAGNI**: no option, flag, abstraction or configurability until a real case needs it.
+- **Extract at the second duplication, not the first**: one use is not a pattern.
+- **Simple first**: write the obvious solution; optimize only when measured slow.
+- **Prefer deleting code to adding it**: less code, fewer bugs.
+- **Self-describing names over abbreviations**, above all for boolean flags and API parameters
+  (`wait_until_saved=True`, not `wait=True`). Match the surrounding code; never rename an
+  established identifier for this alone.
+
 ## Check `ARCHITECT-INBOX.md` at session start
 If the repo root has one, **read it before anything else** — it is gitignored, so nothing will
 prompt you. Reply in the same file when asked (append; do not rewrite another's section), **and
