@@ -110,12 +110,13 @@ on:
       auto_rereview:
         description: >
           After the REVIEWER's own /revise, re-apply `agent-review` so the revision is
-          reviewed again (bdh-org/home-infra#1256). Default OFF, for the same reason as
-          agent-issue-to-pr's auto_review: reviews are metered and run only when asked
-          (Brian, 2026-10-18). Ask for the next review with the label or /agent-review.
+          reviewed again (bdh-org/home-infra#1256). Default ON: the reviewer's /revise only
+          follows a review someone asked for, and max_revise_rounds bounds the loop, so
+          this adds no unrequested review (Brian, 2026-10-27: "They're supposed to
+          iterate"; bdh-org/dev-common#320). Agent PRs are still not reviewed on open.
         type: boolean
         required: false
-        default: false
+        default: true
 
 jobs:
   revise:
