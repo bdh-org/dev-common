@@ -185,3 +185,11 @@ jobs:
       # workflows, so the suite runs against BOTH rather than picking one.
       - name: Tag collision (embedded in tag-version.yml AND tag-version-self-hosted.yml)
         run: bash tests/tag-version-collision.test.sh
+
+      # make/utils.mk's two listings select targets with a grep character class,
+      # and a target the class rejects still RUNS -- it is only undiscoverable.
+      # So the failure is silent in every consumer at once, and the only thing
+      # that can see it is a listing asked for a target it ought to show
+      # (dev-common#229).
+      - name: make help / make list list a target whose name has a digit
+        run: bash tests/make-help-digits.test.sh

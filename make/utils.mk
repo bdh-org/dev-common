@@ -14,9 +14,16 @@ show: ## Show the commands a target would run (usage: make show <target>)
 
 .PHONY: help list ls show claude-install common-update incorporate-devtemplate prod-clean dev-clean recreate common-consumers
 
+# The 0-9 in both character classes below is load-bearing, and its absence was
+# silent: a target whose name holds a digit still RUNS, it just never appears in
+# either listing, so the only symptom is a target nobody can discover
+# (bdh-org/dev-common#229, found in bdh-site where `vm20-map`, `vm20-map-check`
+# and `vm20-viewer-test` were all invisible). Digits in target names are
+# ordinary -- `py311-*`, `s3-*`, `vm20-*` -- so this is the general fix, not a
+# rename-around.
 help: ## Show available targets with descriptions
 	@for f in $(MAKEFILE_LIST); do \
-		targets=$$(grep -E '^[a-zA-Z_-]+:.*##' "$$f" 2>/dev/null); \
+		targets=$$(grep -E '^[a-zA-Z0-9_-]+:.*##' "$$f" 2>/dev/null); \
 		if [ -n "$$targets" ]; then \
 			echo ""; \
 			echo "$$f:"; \
@@ -26,7 +33,7 @@ help: ## Show available targets with descriptions
 
 list ls: ## List all targets
 	@for f in $(MAKEFILE_LIST); do \
-		targets=$$(grep -E '^[a-zA-Z_-]+[a-zA-Z_ -]*:' "$$f" 2>/dev/null | grep -v ':=' | grep -v '\.PHONY'); \
+		targets=$$(grep -E '^[a-zA-Z0-9_-]+[a-zA-Z0-9_ -]*:' "$$f" 2>/dev/null | grep -v ':=' | grep -v '\.PHONY'); \
 		if [ -n "$$targets" ]; then \
 			echo ""; \
 			echo "$$f:"; \
