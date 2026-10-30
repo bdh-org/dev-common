@@ -273,6 +273,13 @@ cd ~/dev/home-infra && ./scripts/twix/sync-claude-access.sh && make brief-redepl
 - **One line at a time whenever anything prompts.** A `read` consumes the next pasted line as its
   value. (A single `&&` chain is fine; `sudo`/`ssh` prompts read the tty.)
 - **Keep lines under ~70 characters** — a wrapped line copies as two.
+- **Single-quote any command containing brackets, globs or `$`.** A literal IPv6 URL
+  (`curl 'http://[2600:1702:6f00:d590::15]/'`), a path holding `[`, a URL with `?` and `&`: all
+  are glob or expansion syntax in his shell. `zsh` does not warn — it aborts with `no matches
+  found:` **before the command runs**, and that reads as the command having run and failed, so a
+  reachability probe hands back a confident wrong answer (bdh-org/dev-common#250). Say when a URL
+  is for a **browser** instead — brackets need no quoting there, so the same string is right in
+  one place and inert in the other.
 - **Never pipe output straight into a parser** — show the server's own error.
 - **A secret NEVER appears in a command the operator types** — not `export TOKEN='…'`, not a flag.
   Prompt (`read -rs`) or read a mode-600 file; `$VAR` is fine. Where a tool already prompts, tell
