@@ -340,6 +340,52 @@ else
   assert_contains "$OUT" "EMPTY" "if it cannot restore it, it says the tree is empty"
 fi
 
+CASE="e2e: a nested submodule inside a KEPT path"
+# bdh-org/dev-common#306, and heller#356 one level down. `common` is always in
+# this workflow's keep list and <stack>-stack-common nests dev-common again as
+# `stack-common/common` (P3). `git submodule status` is non-recursive, so the
+# nested path never reached the deinit list, and `update --force -- stack-common`
+# runs `checkout -f` in the parent, which does not touch a gitlink directory's
+# contents. So an agent job's `--recursive` init left it populated at whatever
+# commit it was on, and a test guarded on "is this submodule checked out?" ran
+# against it. The sweep must clear the nested copy and keep the top-level one of
+# the same name.
+mkrepo inner
+git init -q --bare -b main "$TMP/remotes/stack-common.git"
+mid="$TMP/build/stack-common"; mkdir -p "$mid"; git init -q -b main "$mid"
+echo stack-common > "$mid/file"
+git -C "$mid" submodule add -q "$TMP/remotes/inner.git" common >/dev/null 2>&1
+git -C "$mid" add -A; git -C "$mid" commit -qm init
+git -C "$mid" push -q "$TMP/remotes/stack-common.git" main
+
+git init -q --bare -b main "$TMP/remotes/two-level.git"
+w="$TMP/build/two-level"; mkdir -p "$w"; git init -q -b main "$w"
+echo consumer > "$w/file"
+for s in "dev-common common" "stack-common stack-common"; do
+  set -- $s
+  git -C "$w" submodule add -q "$TMP/remotes/$1.git" "$2" >/dev/null 2>&1
+done
+git -C "$w" add -A; git -C "$w" commit -qm init
+git -C "$w" push -q "$TMP/remotes/two-level.git" main
+
+git clone -q "$TMP/remotes/two-level.git" "$TMP/co-nested"
+git -C "$TMP/co-nested" submodule update --init --recursive --force >/dev/null 2>&1
+echo AGENT-LEFTOVER > "$TMP/co-nested/stack-common/common/stale.txt"
+# Prove the fixture really is the blind spot before asserting the fix handles it.
+if git -C "$TMP/co-nested" submodule status | grep -q 'stack-common/common'; then
+  notok "fixture is wrong: non-recursive status already lists the nested path"
+else ok "fixture reproduces it: non-recursive status does not mention the nested path"; fi
+
+if run_hydrate "$TMP/co-nested" "stack-common"; then ok "hydrates a two-level repo"
+else notok "hydration failed:"; printf '%s\n' "$OUT" | sed 's/^/         /'; fi
+if [ -f "$TMP/co-nested/stack-common/file" ]; then ok "the named parent is populated"
+else notok "stack-common is empty -- the sweep broke the path this run asked for"; fi
+if [ -f "$TMP/co-nested/common/file" ]; then ok "and the top-level common of the same name survives"
+else notok "the top-level common was swept -- the sweep matched a basename, not a path"; fi
+assert_eq "" "$(ls -A "$TMP/co-nested/stack-common/common" 2>/dev/null || true)" \
+  "the nested copy this run did not ask for is cleared, stray files and all (#306)"
+assert_contains "$OUT" "stack-common/common" "and the log names what it swept"
+
 CASE="e2e: an unrequested path"
 if run_hydrate "$TMP/co-sel" "lib/nope"; then ok "an extra that is not a submodule does not fail the run"
 else notok "failed on an unknown extra-submodules path:"; printf '%s\n' "$OUT" | sed 's/^/         /'; fi
