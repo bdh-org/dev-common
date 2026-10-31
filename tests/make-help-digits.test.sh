@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # make-help-digits.test.sh -- `make help` and `make list` must list a target
-# whose name contains a digit (bdh-org/dev-common#229).
+# whose name contains a digit (bdh-org/dev-common#229), and a target declared
+# with a sibling on one line (bdh-org/dev-common#323).
 #
 # The defect this encodes is invisible by construction. Both listings in
 # make/utils.mk select target lines with a grep character class, and both
@@ -18,11 +19,15 @@
 # one -- the same trap tests/version-bumped.test.sh avoids by extracting the
 # step it tests.
 #
-# `list` gets a case `help` cannot have: two targets declared on one line
-# (`s3-sync s3-sync-check:`). Its regex has a SECOND character class for the
-# rest of the line, and a single digit-bearing name does not reach it -- the
-# first class consumes the whole name. Only the multi-target line pins it, and
-# `help` anchors its colon to the first name so it never lists one at all.
+# Both listings get a case for two targets declared on one line
+# (`s3-sync s3-sync-check:`). For `list` it reaches a part of the regex nothing
+# else does -- a SECOND character class for the rest of the line, which a single
+# digit-bearing name never gets to because the first class consumes the whole
+# name. For `help` it is a separate defect found while fixing this one: `help`
+# anchored its colon to the end of the FIRST name, so it listed no multi-target
+# line at all, including this repo's own `list ls:` (bdh-org/dev-common#323). It
+# now lists one as a single row naming both targets, `list ls`, so the case asks
+# for the names adjacent and not merely both present somewhere in the output.
 #
 # Usage:  bash tests/make-help-digits.test.sh      (or: make test)
 
@@ -73,6 +78,8 @@ py311-lint: ## a digit run in the middle of the name
 
 s3-sync s3-sync-check: ## two targets on one line, both with digits
 	@true
+
+fixture_var := 7 ## an assignment, not a target
 FIXTURE
 
 run_make() { make -C "$TMP" --no-print-directory "$1" 2>&1; }
@@ -123,28 +130,42 @@ for name in vm20-map py311-lint; do
   esac
 done
 
-# Only `list` shows multi-target lines, and only this case reaches the second
-# character class in its regex.
-CASE="list lists both names of a multi-target line"
-case "$LIST_OUT" in
-  *"s3-sync s3-sync-check"*)
-    ok "the trailing character class accepts digits too" ;;
-  *)
-    notok "make list does not list 's3-sync s3-sync-check' -- its second character class still omits 0-9" "$LIST_OUT" ;;
-esac
-
-# What the greps filter out must stay filtered: adding 0-9 widens them, and the
-# variables it could newly catch all carry a digit (VERSION=0.24.0 and friends).
-CASE="widening the class caught no variable assignments"
-leaked=""
-for noise in VERSION PROD_SERVER IMAGE_NAME MAKEFLAGS _SHOW_TARGETS; do
-  printf '%s\n' "$LIST_OUT" | grep -qw -- "$noise" && leaked="$leaked $noise"
+# A line declaring two targets, in both listings. For `list` this is the only
+# case that reaches the second character class in its regex; for `help` it is
+# the whole of bdh-org/dev-common#323 -- the colon used to be anchored to the
+# end of the first name, so no such line was ever listed. Both names adjacent
+# is the format decision: one row, named as the makefile names it.
+for pair in "help:$HELP_OUT" "list:$LIST_OUT"; do
+  goal="${pair%%:*}"
+  out="${pair#*:}"
+  CASE="$goal lists both names of a multi-target line"
+  case "$out" in
+    *"s3-sync s3-sync-check"*)
+      ok "a multi-target line is listed as one row naming both targets" ;;
+    *)
+      notok "make $goal does not list 's3-sync s3-sync-check'" "$out" ;;
+  esac
 done
-if [ -z "$leaked" ]; then
-  ok "no variable assignment appears as a target"
-else
-  notok "make list now lists variable assignments as targets" "$leaked"
-fi
+
+# What the greps filter out must stay filtered. Both widenings could overreach:
+# adding 0-9 catches variables that carry a digit (VERSION=0.24.0 and friends),
+# and allowing a space in a target name would catch ` :=` assignments if it were
+# written as a character class instead of repeated whole names -- `fixture_var`
+# in the fixture above is there to be absent.
+for pair in "help:$HELP_OUT" "list:$LIST_OUT"; do
+  goal="${pair%%:*}"
+  out="${pair#*:}"
+  CASE="$goal lists no variable assignment as a target"
+  leaked=""
+  for noise in fixture_var VERSION PROD_SERVER IMAGE_NAME MAKEFLAGS _SHOW_TARGETS; do
+    printf '%s\n' "$out" | grep -qw -- "$noise" && leaked="$leaked $noise"
+  done
+  if [ -z "$leaked" ]; then
+    ok "no variable assignment appears as a target"
+  else
+    notok "make $goal now lists variable assignments as targets" "$leaked"
+  fi
+done
 
 printf '\npassed: %d   failed: %d\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
