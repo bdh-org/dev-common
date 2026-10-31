@@ -106,6 +106,12 @@ jobs:
       - name: The NO-WORK note file is wired from the agent to the reporter
         run: bash tests/agent-no-work-wiring.test.sh
 
+      # A misspelt directive (`agent-tuns: 150`) is warned about and named in the
+      # out-of-turns comment, instead of being dropped in silence and the run then
+      # dying on the budget it asked to raise (bdh-org/dev-common#303).
+      - name: A misspelt agent directive is named, not ignored
+        run: bash tests/agent-directive-typo.test.sh
+
       # The agent lints and tests its own edits in the repo's CI env, handed to the agent
       # step alone as CONDA_PREFIX; a rename on one side puts it back on a ruff that does
       # not exist (bdh-org/dev-common#314).
