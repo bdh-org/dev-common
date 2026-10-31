@@ -193,3 +193,11 @@ jobs:
       # (dev-common#229).
       - name: make help / make list list a target whose name has a digit
         run: bash tests/make-help-digits.test.sh
+
+      # The shared skills (P14) are instructions, so every way they break is
+      # silent -- an installer glob that stops picking one up, frontmatter that
+      # does not parse, or a path the skill sends a session to that has since
+      # moved. Runs the real install block out of setup-claude.sh against a
+      # throwaway repo tree (dev-common#326).
+      - name: Shared skills install, parse, and name paths that exist
+        run: bash tests/skills.test.sh
