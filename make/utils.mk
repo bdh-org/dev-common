@@ -112,13 +112,27 @@ ifndef SERVICE
 endif
 	docker compose up -d --force-recreate $(SERVICE)
 
-common-consumers: ## list repos that use the bdh-org/dev-common submodule across orgs you hold tokens for
-	@cred=$$HOME/.config/ai/claude/credentials; \
-	for tok in $$cred/gh-*.token; do \
-	  [ -e "$$tok" ] || continue; \
-	  o=$$(basename "$$tok" .token | sed 's/^gh-//'); \
-	  GH_TOKEN=$$(cat "$$tok") gh repo list "$$o" --no-archived --limit 200 --json nameWithOwner --jq '.[].nameWithOwner' 2>/dev/null \
-	  | while read -r r; do \
-	      GH_TOKEN=$$(cat "$$tok") gh api "repos/$$r/contents/.gitmodules" -H "Accept: application/vnd.github.raw" 2>/dev/null | grep -q 'dev-common' && echo "$$r"; \
-	    done; \
-	done | sort -u
+# Mints a bdh-org-headful App token per org: the gh-<org>.token PAT files this
+# used to read were revoked on 2026-09-25, and with none on disk the glob matched
+# nothing and the target printed an empty list with exit 0 (dev-common#322).
+# Fails loudly, naming the org, when a token cannot be minted or a listing is
+# empty -- three orgs in the stack and zero consumers is a read failure, not an
+# answer.
+COMMON_CONSUMER_ORGS ?= bdh-org finzeug finriskanalytics
+common-consumers: ## list repos that use the bdh-org/dev-common submodule across the three orgs (gh-app-token per org)
+	@found=$$(mktemp); trap 'rm -f "$$found"' EXIT; \
+	for o in $(COMMON_CONSUMER_ORGS); do \
+	  tok=$$(gh-app-token "$$o") && [ -n "$$tok" ] || { \
+	    echo "common-consumers: could not mint a token for $$o (gh-app-token $$o)" >&2; exit 2; }; \
+	  repos=$$(GH_TOKEN="$$tok" gh repo list "$$o" --no-archived --limit 200 --json nameWithOwner --jq '.[].nameWithOwner') || { \
+	    echo "common-consumers: gh repo list $$o failed" >&2; exit 2; }; \
+	  [ -n "$$repos" ] || { echo "common-consumers: $$o listed ZERO repos" >&2; exit 2; }; \
+	  for r in $$repos; do \
+	    if GH_TOKEN="$$tok" gh api "repos/$$r/contents/.gitmodules" -H "Accept: application/vnd.github.raw" 2>/dev/null | grep -q 'dev-common'; then \
+	      echo "$$r" >> "$$found"; \
+	    fi; \
+	  done; \
+	done; \
+	[ -s "$$found" ] || { \
+	  echo "common-consumers: ZERO consumers across $(COMMON_CONSUMER_ORGS) -- a read failure, not an answer" >&2; exit 1; }; \
+	sort -u "$$found"
