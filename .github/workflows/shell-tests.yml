@@ -193,3 +193,6 @@ jobs:
       # (dev-common#229).
       - name: make help / make list list a target whose name has a digit
         run: bash tests/make-help-digits.test.sh
+      # (dev-common#322).
+      - name: make common-consumers mints per org and never passes an empty answer
+        run: bash tests/common-consumers.test.sh
