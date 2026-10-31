@@ -21,9 +21,20 @@ show: ## Show the commands a target would run (usage: make show <target>)
 # and `vm20-viewer-test` were all invisible). Digits in target names are
 # ordinary -- `py311-*`, `s3-*`, `vm20-*` -- so this is the general fix, not a
 # rename-around.
+#
+# The `( <name>)*` group is the sibling of that fix and the same shape of bug:
+# help used to anchor its colon to the end of the FIRST name, so a target
+# declared with a sibling on one line (`list ls:` -- this repo's own) never
+# appeared, however it was spelled, while `make list` showed it and both ran
+# (bdh-org/dev-common#323). It lists such a line as ONE row naming both targets,
+# `list ls`, which is what the makefile says; splitting it into a row per name
+# would repeat the description and claim two declarations where there is one.
+# The group, rather than adding a space to the class, is deliberate: a bare
+# `[a-zA-Z0-9_ -]+` also accepts ` :` and would start listing `FOO := bar ## x`
+# assignments as targets across every consumer's makefiles.
 help: ## Show available targets with descriptions
 	@for f in $(MAKEFILE_LIST); do \
-		targets=$$(grep -E '^[a-zA-Z0-9_-]+:.*##' "$$f" 2>/dev/null); \
+		targets=$$(grep -E '^[a-zA-Z0-9_-]+( [a-zA-Z0-9_-]+)*:.*##' "$$f" 2>/dev/null); \
 		if [ -n "$$targets" ]; then \
 			echo ""; \
 			echo "$$f:"; \
