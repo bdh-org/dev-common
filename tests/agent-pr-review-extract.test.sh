@@ -12,6 +12,10 @@
 # "Run the review" step) and compose.py (the "Post the review" step) -- so a test cannot
 # pass while the workflow diverges.
 #
+# The last section drives the "Run the review" step's SHELL against a stub grok: a model
+# id xAI has retired must fail naming the input to change, not as a reviewer crash
+# (bdh-org/dev-common#333).
+#
 # Usage:  bash tests/agent-pr-review-extract.test.sh      (or: make test)
 
 set -uo pipefail   # deliberately NOT -e: every case runs, then we report
@@ -45,6 +49,27 @@ PY
 }
 lift 'cat > "$RUNNER_TEMP/extract.py"' "$TMP/extract.py"
 lift 'cat > "$RUNNER_TEMP/compose.py"' "$TMP/compose.py"
+
+# Lift a whole step's `run: |` block, dedented, so the shell under test is the shell the
+# workflow runs. Everything it needs arrives through the environment (no `${{ }}` inside
+# the block), so it is runnable off Actions.
+lift_run() {  # <step name> <out>
+  python3 - "$WF" "$2" "$1" <<'PY'
+import sys, textwrap
+lines = open(sys.argv[1]).read().splitlines()
+i = next(i for i, l in enumerate(lines) if l.strip().startswith("- name: " + sys.argv[3]))
+j = next(k for k in range(i, len(lines)) if lines[k].strip() == "run: |")
+indent = len(lines[j]) - len(lines[j].lstrip())
+body = []
+for l in lines[j + 1:]:
+    if l.strip() and len(l) - len(l.lstrip()) <= indent:
+        break
+    body.append(l)
+open(sys.argv[2], "w").write(textwrap.dedent("\n".join(body)) + "\n")
+PY
+  [ -s "$2" ] || { echo "NOT OK - could not lift the run block of '$1' from $WF"; exit 1; }
+}
+lift_run 'Run the review' "$TMP/run-review.sh"
 
 T="$TMP/rt"   # the step's RUNNER_TEMP, fresh per case
 fresh() { rm -rf "$T"; mkdir -p "$T"; }
@@ -195,6 +220,51 @@ setup; review "$(python3 -c 'print("- **low** a.sh:1 -- " + "wrong " * 12000)')"
 compose
 [ "${#BODY}" -lt 65100 ] && ok "cut under the limit (${#BODY} chars)" || notok "too long: ${#BODY}"
 case "$BODY" in *"cut at GitHub's review size limit"*) ok "and says so" ;; *) notok "cut note" ;; esac
+
+# ---- the run step: a model id xAI has retired is configuration, not a crash ------------
+#
+# grok refuses an unknown --model before it reads a line of the diff, and for a day that
+# read as the reviewer having crashed (bdh-org/dev-common#333). The step must say which
+# input to change, and list what would work.
+
+stub_grok() {  # <message>: a grok that answers --version and models, and fails every run
+  printf '%s\n' "$1" > "$TMP/grok-msg"
+  cat > "$TMP/grok" <<'EOF'
+#!/usr/bin/env bash
+msg="$(dirname "$0")/grok-msg"
+case "$1" in
+  --version) echo "grok 1.0.50 (stub)"; exit 0 ;;
+  models) printf 'Available models:\n  - grok-4.5\n  - grok-4.7\n'; exit 0 ;;
+esac
+cat "$msg" >&2
+python3 -c 'import json,sys;print(json.dumps({"type":"error","message":open(sys.argv[1]).read().strip()}))' "$msg"
+exit 1
+EOF
+  chmod 0755 "$TMP/grok"
+}
+
+run_step() {  # <model id> -> RC, LOG. `bash -e -o pipefail` is how Actions runs a step.
+  fresh
+  LOG="$(env RUNNER_TEMP="$T" GITHUB_WORKSPACE="$REPO_ROOT" GITHUB_STEP_SUMMARY="$T/summary" \
+             GROK="$TMP/grok" MODEL="$1" MAX_TURNS=3 XAI_API_KEY=stub-not-used \
+             bash -e -o pipefail "$TMP/run-review.sh" 2>&1)"; RC=$?
+}
+
+CASE="a model id xAI no longer accepts"
+stub_grok 'Error: Couldn'"'"'t set model '"'"'grok-build-0.1'"'"': Invalid params: "unknown model id". Run '"'"'grok models'"'"' to see available models.'
+run_step grok-build-0.1
+[ "$RC" != 0 ] && ok "the step fails" || notok "exit 0 on a rejected model (log: $LOG)"
+case "$LOG" in *"::error::xAI rejected the model id 'grok-build-0.1'"*) ok "an ::error:: names the id that was rejected" ;; *) notok "model error (log: $LOG)" ;; esac
+case "$LOG" in *'`with: model: <id>`'*) ok "and the input to change" ;; *) notok "names no input (log: $LOG)" ;; esac
+case "$LOG" in *"--- grok models"*"grok-4.7"*) ok "and lists the ids that would work" ;; *) notok "no model list (log: $LOG)" ;; esac
+case "$LOG" in *"unknown model id"*) ok "grok's own words are still shown" ;; *) notok "grok's message is lost (log: $LOG)" ;; esac
+
+CASE="any other grok failure"
+stub_grok 'Error: connect ETIMEDOUT 1.2.3.4:443'
+run_step grok-build-0.1
+[ "$RC" != 0 ] && ok "still fails" || notok "exit 0 (log: $LOG)"
+case "$LOG" in *"xAI rejected the model id"*) notok "blames the model id for an unrelated failure (log: $LOG)" ;; *) ok "does not blame the model id" ;; esac
+case "$LOG" in *"ETIMEDOUT"*) ok "and shows what did happen" ;; *) notok "stderr not shown (log: $LOG)" ;; esac
 
 echo
 echo "agent-pr-review-extract: $pass passed, $fail failed"

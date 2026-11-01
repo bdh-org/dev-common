@@ -45,7 +45,20 @@ on:
   workflow_call:
     inputs:
       model:
-        description: "xAI model for the review (docs.x.ai/docs/models)."
+        description: >
+          xAI model for the review (docs.x.ai/docs/models). `grok models` is the
+          live list, and an id that is not on it is refused before the review
+          starts, so it is the list to trust -- xAI refused
+          this one for some hours on 2026-11-01 and every review died
+          (bdh-org/dev-common#333). It is on the list again, and it is kept
+          because it is the only id this PINNED CLI drives to a finished review:
+          grok-4.5 (what xAI's list now aliases as `grok-build-latest`) is
+          accepted but ends turn 1 `cancelled` after a one-line preamble, which
+          the reviewer would post as an approving review. Moving off this id --
+          xAI's alias for grok-code-fast-1, so it will be retired eventually --
+          therefore needs the pinned grok CLI bumped with it
+          (bdh-org/dev-common#334). Verify any replacement end to end before
+          changing this: that it is accepted is not that it reviews.
         type: string
         required: false
         default: grok-build-0.1
@@ -310,6 +323,17 @@ jobs:
               echo "::error::grok ($label) exited ${rc}; its stderr and stdout follow"
               echo "--- stderr"; tail -n 50 "$RUNNER_TEMP/grok-err-$label.log"
               echo "--- stdout"; tail -c 2000 "$out"
+              # xAI withdraws and retires model ids, and grok then refuses `--model`
+              # before it reads a line of the diff ("Couldn't set model '<id>':
+              # unknown model id"). That is this workflow's CONFIGURATION, not a
+              # reviewer crash, and for a morning it read as one -- grok-build-0.1
+              # was refused, then listed again hours later (bdh-org/dev-common#333).
+              # So say which input to change, and print the list to change it to.
+              if grep -qiE "unknown model id|couldn.t set model" \
+                   "$RUNNER_TEMP/grok-err-$label.log" "$out"; then
+                echo "::error::xAI rejected the model id '${MODEL}', so no review was attempted -- nothing is wrong with the reviewer. Change the \`model:\` input (\`with: model: <id>\` in the calling workflow, or the \`default:\` in agent-pr-review.yml) to an id from the list below, and verify it reviews rather than only that it is accepted. If this id was working, xAI may have withdrawn it briefly: re-run first. (bdh-org/dev-common#333)"
+                echo "--- grok models"; "$GROK" models 2>&1 | head -n 30 || true
+              fi
               # 2 = grok rejected its arguments: print its own flag list, since
               # xAI's docs have run behind the binary (always-approve was refused).
               if [ "$rc" -eq 2 ]; then echo "--- grok --help"; "$GROK" --help 2>&1 | head -n 150; fi
