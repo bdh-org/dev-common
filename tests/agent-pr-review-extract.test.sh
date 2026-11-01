@@ -109,9 +109,15 @@ fresh; extract '{"stopReason":"end_turn","num_turns":4,"total_cost_usd":0.1,"tex
 case "$LOG" in *'grok (review): {"stopReason": "end_turn"'*) ok "logs the stop reason under the run's label" ;; *) notok "log (got: $LOG)" ;; esac
 [ "$(wc -l < "$T/grok-runs.jsonl")" = 1 ] && ok "one line in grok-runs.jsonl for the header" || notok "runs file"
 
-CASE="untagged text (older prompt)"
+CASE="untagged text: the grok-4.5 preamble (dev-common#334)"
+fresh; extract '{"stopReason":"cancelled","num_turns":1,"total_cost_usd":0.037,"text":"I'"'"'ll inspect the Run the review step"}'
+[ "$RC" = 0 ] && ok "exit 0: not an error, the step resumes the session" || notok "exit 0 (rc=$RC: $LOG)"
+[ -e "$T/review.md" ] && [ ! -s "$T/review.md" ] && ok "review.md is EMPTY: a preamble is never posted (it would read as an APPROVE)" || notok "empty review (got: $REVIEW)"
+case "$LOG" in *"has no <review> block (review)"*"inspect the Run the review step"*) ok "the untagged text goes to the log" ;; *) notok "log (got: $LOG)" ;; esac
+
+CASE="untagged text even at end_turn"
 fresh; extract '{"stopReason":"end_turn","num_turns":4,"total_cost_usd":0.1,"text":"No significant findings."}'
-[ "$RC" = 0 ] && [ "$REVIEW" = "No significant findings." ] && ok "an untagged answer is taken whole" || notok "untagged (rc=$RC, got: $REVIEW)"
+[ "$RC" = 0 ] && [ -e "$T/review.md" ] && [ ! -s "$T/review.md" ] && ok "untagged is not the review, whatever the stop reason" || notok "untagged end_turn (rc=$RC, got: $REVIEW)"
 
 CASE="the #1254 shape: text empty, the verdict only in thought"
 fresh; extract '{"stopReason":"cancelled","num_turns":7,"total_cost_usd":0.11,"text":"","thought":"I found a bug: medium severity, mktemp. <review>No significant findings.</review> I will now finalize the review output."}'
