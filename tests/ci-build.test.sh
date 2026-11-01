@@ -486,7 +486,40 @@ for peer in "$WF_CI|$HYDRATE_STEP" "$WF_AGENT|$AGENT_HYDRATE_STEP"; do
   fi
 done
 
+# sm_sweep_unlisted is NOT in the shared library -- it sits below the LIB_ONLY
+# guard, because the agent workflows init --recursive on purpose and must never
+# sweep. So it has its own drift check, against the only other copy there is.
+CASE="recursive sweep"
+sweep() { # script -> the function's code (comments and blanks dropped)
+  awk '/^sm_sweep_unlisted\(\)/ { ins = 1 } ins { print } ins && /^}$/ { exit }' "$1" \
+    | grep -vE '^[[:space:]]*(#|$)'
+}
+extract "$WF_CI" "$HYDRATE_STEP" > "$TMP/peer-ci.sh"
+if [ -z "$(sweep "$TMP/hydrate.sh")" ]; then
+  notok "ci-build.yml carries no sm_sweep_unlisted (dev-common#306)"
+elif [ -z "$(sweep "$TMP/peer-ci.sh")" ]; then
+  notok "self-hosted-ci.yml carries no sm_sweep_unlisted -- both hydrate steps need it"
+elif diff -u <(sweep "$TMP/peer-ci.sh") <(sweep "$TMP/hydrate.sh") > "$TMP/sweepdrift.diff"; then
+  ok "sm_sweep_unlisted is byte-identical to self-hosted-ci.yml's"
+else
+  notok "the recursive sweep has drifted from self-hosted-ci.yml:"
+  sed 's/^/         /' "$TMP/sweepdrift.diff"
+fi
+
 hydrate_body="$(cat "$TMP/hydrate.sh")"
+assert_contains "$hydrate_body" 'submodule status --recursive' \
+  "the sweep's path list is RECURSIVE -- non-recursive status is what hid dev-common#306"
+# Order is the whole property: a nested path does not exist until its parent is
+# checked out, so a sweep above the update would find nothing to do.
+up_line="$(grep -n 'submodule update --init --force -- "\${WANT\[@\]}"' "$TMP/hydrate.sh" | head -1 | cut -d: -f1)"
+sweep_line="$(grep -n '^sm_sweep_unlisted "\$keep"' "$TMP/hydrate.sh" | head -1 | cut -d: -f1)"
+if [ -n "$up_line" ] && [ -n "$sweep_line" ] && [ "$sweep_line" -gt "$up_line" ]; then
+  ok "the sweep runs AFTER the wanted paths are hydrated"
+else
+  notok "the sweep does not run after the update (update at ${up_line:-?}, sweep at ${sweep_line:-?})"
+fi
+
+CASE="hydration library"
 assert_absent "$hydrate_body" 'repository_owner' \
   "the org comes from the submodule URL, not the caller's org (dev-common#170)"
 assert_absent "$hydrate_body" 'github.com/bdh-org/.insteadOf' \
@@ -630,6 +663,74 @@ else notok "hydration failed when deinit did" "$OUT"; fi
 # refuses to build rather than warning and carrying on.
 assert_contains "$hydrate_body" "cannot be cleared -- refusing to build" \
   "and residue that will not clear fails the build instead of reaching it"
+
+CASE="e2e: a nested submodule inside a KEPT path"
+# bdh-org/dev-common#306, and finzeug/heller#356 one level down. `stack-common`
+# is in the build's list and `stack-common/common` is not, but `git submodule
+# status` is non-recursive so the nested path never reached the drop list, and
+# `update --force -- stack-common` runs `checkout -f` in the parent, which does
+# not touch a gitlink directory's contents. An agent job's `--recursive` init
+# therefore left it populated at whatever commit it was on, and a
+# `COPY stack-common ...` baked that into the image.
+mkrepo inner
+# A middle repo that declares `common` as a submodule of its own -- what
+# <stack>-stack-common is (P3: stack-common nests dev-common).
+git init -q --bare -b main "$TMP/remotes/mid.git"
+mid="$TMP/build/mid"; mkdir -p "$mid"; git init -q -b main "$mid"
+echo mid > "$mid/file"
+git -C "$mid" submodule add -q "$TMP/remotes/inner.git" common >/dev/null 2>&1
+git -C "$mid" add -A; git -C "$mid" commit -qm init
+git -C "$mid" push -q "$TMP/remotes/mid.git" main
+
+git init -q --bare -b main "$TMP/remotes/two-level.git"
+w="$TMP/build/two-level"; mkdir -p "$w"; git init -q -b main "$w"
+echo consumer > "$w/file"
+git -C "$w" submodule add -q "$TMP/remotes/mid.git" stack-common >/dev/null 2>&1
+git -C "$w" add -A; git -C "$w" commit -qm init
+git -C "$w" push -q "$TMP/remotes/two-level.git" main
+
+git clone -q "$TMP/remotes/two-level.git" "$TMP/co-nested"
+git -C "$TMP/co-nested" submodule update --init --recursive --force >/dev/null 2>&1
+echo AGENT-LEFTOVER > "$TMP/co-nested/stack-common/common/stale.txt"
+# Prove the fixture really is the blind spot before asserting the fix handles it.
+if git -C "$TMP/co-nested" submodule status | grep -q 'stack-common/common'; then
+  notok "fixture is wrong: non-recursive status already lists the nested path"
+else ok "fixture reproduces it: non-recursive status does not mention the nested path"; fi
+
+if run_hydrate "$TMP/co-nested" "stack-common"; then
+  assert_contains "$OUT" "submodule hydration OK" "it still reports success"
+  if [ -f "$TMP/co-nested/stack-common/file" ]; then ok "the named parent is populated"
+  else notok "stack-common is empty -- the sweep broke the path the build asked for"; fi
+  left="$(ls -A "$TMP/co-nested/stack-common/common" 2>/dev/null || true)"
+  assert_eq "" "$left" \
+    "the nested submodule the build did not name is cleared, stray files and all (#306)"
+  assert_contains "$OUT" "stack-common/common" "and the log names what it swept"
+else notok "hydration failed on a two-level repo" "$OUT"; fi
+
+CASE="e2e: a nested path whose BASENAME is in the list"
+# The fleet's real shape (P3): a consumer mounts dev-common at top-level
+# `common` AND stack-common at `stack-common`, which nests dev-common again as
+# `stack-common/common`. The sweep matches the list on the WHOLE path, so the
+# nested copy goes and the top-level one -- same basename, in the list -- stays.
+# Matching on a basename or a prefix would delete the build's own `common`.
+git init -q --bare -b main "$TMP/remotes/both.git"
+w="$TMP/build/both"; mkdir -p "$w"; git init -q -b main "$w"
+echo consumer > "$w/file"
+for s in "dev-common common" "mid stack-common"; do
+  set -- $s
+  git -C "$w" submodule add -q "$TMP/remotes/$1.git" "$2" >/dev/null 2>&1
+done
+git -C "$w" add -A; git -C "$w" commit -qm init
+git -C "$w" push -q "$TMP/remotes/both.git" main
+
+git clone -q "$TMP/remotes/both.git" "$TMP/co-both"
+git -C "$TMP/co-both" submodule update --init --recursive --force >/dev/null 2>&1
+if run_hydrate "$TMP/co-both" "common stack-common"; then
+  if [ -f "$TMP/co-both/common/file" ]; then ok "the top-level common survives the sweep"
+  else notok "the build's own common was swept -- the sweep matched a basename, not a path"; fi
+  assert_eq "" "$(ls -A "$TMP/co-both/stack-common/common" 2>/dev/null || true)" \
+    "and the nested copy of the same name is still cleared"
+else notok "hydration failed on a repo carrying both copies" "$OUT"; fi
 
 CASE="e2e: an emptied working tree"
 # dev-common#176's shape: .git and HEAD survive at the pin while every tracked

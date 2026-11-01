@@ -48,6 +48,10 @@ name: agent-issue-to-pr (reusable)
 #
 # ask for the same thing.
 #
+# A column-0 `agent-<word>:` key that is NOT one of those directives warns and names
+# the nearest one (`agent-tuns:` -> "did you mean agent-turns?") instead of being
+# dropped in silence, and the out-of-turns comment repeats it (dev-common#303).
+#
 # See the "Resolve model + turn budget" step for the allowlist and the clamp.
 on:
   workflow_call:
@@ -484,6 +488,80 @@ jobs:
             echo "::warning::body has an unclosed \`\`\` code fence -- any directive below it is ignored"
           fi
 
+          # A MISSPELT key fails the same way a fenced one does, and used to be
+          # just as silent: bdh-org/home-infra#1253 opened with `agent-tuns: 150`,
+          # the exact-key match above saw nothing, the run took the default budget
+          # and died on the very ceiling that line asked to raise -- three times,
+          # each failure comment telling the reader to put `agent-turns: 150` on
+          # its own line, which to a human skimming the body it already was
+          # (dev-common#303).
+          #
+          # So name every column-0 `agent-<word>:` key outside the fences that is
+          # not a directive, and the nearest known one (edit distance; up to 3 to
+          # count as a near miss). A WARNING only -- an unknown key still steers
+          # nothing and still never fails the run, as before.
+          KNOWN_DIRECTIVES="agent-model agent-turns"
+          # Each unknown key once, as "<key> <nearest-known-or-dash> <value>".
+          unknown_directives() {
+            printf '%s\n' "$BODY" | tr -d '\r' \
+              | awk -v known="$KNOWN_DIRECTIVES" '
+                  function dist(a, b,   la, lb, i, j, cost, best, prev, cur) {
+                    la = length(a); lb = length(b)
+                    for (j = 0; j <= lb; j++) prev[j] = j
+                    for (i = 1; i <= la; i++) {
+                      cur[0] = i
+                      for (j = 1; j <= lb; j++) {
+                        cost = (substr(a, i, 1) == substr(b, j, 1)) ? 0 : 1
+                        best = prev[j] + 1
+                        if (cur[j - 1] + 1 < best) best = cur[j - 1] + 1
+                        if (prev[j - 1] + cost < best) best = prev[j - 1] + cost
+                        cur[j] = best
+                      }
+                      for (j = 0; j <= lb; j++) prev[j] = cur[j]
+                    }
+                    return prev[lb]
+                  }
+                  BEGIN { n = split(known, K, " ") }
+                  /^[[:space:]]*```/ { fence = !fence; next }
+                  fence { next }
+                  tolower($0) ~ /^agent-[a-z0-9_-]+:/ {
+                    key = tolower($0); sub(/:.*/, "", key)
+                    for (i = 1; i <= n; i++) if (key == K[i]) next
+                    if (seen[key]++) next
+                    value = $0; sub(/^[^:]*:[[:space:]]*/, "", value)
+                    near = "-"; nd = 4
+                    for (i = 1; i <= n; i++) {
+                      d = dist(key, K[i])
+                      if (d < nd) { nd = d; near = K[i] }
+                    }
+                    print substr(key, 1, 40), near, substr(value, 1, 40)
+                  }
+                '
+          }
+          unknown_directives | while read -r key near value; do
+            if [ "$near" = "-" ]; then
+              echo "::warning::unknown directive '$key' -- known directives: $KNOWN_DIRECTIVES"
+            else
+              echo "::warning::unknown directive '$key' -- did you mean $near?"
+            fi
+          done
+
+          # The same typo is carried to the failure comment, which is where the
+          # reader actually is -- the warning is in the log, and the log is not
+          # what a "ran out of turns" comment sends them to. Only the FIRST: one
+          # named key reads, a list does not.
+          unknown=""
+          unknown_near=""
+          first="$(unknown_directives | head -1)"
+          if [ -n "$first" ]; then
+            key="${first%% *}"
+            rest="${first#* }"
+            unknown_near="${rest%% *}"
+            value="${rest#* }"
+            unknown="$key: $value"
+            if [ "$unknown_near" = "-" ]; then unknown_near=""; fi
+          fi
+
           # Allowlist + clamp. BOTH are applied to the repo default as well, so a
           # wrapper typo cannot smuggle in an arbitrary --model value or uncap spend
           # any more than an over-eager body can (dev-common#142).
@@ -543,6 +621,11 @@ jobs:
 
           echo "model=$model" >> "$GITHUB_OUTPUT"
           echo "turns=$turns" >> "$GITHUB_OUTPUT"
+          # Both empty unless the trigger carried a misspelt directive. A single
+          # line each (awk reads line by line and truncates), so neither can break
+          # the k=v file.
+          echo "unknown_directive=$unknown" >> "$GITHUB_OUTPUT"
+          echo "unknown_suggestion=$unknown_near" >> "$GITHUB_OUTPUT"
           # Echoed so a run's cost profile is readable after the fact, not inferred.
           echo "::notice::agent run budget -- model=$model max-turns=$turns (repo defaults: $DEFAULT_MODEL / $DEFAULT_TURNS)"
 
@@ -975,6 +1058,14 @@ jobs:
           # reporter ignores it; a newer one without it behaves as before.
           AGENT_OUTCOME: ${{ steps.agent.outcome }}
           MAX_TURNS: ${{ steps.budget.outputs.turns }}
+          # The misspelt directive, if the trigger carried one, so the out-of-turns
+          # comment can open with "your body says `agent-tuns: 150`; the key is
+          # `agent-turns`" instead of advising a line the reader believes is already
+          # there (dev-common#303, consumed by agent-report-outcome.sh in home-infra
+          # -- bdh-org/home-infra#1477). Both empty in the normal case; a reporter
+          # that does not read them behaves exactly as before.
+          UNKNOWN_DIRECTIVE: ${{ steps.budget.outputs.unknown_directive }}
+          UNKNOWN_SUGGESTION: ${{ steps.budget.outputs.unknown_suggestion }}
           # Empty on the `/agent` comment path -- that run carries no label to clear.
           TRIGGER_LABEL: ${{ github.event.label.name }}
           # The agent's "nothing to build" note, if it wrote one (bdh-org/home-infra#474).

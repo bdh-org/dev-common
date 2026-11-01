@@ -125,6 +125,12 @@ on:
           whatever commit that job left it on (finzeug/heller#356). A Dockerfile
           that COPYs from a submodule nobody listed now fails on the missing
           file instead of shipping stale code.
+
+          That holds one level DOWN too: a submodule nested inside a path this
+          input keeps -- stack-common/common, say -- is swept after hydration
+          (bdh-org/dev-common#306). Only TOP-LEVEL paths belong here: a nested
+          one cannot be hydrated from the superproject at all, so naming it
+          does not keep it -- it fails this step.
         type: string
         default: ""
       deploy_command:
@@ -371,6 +377,61 @@ jobs:
           # can leave a submodule directory emptied of tracked files while .git and HEAD
           # survive, and every later hydration then "succeeds" against an empty directory.
           git ${CFG[@]+"${CFG[@]}"} submodule update --init --force -- "${WANT[@]}" || true
+
+          # A submodule NESTED inside a path this job kept is the one case the drop
+          # above cannot see (bdh-org/dev-common#306). `git submodule status` is
+          # non-recursive, so a nested path never enters $drop, and `submodule update
+          # --force -- <parent>` runs `checkout -f` in the parent, which does not touch
+          # a gitlink directory's contents. So an agent job's `--recursive` init leaves
+          # e.g. stack-common/common populated at whatever commit it was on, plus any
+          # stray files, and a `COPY stack-common ...` bakes that into the image --
+          # finzeug/heller#356 one level down, reproduced on git 2.43.0.
+          #
+          # Byte-identical in self-hosted-ci.yml; tests/ci-build.test.sh holds the two
+          # copies together, the same way it does for sm_map/sm_org. It is NOT part of
+          # the shared library above the HYDRATE_LIB_ONLY guard: the agent workflows
+          # init --recursive on purpose and must never sweep.
+          sm_sweep_unlisted() { # keep-list -> 0, or 1 having named every path left
+            local keep="$1" rc=0 p root
+            # Reverse sort is deepest-first: a descendant sorts after its ancestor, so a
+            # nested path is cleared while the parent that declares it is still a repo.
+            while IFS= read -r p; do
+              case "$p" in ''|/*|*..*) continue;; esac
+              if printf '%s\n' $keep | grep -qxF -- "$p"; then continue; fi
+              [ -d "$p" ] || continue
+              [ -n "$(ls -A "$p" 2>/dev/null || true)" ] || continue
+              # `deinit` only works from the repo that DECLARES the path: run from the
+              # superproject a nested path fails with "pathspec did not match any
+              # file(s) known to git". And only when $p is a repo itself -- from a
+              # non-repo path --show-superproject-working-tree walks up and names the
+              # wrong repo, whose pathspec could match a path this job asked to keep.
+              if [ -e "$p/.git" ]; then
+                root="$(git -C "$p" rev-parse --show-superproject-working-tree 2>/dev/null || true)"
+                if [ -n "$root" ]; then
+                  git -C "$root" submodule deinit -f -- \
+                    "$(realpath --relative-to="$root" "$p")" >/dev/null 2>&1 || true
+                fi
+              fi
+              # Stray files an earlier job left beside the tracked ones are not the
+              # gitlink's business, so clear whatever deinit did not.
+              find "$p" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
+              if [ -n "$(ls -A "$p" 2>/dev/null || true)" ]; then
+                echo "::error::${p} is not in this job's submodule list and will not clear"
+                rc=1
+              else
+                echo "deinitialised (recursive sweep), not in this job's list: $p"
+              fi
+            done < <(git submodule status --recursive 2>/dev/null | awk '{print $2}' | sort -r)
+            return $rc
+          }
+
+          # AFTER the update, never before: a nested path only exists once its parent
+          # is checked out, and which nested paths the parent declares is decided by
+          # the commit hydration just put there.
+          sm_sweep_unlisted "$keep" || {
+            echo "::error::refusing to build with a submodule this repo did not ask for in the context"
+            exit 1
+          }
 
           # Fail LOUDLY, naming the submodule and the org it needed. A submodule this
           # build asked for and did not populate must never reach `docker build` as an
