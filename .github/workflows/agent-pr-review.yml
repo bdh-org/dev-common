@@ -51,10 +51,13 @@ on:
           starts, so it is the list to trust (bdh-org/dev-common#333: xAI
           refused grok-build-0.1, the previous default and its alias for
           grok-code-fast-1, for some hours on 2026-11-01). grok-4.5 is what
-          xAI's list aliases as `grok-build-latest`. Under the grok CLI 1.0.50
-          it ended turn 1 `cancelled` after a one-line preamble; the pin moved
-          to 1.0.73 with it (bdh-org/dev-common#334). Verify any replacement end
-          to end before changing this: that it is accepted is not that it reviews.
+          xAI's list aliases as `grok-build-latest`. Measured on forge with the
+          grok CLI 1.0.73 (bdh-org/dev-common#334): its first leg still ends
+          `cancelled` after 2 turns with an untagged preamble, the extract step
+          refuses that, and the resume writes the `<review>` block (`end_turn`,
+          $0.05 for both legs, a correct finding). So a 4.x review costs one
+          resume by design. Verify any replacement end to end before changing
+          this: that it is accepted is not that it reviews.
         type: string
         required: false
         default: grok-4.5
@@ -228,7 +231,7 @@ jobs:
       - name: Install Grok Build (pinned, integrity-checked)
         id: grok
         if: steps.pr.outputs.skip != 'true'
-        uses: bdh-org/dev-common/.github/actions/grok-install@334-bump-grok-cli
+        uses: bdh-org/dev-common/.github/actions/grok-install@main
 
       # NO GitHub token in this step's environment -- see CONTAINMENT above.
       - name: Run the review (Grok Build, headless, read-only)
