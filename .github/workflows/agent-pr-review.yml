@@ -257,8 +257,11 @@ jobs:
           # ceiling. Reasoning is NOT a review and is never posted (Brian, 2026-10-09:
           # "I doubt I need to see such extensive reasoning, I need a review"). Instead
           # the session is RESUMED once and told to write the review now; the run log
-          # keeps the tail of its reasoning either way. Only `text` is read: its last
-          # <review> block, else all of it.
+          # keeps the tail of its reasoning either way. Only `text` is read, and only its
+          # last <review> block: both prompts ask for the tags, and untagged text was a
+          # one-line preamble ("I'll inspect the ... step") from grok-4.5, which names no
+          # finding and so would have been posted as an APPROVE (bdh-org/dev-common#334).
+          # Untagged text goes to the log and the resume asks for the review.
           cat > "$RUNNER_TEMP/extract.py" <<'PY'
           import json, os, re, sys
           # extract.py <grok-out.json> <review.md> <label>: the review from grok's final
@@ -278,7 +281,7 @@ jobs:
           text = (d.get("text") or "").strip()
           thought = str(d.get("thought") or "").strip()
           found = re.findall(r"<review>(.*?)</review>", text, re.S | re.I)
-          review = found[-1].strip() if found else text
+          review = found[-1].strip() if found else ""
           with open(os.path.join(os.environ["RUNNER_TEMP"], "grok-runs.jsonl"), "a") as f:
               f.write(json.dumps({"label": label, **facts, "text_chars": len(text),
                                   "thought_chars": len(thought), "review_chars": len(review)}) + "\n")
@@ -286,6 +289,8 @@ jobs:
               s.write(f"grok ({label}): stopReason `{facts['stopReason']}`, {facts['num_turns']} turns, "
                       f"${facts['total_cost_usd']}; text {len(text)} chars, thought {len(thought)} chars\n\n")
           if not review:
+              if text:
+                  print(f"text has no <review> block ({label}), so it is not the review; text, last 1500:\n{text[-1500:]}")
               print(f"no review in text ({label}); thought ({len(thought)} chars), last 1500:\n{thought[-1500:]}")
           open(sys.argv[2], "w").write(review)
           PY
