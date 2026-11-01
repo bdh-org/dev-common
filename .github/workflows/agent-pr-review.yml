@@ -228,7 +228,7 @@ jobs:
       - name: Install Grok Build (pinned, integrity-checked)
         id: grok
         if: steps.pr.outputs.skip != 'true'
-        uses: bdh-org/dev-common/.github/actions/grok-install@main
+        uses: bdh-org/dev-common/.github/actions/grok-install@334-bump-grok-cli
 
       # NO GitHub token in this step's environment -- see CONTAINMENT above.
       - name: Run the review (Grok Build, headless, read-only)
