@@ -1,4 +1,4 @@
-VERSION=0.24.6
+VERSION=0.25.1
 
 # Include our own shared targets
 include make/version.mk
