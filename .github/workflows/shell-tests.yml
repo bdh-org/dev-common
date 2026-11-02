@@ -174,16 +174,20 @@ jobs:
       - name: Template initialised (embedded in ci.yml AND self-hosted-ci.yml)
         run: bash tests/template-initialised.test.sh
 
-      # The version gate embedded in ci.yml, which every Python repo in the
-      # stack merges through. It ships as workflow YAML, so nothing else can
-      # catch a change to it before it is enforcing the wrong rule everywhere
-      # at once (dev-common#180).
-      - name: Version bumped (embedded in ci.yml, self-hosted-ci.yml AND version-guard.yml)
+      # The version gate every Python repo in the stack merges through. It ships
+      # as a composite action consumed at @main, so nothing else can catch a
+      # change to it before it is enforcing the wrong rule in every repo at once
+      # (dev-common#180, #235). The suite also asserts that all three workflows
+      # still CALL the action, and that none has grown a job for it -- `ci / ci`
+      # is the required status check in nine consumer repos.
+      - name: Version bumped (.github/actions/version-guard, called by all three workflows)
         run: bash tests/version-bumped.test.sh
 
       # Its sibling, and the half the gate above cannot see: a version claimed
-      # by an OPEN PR rather than by the base branch. Same three files, same
-      # byte-identity requirement, so it gets the same treatment (dev-common#255).
+      # by an OPEN PR rather than by the base branch. Still INLINE in all three
+      # workflows and still held by a byte-identity case, because it carries a
+      # token and a permission scope that the gate above does not -- converging
+      # it onto the same action is dev-common#338 (dev-common#255).
       - name: Version claimed by another open PR (embedded in all three)
         run: bash tests/version-claimed.test.sh
 

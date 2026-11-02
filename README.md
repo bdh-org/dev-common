@@ -101,8 +101,8 @@ dev-common's own tests, run by `make test` and by `shell-tests.yml` on every PR.
 | File | Covers |
 |------|--------|
 | `setup-claude-identity.test.sh` | `devcontainer/setup-claude-identity.sh` — role naming per `PROJECT_NAME`, `user.email` left alone, the `~/.gitconfig-seat` → `~/.gitconfig-role` migration, and idempotency across repeated runs |
-| `version-bumped.test.sh` | the "Version bumped" step embedded in `ci.yml`, `self-hosted-ci.yml` and `version-guard.yml` — VERSION strictly greater than the base's, and byte-identical across all three copies |
-| `version-claimed.test.sh` | the "Version claimed by another open PR" step in the same three files — a version already claimed by an **open** PR, which the step above cannot see because both PRs' bases are still untouched |
+| `version-bumped.test.sh` | `.github/actions/version-guard` — VERSION strictly greater than the base's, a taken number named a COLLISION rather than a missing bump, plus the structure that keeps it reaching consumers: all three workflows call the action, none still carries it inline, and neither reusable has grown a job for it (`ci / ci` is the required check in nine repos) |
+| `version-claimed.test.sh` | the "Version claimed by another open PR" step, still inline in those same three workflows and still held byte-identical by this suite — a version already claimed by an **open** PR, which the gate above cannot see because both PRs' bases are still untouched. Converging it onto the action too is `dev-common#338` |
 | `ci-build.test.sh` | `ci-build.yml` — runs its extracted step bodies against a stub `docker`: `:latest` moved only from `refs/heads/main` (behaviourally **and** by a static scan, so a third `:latest` anywhere fails), the build tagging the sha alone, `build_args` substitution, the deploy gate and key handling, and submodule hydration end to end |
 
 Each case runs the real script against a throwaway `$HOME` — the script's only
