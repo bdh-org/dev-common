@@ -1,0 +1,78 @@
+import marimo
+
+# A LEGAL page that every naive multiple-definition check flags. Each shape here is one
+# the first attempt at the guard cried wolf on: accounts, bond_etfs, forecast,
+# tensor_status and yields were all flagged for comprehension variables, and a live probe
+# of all 39 routes found zero real violations (home-infra#394).
+__generated_with = "0.23.16"
+app = marimo.App(width="medium")
+
+
+@app.cell
+def _():
+    import marimo as mo
+    import pandas as pd
+    return mo, pd
+
+
+@app.cell
+def _(pd):
+    rows = [{"sym": s, "n": n} for s, n in [("AAPL", 1), ("MSFT", 2)]]
+    frame = pd.DataFrame(rows)
+    return (frame,)
+
+
+@app.cell
+def _(frame):
+    # `s` and `n` are comprehension variables AGAIN. Python scopes them to the
+    # comprehension; marimo models that correctly, so this is not a redefinition.
+    labels = [f"{s}:{n}" for s, n in zip(frame["sym"], frame["n"])]
+    scale = lambda n: n * 2  # noqa: E731 -- and `n` once more, as a lambda parameter
+    return labels, scale
+
+
+@app.cell
+def _(labels):
+    def _render(labels):
+        # `handle` and `item` are locals of a nested def: another cell may bind them too.
+        with open("/dev/null", "w") as handle:
+            for item in labels:
+                handle.write(item)
+        return len(labels)
+
+    _count = _render(labels)
+    return
+
+
+@app.cell
+def _(mo):
+    try:
+        _value = 1 / 0
+    except ZeroDivisionError as e:
+        _value = str(e)
+    out = mo.md(f"value {_value}")
+    return (out,)
+
+
+@app.cell
+def _(mo):
+    # `e` again, and `_value` again: an except target is deleted at the end of its
+    # handler so no other cell can reach it, and `_`-prefixed names are cell-private.
+    try:
+        _value = int("x")
+    except ValueError as e:
+        _value = 0
+    more = mo.md(f"other {_value}")
+    return (more,)
+
+
+@app.cell
+def _(frame, mo):
+    # A cell parameter is a REFERENCE, not a definition -- `mo` and `frame` arrive here
+    # from the cells above, and appear in several signatures on purpose.
+    table = mo.ui.table(frame)
+    return (table,)
+
+
+if __name__ == "__main__":
+    app.run()

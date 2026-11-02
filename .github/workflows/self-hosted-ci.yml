@@ -10,6 +10,7 @@ name: Self-hosted CI
 #         conda-env-name: <repo>-ci
 #         run-tests: true            # false for repos with no tests/
 #         full-env: true             # false -> minimal ruff-only env via .github/ci-environment.yml
+#         marimo-pages: src/<pkg>/pages   # omit unless the repo HAS marimo pages
 #
 # Per-repo differences live in the repo (its conda-packages.txt / ci-environment.yml
 # and the wrapper inputs), never as branches inside this file.
@@ -36,6 +37,30 @@ on:
       test-path:
         type: string
         default: tests/
+      marimo-pages:
+        description: >
+          One path -- a directory of marimo pages, or a single page file -- to run
+          common/scripts/marimo-graph-check.py over, e.g. "src/panoptikon/pages".
+          Empty (the default) SKIPS the step, so every existing caller is untouched.
+
+          The check is static and stdlib-only: it proves the notebook's dataflow
+          graph is legal (no name defined by two cells, no reference no cell
+          defines, no cell marimo failed to parse). Those are the defects that
+          cannot be seen from outside -- a page whose graph is illegal renders
+          nothing behind an HTTP 200 and may log nothing at all
+          (bdh-org/home-infra#394). It runs straight after hydration rather than
+          after the conda env, because it needs neither the env nor marimo itself,
+          and a page repo should not wait minutes to be told its graph is broken.
+
+          It does NOT prove a cell produces output. That is the other half, and it
+          belongs in the repo's own suite via `app.run()`, where marimo is
+          installed (finzeug/panoptikon#744).
+
+          ONE path, not a list: the value is passed as a single quoted argument, so
+          a space-separated pair becomes one path that does not exist and fails
+          discovery (exit 2). Point it at the directory that contains the pages.
+        type: string
+        default: ""
       extra-submodules:
         description: >
           Space-separated submodule paths to init and pip-install beyond `common`,
@@ -380,6 +405,29 @@ jobs:
           fi
           git submodule status -- "${WANT[@]}" | sed 's/^/  /'
           echo "submodule hydration OK"
+
+      # Directly after hydration, which is the first point common/ exists -- and
+      # deliberately BEFORE the conda env, which this needs none of: the checker is
+      # `ast` and the stdlib, run by the runner's system python3 (the forge runner has
+      # no pip and no venv module at all, measured 2026-08-16). So a page repo hears
+      # "your dataflow graph is illegal" in seconds rather than after an env build.
+      #
+      # Skipped entirely when the input is empty, which is every caller that has no
+      # marimo pages. Running the checker on "" would exit 2 -- "assessed nothing" --
+      # and redden the whole fleet at once.
+      #
+      # The guard's own suite is tests/marimo-graph-check.test.sh in dev-common; this
+      # step is the only thing that runs it anywhere else (dev-common#332).
+      - name: marimo dataflow graph
+        if: ${{ inputs.marimo-pages != '' }}
+        env:
+          MARIMO_PAGES: ${{ inputs.marimo-pages }}
+        run: |
+          set -euo pipefail
+          # Nonzero is a failure: 1 means defects, 2 means it discovered no pages under
+          # the path -- a moved pages directory must not read as a clean bill of health
+          # (bdh-org/home-infra#232, #343). `set -e` fails the job on either.
+          python3 common/scripts/marimo-graph-check.py "$MARIMO_PAGES"
 
       # Point CONDA_ROOT at the runner's REAL home rather than a hardcoded path:
       # github-runner's home isn't the assumed /home/github-runner on forge (it's

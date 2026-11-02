@@ -1,0 +1,26 @@
+import marimo
+
+# `from x import *` makes the resolvable set unknowable from the AST. The reference check
+# is suppressed wholesale rather than guessed at -- `sqrt` below is defined, and a guard
+# that reported it would be teaching the reader to ignore it. The multiple-definition
+# check still applies, because a star import binds nothing a cell can collide with.
+__generated_with = "0.23.16"
+app = marimo.App()
+
+
+@app.cell
+def _():
+    import marimo as mo
+    from math import *
+    return (mo,)
+
+
+@app.cell
+def _(mo):
+    root = sqrt(2)
+    view = mo.md(f"{root}")
+    return (view,)
+
+
+if __name__ == "__main__":
+    app.run()

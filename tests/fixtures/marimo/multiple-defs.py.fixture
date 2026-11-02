@@ -1,0 +1,39 @@
+import marimo
+
+# The shape that took /derivatives down three times: one non-underscore name bound by two
+# cells. marimo disables BOTH, and every cell downstream fails with NameError -- behind an
+# HTTP 200, with nothing in the container log (home-infra#394).
+__generated_with = "0.23.16"
+app = marimo.App()
+
+
+@app.cell
+def _():
+    import marimo as mo
+    import pandas as pd
+    return mo, pd
+
+
+@app.cell
+def _(pd):
+    trades = pd.DataFrame({"expiry": ["2026-09", "2026-12"], "qty": [1, 2]})
+    quotes = pd.DataFrame({"expiry": ["2026-09"], "px": [1.5]})
+    return quotes, trades
+
+
+@app.cell
+def _(trades):
+    by = trades.groupby("expiry")
+    summary = by.size()
+    return summary
+
+
+@app.cell
+def _(quotes):
+    by = quotes.groupby("expiry")
+    latest = by.last()
+    return latest
+
+
+if __name__ == "__main__":
+    app.run()

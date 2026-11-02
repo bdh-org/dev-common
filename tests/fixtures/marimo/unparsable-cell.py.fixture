@@ -1,0 +1,25 @@
+import marimo
+
+# marimo writes `app._unparsable_cell(...)` when a cell does not parse. The FILE still
+# imports, ruff sees a valid call to a private method, the shell still serves 200 -- and
+# the cell renders nothing.
+__generated_with = "0.23.16"
+app = marimo.App()
+
+
+@app.cell
+def _():
+    import marimo as mo
+    return (mo,)
+
+
+app._unparsable_cell(
+    r"""
+    total = = sum(rows)
+    """,
+    name="_",
+)
+
+
+if __name__ == "__main__":
+    app.run()

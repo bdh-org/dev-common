@@ -1,0 +1,29 @@
+import marimo
+
+# marimo's `with app.setup:` block runs before every cell and its bindings ARE global
+# defs -- so a cell rebinding one is the same violation as two cells colliding, in a
+# place that does not look like a cell at all.
+__generated_with = "0.23.16"
+app = marimo.App()
+
+with app.setup:
+    import numpy as np
+
+    THRESHOLD = 3
+
+
+@app.cell
+def _():
+    import marimo as mo
+    return (mo,)
+
+
+@app.cell
+def _(mo, np):
+    THRESHOLD = 5
+    view = mo.md(f"{np.arange(THRESHOLD)}")
+    return (view,)
+
+
+if __name__ == "__main__":
+    app.run()

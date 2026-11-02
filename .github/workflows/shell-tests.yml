@@ -207,6 +207,14 @@ jobs:
       - name: make common-consumers mints per org and never passes an empty answer
         run: bash tests/common-consumers.test.sh
 
+      # The marimo dataflow guard, shipped here so every page repo gets it through its
+      # `common` pin, plus the self-hosted-ci.yml step that runs it there. Most of the
+      # suite is negative space: the first version of this check flagged five pages and
+      # every one was a false alarm, and a guard that cries wolf gets ignored
+      # (bdh-org/home-infra#394, dev-common#332).
+      - name: marimo-graph-check.py (and its step in self-hosted-ci.yml)
+        run: bash tests/marimo-graph-check.test.sh
+
       # The shared skills (P14) are instructions, so every way they break is
       # silent -- an installer glob that stops picking one up, frontmatter that
       # does not parse, or a path the skill sends a session to that has since
