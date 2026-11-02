@@ -574,85 +574,19 @@ jobs:
       # version-check above tests INTERNAL consistency (Makefile VERSION against
       # __init__.py / package.json) and has no notion of a base branch, so it
       # passes on a PR that changed code and forgot to bump.
+      #
+      # ONE IMPLEMENTATION, shared with ci.yml and version-guard.yml
+      # (bdh-org/dev-common#235). The inline copies drifted twice under a comment
+      # saying they must not -- #182 left THIS file on the weaker comparison for
+      # ten days while every repo in the stack called it, and #208's collision
+      # message landed here and not in ci.yml (#232).
+      #
+      # STILL A STEP IN THIS JOB: `ci / ci` is the required context in nine
+      # consumer repos. See the action's header for why, and for what would
+      # reverse it.
       - name: Version bumped
         if: github.event_name == 'pull_request'
-        run: |
-          set -eu
-          if ! grep -qE '^VERSION[[:space:]]*=' Makefile 2>/dev/null; then
-            echo "no VERSION in Makefile -- this repo does not version here, skipping"
-            exit 0
-          fi
-          base="origin/${{ github.base_ref }}"
-          git fetch --quiet origin "${{ github.base_ref }}"
-          head_v=$(grep -m1 -E '^VERSION[[:space:]]*=' Makefile | sed -E 's/^VERSION[[:space:]]*=[[:space:]]*//')
-          base_v=$(git show "$base:Makefile" 2>/dev/null | grep -m1 -E '^VERSION[[:space:]]*=' | sed -E 's/^VERSION[[:space:]]*=[[:space:]]*//' || echo "")
-          if [ -z "$base_v" ]; then
-            echo "no VERSION on $base -- nothing to compare, skipping"
-            exit 0
-          fi
-          if [ "$head_v" != "$base_v" ]; then
-            # STRICTLY GREATER, not merely different (dev-common#180/#182).
-            #
-            # "Different" passes every branch in a parallel set: three panoptikon
-            # PRs each branched from 2.12.105 and each bumped to 2.12.106, so each
-            # differed from its base and each went green. The first merged and
-            # tagged 2.12.106; the other two rode onto main under a version whose
-            # tag pointed two commits behind them (finzeug/panoptikon#728/#729/#730).
-            #
-            # What `!=` alone lets through is a version that DECREASES -- which
-            # cannot be tagged, and whose image tag collides with a build that has
-            # already shipped.
-            if [ "$(printf '%s\n%s\n' "$base_v" "$head_v" | sort -V | tail -1)" = "$head_v" ]; then
-              echo "version bumped: $base_v -> $head_v"
-              exit 0
-            fi
-            echo "::error::VERSION went BACKWARDS: $base_v on ${{ github.base_ref }}, $head_v here."
-            echo "::error::Rebase and run 'make bump-patch' -- a version that decreases"
-            echo "::error::cannot be tagged, and the image tag would collide with a build"
-            echo "::error::that already shipped."
-            exit 1
-          fi
-          changed=$(git diff --name-only "$base"...HEAD | grep -v '^Makefile$' || true)
-          if [ -z "$changed" ]; then
-            echo "nothing changed but the Makefile -- nothing to version"
-            exit 0
-          fi
-          # COLLISION, not a missing bump -- and they need opposite remedies, so
-          # they must not share a message. If this branch DID bump relative to the
-          # point it forked from, and the base has since reached that same version,
-          # then another PR merged the same number first. The author already ran
-          # `make bump-patch`; telling them to run it again is the one instruction
-          # that looks wrong and is right, so it has to say WHY.
-          #
-          # Two open PRs in one repo hit this by construction: each carries a bump
-          # computed when it was opened, and whichever merges first takes the number.
-          # A submodule-bump sweep that opens three PRs in a repo hits it twice.
-          # (bdh-org/dev-common#208, found merging seven bump PRs on 2026-08-16.)
-          #
-          # NOT fixed by comparing against the merge base instead: that would pass a
-          # stale bump and let two changes land on ONE version, which is the exact
-          # thing this check exists to prevent -- the deployed image would report a
-          # version belonging to another change.
-          mb="$(git merge-base "$base" HEAD 2>/dev/null || true)"
-          if [ -n "$mb" ]; then
-            mb_v=$(git show "$mb:Makefile" 2>/dev/null | grep -m1 -E '^VERSION[[:space:]]*=' | sed -E 's/^VERSION[[:space:]]*=[[:space:]]*//' || echo "")
-            if [ -n "$mb_v" ] && [ "$head_v" != "$mb_v" ]; then
-              echo "::error::VERSION COLLISION -- this PR bumped $mb_v -> $head_v, but ${{ github.base_ref }} has ALSO reached $head_v."
-              echo "::error::Another PR merged that same version first. Your bump was fine; it is now taken."
-              echo "::error::Re-bump on top of the updated base:"
-              echo "::error::    git fetch origin ${{ github.base_ref }} && git merge origin/${{ github.base_ref }}"
-              echo "::error::    make bump-patch && git push"
-              echo "::error::Do NOT edit the version by hand, and do NOT re-run this job -- the"
-              echo "::error::number is taken until the branch moves."
-              exit 1
-            fi
-          fi
-          echo "::error::VERSION is still $base_v but this PR changes:"
-          echo "$changed" | sed 's/^/  /'
-          echo "::error::Run 'make bump-patch' (or bump-minor, see P8) -- never edit the version by hand."
-          echo "::error::Without a bump, tag-version.yml fails on main with a VERSION"
-          echo "::error::COLLISION and the deployed image reports another change's version."
-          exit 1
+        uses: bdh-org/dev-common/.github/actions/version-guard@main
 
       # The half of the collision that the step above CANNOT see.
       #

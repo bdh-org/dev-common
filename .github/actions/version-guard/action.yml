@@ -1,0 +1,68 @@
+name: Version bumped
+description: >
+  The VERSION gate: fail a pull request whose Makefile VERSION is not strictly
+  greater than its base branch's, and name a version the base has already taken
+  a COLLISION rather than a missing bump. One implementation, called as a STEP
+  by ci.yml, self-hosted-ci.yml and version-guard.yml
+  (bdh-org/dev-common#124, #180, #182, #208, #232, #235).
+
+# A COMPOSITE ACTION, AND CALLED AS A STEP -- both halves of that are the point.
+#
+# WHY ONE IMPLEMENTATION. The step body lived inline in three workflows, held
+# together by a comment and then by a byte-identity test. The comment failed
+# twice: #182 tightened ci.yml's comparison to strictly-greater and left
+# self-hosted-ci.yml on the weaker test for ten days, while every repo in the
+# stack ran the weaker one; #208's VERSION COLLISION branch landed in
+# self-hosted-ci.yml alone, so ci.yml told authors to run the `make bump-patch`
+# they had just run (#232). Both times the suite stayed green, because it
+# compared exit codes and the divergence was in a MESSAGE. A test can catch two
+# files disagreeing; only one file cannot disagree with itself.
+#
+# WHY A STEP RATHER THAN A SIBLING JOB, which is what bdh-org/dev-common#235
+# originally proposed. Nine repos (canary, devtemplate, ferret, freddyb, heller,
+# hog, oleo, panoptikon, slingshot) require the status check `ci / ci` -- the job
+# this step runs inside. A sibling job reports under a NEW context that none of
+# them requires, so the guard would quietly stop gating merges while still
+# looking green, and fixing that needs a branch-protection write in nine repos
+# that no session credential holds. Called as a step, nothing about any
+# consumer's protection changes.
+#   REVERSAL TRIGGER: if this guard ever needs its own runner or its own
+#   permissions, go back to a sibling job -- and add the new context to each
+#   repo's required checks FIRST.
+#
+# WHY A COMPOSITE ACTION RATHER THAN `run: bash common/...`. A reusable
+# workflow's steps execute against the CALLER's checkout, and `common` is
+# whatever revision the caller pins -- so a script path would resolve into the
+# consumer repo and lag behind main. The runner fetches a composite action from
+# THIS repo by ref, independently of any checkout, which is the same reason
+# claude-install-lock is one (bdh-org/home-infra#541, #881).
+#
+# WHY THE CALL SITE SAYS `bdh-org/dev-common/...@main` AND NOT `./`. Inside a
+# reusable workflow, a relative `uses:` resolves against the CALLING repo's
+# checkout, where this action does not exist. The fully qualified form is not
+# redundancy; it is the only form that works from a `workflow_call`.
+#
+# ITS SIBLING STEP, "Version claimed by another open PR", is still inline in all
+# three workflows and still held by a byte-identity case in
+# tests/version-claimed.test.sh. Converging it onto this action is
+# bdh-org/dev-common#338 -- deliberately a separate change, because it carries a
+# token and a permission scope that this half does not.
+
+runs:
+  using: composite
+  steps:
+    # `fetch-depth: 0` is the CALLER's responsibility and cannot be fixed from
+    # here: a composite action runs after the checkout it is given. `git diff
+    # base...HEAD` and `git merge-base` both need real history, and on a shallow
+    # clone there is no merge base -- so the guard would ERROR rather than judge,
+    # which is worse than no guard because it still shows a red X that looks like
+    # coverage. All three callers check out with `fetch-depth: 0`.
+    - shell: bash
+      env:
+        # Via env, not interpolated into the script. `github.base_ref` is the
+        # run's context even inside a composite action, so this is the caller's
+        # PR base; it is empty on anything that is not a pull request. Passing it
+        # in rather than templating it into the body is also what lets
+        # tests/version-bumped.test.sh run this exact file.
+        BASE_REF: ${{ github.base_ref }}
+      run: bash "${{ github.action_path }}/version-bumped.sh"
