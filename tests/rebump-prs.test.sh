@@ -85,6 +85,7 @@ pr 5 1.2.1 "theirs" shared.txt  # real conflict outside version lines
 pr 6 1.2.1                      # draft
 pr 7 1.2.1                      # not approved, no auto-merge
 EXTRA="EXTRA=1" pr 8 1.2.1      # also adds a Makefile line: must survive the re-bump
+pr 11 1.2.1                     # auto-merge armed, but CI failed on the job's own re-bump
 pr 9 1.2.1                      # its branch moves before the push: push refused
 G commit -q --allow-empty -m "pushed later"; G push -q origin "HEAD:refs/heads/pr9"
 G checkout -q -B pr10 "$base"; set_version 1.2.1; echo 1.2.1 >"$TMP/work/version.txt"
@@ -109,7 +110,8 @@ cp "$TMP/prs.json" "\$out"; printf 200
 STUB
 chmod +x "$TMP/bin/curl"
 
-# The open PRs, one per line: <number> <review|-> <auto-merge 0|1> <draft 0|1>.
+# The open PRs, one per line: <number> <review|-> <auto-merge 0|1> <draft 0|1>
+# [<head: 1 = the job's own re-bump commit with FAILED checks>].
 # #9 and #10 have auto-merge armed, so they come first in line -- and both are
 # refused, which must not use up the run's one push.
 cat >"$TMP/open.txt" <<'EOF'
@@ -123,12 +125,14 @@ cat >"$TMP/open.txt" <<'EOF'
 8 APPROVED 0 0
 9 APPROVED 1 0
 10 APPROVED 1 0
+11 - 1 0 1
 EOF
 write_prs() {
   awk 'BEGIN { printf "{\"data\":{\"repository\":{\"pullRequests\":{\"nodes\":[" }
-    { printf "%s{\"number\":%s,\"headRefName\":\"pr%s\",\"isDraft\":%s,\"isCrossRepository\":false,\"reviewDecision\":%s,\"autoMergeRequest\":%s}",
+    { printf "%s{\"number\":%s,\"headRefName\":\"pr%s\",\"isDraft\":%s,\"isCrossRepository\":false,\"reviewDecision\":%s,\"autoMergeRequest\":%s,\"commits\":{\"nodes\":[{\"commit\":{\"messageHeadline\":\"%s\",\"statusCheckRollup\":{\"state\":\"%s\"}}}]}}",
         (NR > 1 ? "," : ""), $1, $1, ($4 ? "true" : "false"), ($2 == "-" ? "null" : "\"" $2 "\""),
-        ($3 ? "{\"enabledAt\":\"2026-11-03T00:00:00Z\"}" : "null") }
+        ($3 ? "{\"enabledAt\":\"2026-11-03T00:00:00Z\"}" : "null"),
+        ($5 ? "chore: merge main and re-bump to 1.2.1" : "pr " $1), ($5 ? "FAILURE" : "SUCCESS") }
     END { print "]}}}}" }' "$TMP/open.txt" >"$TMP/prs.json"
 }
 write_prs
@@ -158,7 +162,7 @@ merge_pr() {
   git -C "$TMP/origin.git" update-ref "refs/pull/$1/head" "refs/heads/pr$1"
   sed -i "/^$1 /d" "$TMP/open.txt"; write_prs
 }
-before=""; for n in 1 2 3 4 5 7 8 9 10; do before="$before $n=$(branch_sha $n)"; done
+before=""; for n in 1 2 3 4 5 7 8 9 10 11; do before="$before $n=$(branch_sha $n)"; done
 
 expect() {  # expect <case> <line the output must contain>
   CASE="$1"
@@ -176,6 +180,8 @@ expect "a PR already above main is left as it is" "#4 1.4.0: ok: above main"
 expect "a conflict outside version lines is left alone, naming the file" \
   "#5 1.2.1: left alone: conflicts outside version lines in shared.txt"
 expect "a draft is skipped" "#6 ?: skipped: draft"
+expect "a PR whose CI failed on its own re-bump does not hold the line, though auto-merge is armed" \
+  "#11 1.2.1: left alone: its CI failed after its last re-bump"
 expect "an unready PR waits in line like the rest" "#7 1.2.1: waiting: #9 is next in line"
 
 CASE="the job summary carries the table"
@@ -199,7 +205,7 @@ else
 fi
 
 CASE="report mode pushes nothing"
-after=""; for n in 1 2 3 4 5 7 8 9 10; do after="$after $n=$(branch_sha $n)"; done
+after=""; for n in 1 2 3 4 5 7 8 9 10 11; do after="$after $n=$(branch_sha $n)"; done
 if [ "$before" = "$after" ]; then ok "no PR branch moved"; else notok "a PR branch moved in report mode"; fi
 
 CASE="an unknown MODE is refused"
@@ -213,7 +219,7 @@ fi
 at() { git -C "$TMP/origin.git" show "refs/heads/pr$1:$2" 2>/dev/null; }
 pushes() {  # how many PR branches moved since $1 (a snapshot of branch_sha's)
   local snap="$1" c=0 n
-  for n in 1 2 3 4 5 7 8 9 10; do case "$snap" in *" $n=$(branch_sha $n)"*) ;; *) c=$((c+1));; esac; done
+  for n in 1 2 3 4 5 7 8 9 10 11; do case "$snap" in *" $n=$(branch_sha $n)"*) ;; *) c=$((c+1));; esac; done
   echo "$c"
 }
 
@@ -244,7 +250,7 @@ else
   notok "authored by $(git -C "$TMP/origin.git" log -1 --format='%an <%ae>' refs/heads/pr1)"
 fi
 
-merge_pr 1; snap=""; for n in 1 2 3 4 5 7 8 9 10; do snap="$snap $n=$(branch_sha $n)"; done
+merge_pr 1; snap=""; for n in 1 2 3 4 5 7 8 9 10 11; do snap="$snap $n=$(branch_sha $n)"; done
 out="$(run push)"
 expect "after #1 merges, the agreement case goes next at its own level" "#2 1.3.0: RE-BUMPED to 1.4.0 (minor)"
 CASE="exactly one branch pushed in run 2"
@@ -271,24 +277,24 @@ else
   notok "pr8's Makefile is:"; at 8 Makefile | sed 's/^/         /'
 fi
 
-merge_pr 8; snap=""; for n in 1 2 3 4 5 7 8 9 10; do snap="$snap $n=$(branch_sha $n)"; done
+merge_pr 8; snap=""; for n in 1 2 3 4 5 7 8 9 10 11; do snap="$snap $n=$(branch_sha $n)"; done
 out="$(run push)"
 expect "with no ready PR left, the unready one is re-bumped (no /revise needed)" \
   "#7 1.2.1: RE-BUMPED to 1.5.2 (patch)"
 CASE="exactly one branch pushed for the unready PR"
 c="$(pushes "$snap")"; if [ "$c" = 1 ]; then ok "1 push"; else notok "$c pushes"; fi
 
-merge_pr 7; snap=""; for n in 1 2 3 4 5 7 8 9 10; do snap="$snap $n=$(branch_sha $n)"; done
+merge_pr 7; snap=""; for n in 1 2 3 4 5 7 8 9 10 11; do snap="$snap $n=$(branch_sha $n)"; done
 out="$(run push)"
 CASE="once the queue is drained, a run pushes nothing"
 c="$(pushes "$snap")"
 if [ "$c" = 0 ] && ! grep -q "RE-BUMPED" <<<"$out"; then ok "no push, no RE-BUMPED"; else notok "$c pushes:"; sed 's/^/         /' <<<"$out"; fi
 
 CASE="refusals were never pushed in the whole drain"
-moved=""; for n in 5 9 10; do
+moved=""; for n in 5 9 10 11; do
   case "$before" in *" $n=$(branch_sha $n)"*) ;; *) moved="$moved #$n";; esac
 done
-if [ -z "$moved" ]; then ok "#5 #9 #10 untouched"; else notok "moved:$moved"; fi
+if [ -z "$moved" ]; then ok "#5 #9 #10 #11 untouched"; else notok "moved:$moved"; fi
 
 echo
 echo "passed: $pass   failed: $fail"

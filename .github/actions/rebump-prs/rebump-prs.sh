@@ -22,6 +22,13 @@
 # one, then any other, oldest first in each; a refused PR does not use up the
 # run's push.
 #
+# A PR WHOSE CI FAILED ON THE JOB'S OWN RE-BUMP is left alone (bdh-org/dev-common#358).
+# Its version is not what is wrong -- the re-bump just fixed that -- so re-bumping
+# it again after every merge only re-runs a failing CI, and with auto-merge armed it
+# held first place forever (finzeug/hog#686, a lib bump with two real test
+# failures). A push from anyone else makes the head no longer the job's, and the
+# PR rejoins the line.
+#
 # UNREADY PRs TOO, but last (bdh-org/dev-common#353). An unapproved PR left in a
 # version-only conflict was otherwise handed to the hourly stuck-PR nudge, which
 # spends a model run on a `/revise` to change one number; a re-bump here costs one
@@ -215,7 +222,7 @@ echo "$BASE is at $main_version (mode: $MODE)"
 # on "gh: command not found").
 # GraphQL, because REST has no reviewDecision.
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
-query='query($o:String!,$n:String!,$b:String!){repository(owner:$o,name:$n){pullRequests(states:OPEN,baseRefName:$b,first:100){nodes{number headRefName isDraft isCrossRepository reviewDecision autoMergeRequest{enabledAt}}}}}'
+query='query($o:String!,$n:String!,$b:String!){repository(owner:$o,name:$n){pullRequests(states:OPEN,baseRefName:$b,first:100){nodes{number headRefName isDraft isCrossRepository reviewDecision autoMergeRequest{enabledAt} commits(last:1){nodes{commit{messageHeadline statusCheckRollup{state}}}}}}}}'
 jq -n --arg q "$query" --arg o "${REPO%%/*}" --arg n "${REPO#*/}" --arg b "$BASE" \
   '{query: $q, variables: {o: $o, n: $n, b: $b}}' >"$tmp/query.json"
 status="$(curl -sS -o "$tmp/prs.json" -w '%{http_code}' -X POST \
@@ -230,7 +237,7 @@ prs="$(jq '.data.repository.pullRequests.nodes' "$tmp/prs.json")"
 pr_link() { echo "[#$1](${GITHUB_SERVER_URL:-https://github.com}/$REPO/pull/$1)"; }
 
 pushed=""   # the PR this run re-bumped (or, in report mode, would): at most one
-while IFS=$'\t' read -r n branch draft fork; do
+while IFS=$'\t' read -r n branch draft fork failed_rebump; do
   verdict=""
   pr_version=""
   if [ "$draft" = true ]; then
@@ -255,6 +262,8 @@ while IFS=$'\t' read -r n branch draft fork; do
         others="$(other_conflicts "$head" | paste -sd, -)"
         if [ -n "$others" ]; then
           verdict="left alone: conflicts outside version lines in $others"
+        elif [ "$failed_rebump" = true ]; then
+          verdict="left alone: its CI failed after its last re-bump; a fix pushed to the branch puts it back in line"
         elif [ -n "$pushed" ]; then
           verdict="waiting: #$pushed is next in line; re-bumped after it merges"
         elif [ "$MODE" = report ]; then
@@ -272,4 +281,8 @@ while IFS=$'\t' read -r n branch draft fork; do
   [ -n "$pushed" ] && verdict="${verdict//"#$pushed"/$(pr_link "$pushed")}"
   echo "| $(pr_link "$n") | ${pr_version:-?} | $verdict |" >>"$SUMMARY"
 done < <(jq -r 'sort_by([(.autoMergeRequest == null), (.reviewDecision != "APPROVED"), .number])[]
-  | [.number, .headRefName, .isDraft, .isCrossRepository] | @tsv' <<<"$prs")
+  | (.commits.nodes[0].commit // {}) as $head
+  | [.number, .headRefName, .isDraft, .isCrossRepository,
+     (($head.messageHeadline // "" | startswith("chore: merge '"$BASE"' and re-bump to "))
+      and (($head.statusCheckRollup.state // "") | IN("FAILURE", "ERROR")))]
+  | @tsv' <<<"$prs")
