@@ -9,9 +9,11 @@
 #     the case a conflict-triggered design would miss
 #   - two PRs landing on one provisional number, which is allowed
 #   - a PR already above main, a PR with a real conflict, a draft, an unapproved PR
-# then, in MODE=push, that each ready PR's BRANCH lands at the right number with
-# its own changes intact -- including a non-version Makefile line, the line a
-# greedy resolver wiped in panoptikon#1084 -- and that every refusal pushes nothing.
+# then, in MODE=push, a whole DRAIN: one re-bump per run (dev-common#351), the
+# re-bumped PR "merged", the next run re-bumping the next PR -- each landing at the
+# right number with its own changes intact, including a non-version Makefile line
+# (the line a greedy resolver wiped in panoptikon#1084) -- and every refusal
+# pushing nothing and not using up the run's one push.
 #
 # Usage:  bash tests/rebump-prs.test.sh      (or: make test)
 
@@ -103,21 +105,31 @@ out=""; while [ \$# -gt 0 ]; do
 done
 cp "$TMP/prs.json" "\$out"; printf 200
 STUB
-cat >"$TMP/prs.json" <<'JSON'
-{"data":{"repository":{"pullRequests":{"nodes":[
- {"number":1,"headRefName":"pr1","isDraft":false,"isCrossRepository":false,"reviewDecision":"APPROVED","autoMergeRequest":null},
- {"number":2,"headRefName":"pr2","isDraft":false,"isCrossRepository":false,"reviewDecision":null,"autoMergeRequest":{"enabledAt":"2026-11-03T00:00:00Z"}},
- {"number":3,"headRefName":"pr3","isDraft":false,"isCrossRepository":false,"reviewDecision":"APPROVED","autoMergeRequest":null},
- {"number":4,"headRefName":"pr4","isDraft":false,"isCrossRepository":false,"reviewDecision":"APPROVED","autoMergeRequest":null},
- {"number":5,"headRefName":"pr5","isDraft":false,"isCrossRepository":false,"reviewDecision":"APPROVED","autoMergeRequest":null},
- {"number":6,"headRefName":"pr6","isDraft":true,"isCrossRepository":false,"reviewDecision":null,"autoMergeRequest":null},
- {"number":7,"headRefName":"pr7","isDraft":false,"isCrossRepository":false,"reviewDecision":"REVIEW_REQUIRED","autoMergeRequest":null},
- {"number":8,"headRefName":"pr8","isDraft":false,"isCrossRepository":false,"reviewDecision":"APPROVED","autoMergeRequest":null},
- {"number":9,"headRefName":"pr9","isDraft":false,"isCrossRepository":false,"reviewDecision":"APPROVED","autoMergeRequest":null},
- {"number":10,"headRefName":"pr10","isDraft":false,"isCrossRepository":false,"reviewDecision":"APPROVED","autoMergeRequest":null}
-]}}}}
-JSON
 chmod +x "$TMP/bin/curl"
+
+# The open PRs, one per line: <number> <review|-> <auto-merge 0|1> <draft 0|1>.
+# #9 and #10 have auto-merge armed, so they come first in line -- and both are
+# refused, which must not use up the run's one push.
+cat >"$TMP/open.txt" <<'EOF'
+1 APPROVED 0 0
+2 APPROVED 0 0
+3 APPROVED 0 0
+4 APPROVED 0 0
+5 APPROVED 0 0
+6 - 0 1
+7 REVIEW_REQUIRED 0 0
+8 APPROVED 0 0
+9 APPROVED 1 0
+10 APPROVED 1 0
+EOF
+write_prs() {
+  awk 'BEGIN { printf "{\"data\":{\"repository\":{\"pullRequests\":{\"nodes\":[" }
+    { printf "%s{\"number\":%s,\"headRefName\":\"pr%s\",\"isDraft\":%s,\"isCrossRepository\":false,\"reviewDecision\":%s,\"autoMergeRequest\":%s}",
+        (NR > 1 ? "," : ""), $1, $1, ($4 ? "true" : "false"), ($2 == "-" ? "null" : "\"" $2 "\""),
+        ($3 ? "{\"enabledAt\":\"2026-11-03T00:00:00Z\"}" : "null") }
+    END { print "]}}}}" }' "$TMP/open.txt" >"$TMP/prs.json"
+}
+write_prs
 
 run() {  # run <MODE> -- the real script, in the fixture checkout
   # With NO git identity, as on forge and the CI runner: `git merge` will not start
@@ -129,37 +141,47 @@ run() {  # run <MODE> -- the real script, in the fixture checkout
     bash "$SCRIPT" 2>&1)
 }
 branch_sha() { git -C "$TMP/origin.git" rev-parse "refs/heads/pr$1"; }
+# What GitHub does on a merge: main moves to the PR head -- which the previous run
+# re-bumped, so it must contain main (asserted: a harness that merges a stale PR
+# sends main backwards and every later case tests nothing) -- and the PR leaves the
+# open list. Only the merged PR's ref is synced: #9's moved branch stays unseen.
+merge_pr() {
+  CASE="harness: #$1 was re-bumped before it merges"
+  if git -C "$TMP/origin.git" merge-base --is-ancestor refs/heads/main "refs/heads/pr$1"; then
+    ok "main is an ancestor of pr$1"
+  else
+    notok "pr$1 does not contain main -- the drain is out of order"
+  fi
+  git -C "$TMP/origin.git" update-ref refs/heads/main "refs/heads/pr$1"
+  git -C "$TMP/origin.git" update-ref "refs/pull/$1/head" "refs/heads/pr$1"
+  sed -i "/^$1 /d" "$TMP/open.txt"; write_prs
+}
 before=""; for n in 1 2 3 4 5 7 8 9 10; do before="$before $n=$(branch_sha $n)"; done
-
-out="$(run report)"; rc=$?
-
-CASE="the run succeeds"
-if [ "$rc" -eq 0 ]; then ok "exit 0"; else notok "exit $rc:"; sed 's/^/         /' <<<"$out"; fi
 
 expect() {  # expect <case> <line the output must contain>
   CASE="$1"
   if grep -qF -- "$2" <<<"$out"; then ok "$2"; else notok "missing '$2' in:"; sed 's/^/         /' <<<"$out"; fi
 }
-expect "a version-line conflict is re-bumped past main at the PR's own level" \
-  "#1 1.2.1: WOULD RE-BUMP to 1.3.1 (patch)"
-expect "a PR at main's number is caught though git sees no conflict" \
-  "#2 1.3.0: WOULD RE-BUMP to 1.4.0 (minor)"
-expect "two PRs may share one provisional number" \
-  "#3 1.2.1: WOULD RE-BUMP to 1.3.1 (patch)"
-expect "a PR already above main is left as it is" \
-  "#4 1.4.0: ok: above main"
+
+# ---------------------------------------------------------------- report ---
+out="$(run report)"; rc=$?
+CASE="the report run succeeds"
+if [ "$rc" -eq 0 ]; then ok "exit 0"; else notok "exit $rc:"; sed 's/^/         /' <<<"$out"; fi
+expect "auto-merge goes first in line" "#9 1.2.1: WOULD RE-BUMP to 1.3.1 (patch)"
+expect "only one re-bump per run; the rest wait" "#1 1.2.1: waiting: #9 is next in line"
+expect "a PR at main's number is caught though git sees no conflict" "#2 1.3.0: waiting: #9 is next in line"
+expect "a PR already above main is left as it is" "#4 1.4.0: ok: above main"
 expect "a conflict outside version lines is left alone, naming the file" \
   "#5 1.2.1: left alone: conflicts outside version lines in shared.txt"
-expect "a draft is skipped" \
-  "#6 ?: skipped: draft"
+expect "a draft is skipped" "#6 ?: skipped: draft"
 expect "an unready PR is reported but not marked for re-bump" \
   "#7 1.2.1: would re-bump to 1.3.1 (patch) once approved or set to auto-merge"
 
 CASE="the job summary carries the table"
-if grep -qF '| #1 | 1.2.1 | WOULD RE-BUMP to 1.3.1 (patch) |' "$TMP/summary-report.md"; then
+if grep -qF '| #9 | 1.2.1 | WOULD RE-BUMP to 1.3.1 (patch) |' "$TMP/summary-report.md"; then
   ok "summary has a row per PR"
 else
-  notok "summary.md lacks the #1 row"
+  notok "summary-report.md lacks the #9 row"
 fi
 
 CASE="the PR list comes from curl with the token, not from gh"
@@ -180,50 +202,33 @@ else
   ok "MODE=yes exits non-zero"
 fi
 
-# ------------------------------------------------------------------ push ---
-out="$(run push)"; rc=$?
-CASE="the push run succeeds"
-if [ "$rc" -eq 0 ]; then ok "exit 0"; else notok "exit $rc:"; sed 's/^/         /' <<<"$out"; fi
+# ------------------------------------------------------- push: a drain ---
+at() { git -C "$TMP/origin.git" show "refs/heads/pr$1:$2" 2>/dev/null; }
+pushes() {  # how many PR branches moved since $1 (a snapshot of branch_sha's)
+  local snap="$1" c=0 n
+  for n in 1 2 3 4 5 7 8 9 10; do case "$snap" in *" $n=$(branch_sha $n)"*) ;; *) c=$((c+1));; esac; done
+  echo "$c"
+}
 
-expect "a ready PR is re-bumped" "#1 1.2.1: RE-BUMPED to 1.3.1 (patch)"
-expect "the agreement case is re-bumped" "#2 1.3.0: RE-BUMPED to 1.4.0 (minor)"
-expect "a second PR takes the same provisional number" "#3 1.2.1: RE-BUMPED to 1.3.1 (patch)"
-expect "a PR whose Makefile also changes is re-bumped" "#8 1.2.1: RE-BUMPED to 1.3.1 (patch)"
+snap="$before"; out="$(run push)"; rc=$?
+CASE="push run 1 succeeds"
+if [ "$rc" -eq 0 ]; then ok "exit 0"; else notok "exit $rc:"; sed 's/^/         /' <<<"$out"; fi
 expect "a branch that moved is not overwritten" "#9 1.2.1: left alone: push refused (the branch moved); the next run retries"
 expect "a version line the merge did not bring to main's number is refused" \
   "#10 1.2.1: left alone: moved 0 version lines in version.txt, but the PR bumped 1"
-
-at() { git -C "$TMP/origin.git" show "refs/heads/pr$1:$2" 2>/dev/null; }
-CASE="the pushed branches hold the new number in every version file"
+expect "two refusals do not use up the run's push: the oldest ready PR goes next" \
+  "#1 1.2.1: RE-BUMPED to 1.3.1 (patch)"
+expect "the rest wait for it" "#8 1.2.1: waiting: #1 is next in line"
+CASE="exactly one branch pushed in run 1"
+c="$(pushes "$snap")"; if [ "$c" = 1 ]; then ok "1 push"; else notok "$c pushes"; fi
+CASE="the re-bumped PR holds the new number in every version file, its own change and main's"
 if [ "$(at 1 Makefile | head -n1)" = VERSION=1.3.1 ] && [ "$(at 1 pkg/__init__.py)" = '__version__ = "1.3.1"' ] \
-   && [ "$(at 2 Makefile | head -n1)" = VERSION=1.4.0 ] && [ "$(at 2 pkg/__init__.py)" = '__version__ = "1.4.0"' ] \
-   && [ "$(at 3 Makefile | head -n1)" = VERSION=1.3.1 ]; then
-  ok "#1 and #3 at 1.3.1, #2 at 1.4.0, Makefile and __version__ alike"
-else
-  notok "pr1: $(at 1 Makefile | head -n1) / $(at 1 pkg/__init__.py); pr2: $(at 2 Makefile | head -n1); pr3: $(at 3 Makefile | head -n1)"
-fi
-
-CASE="the PR keeps its own changes and gains main's"
-if [ "$(at 1 own-1.txt)" = 1 ] && [ "$(at 1 shared.txt)" = ours ] \
+   && [ "$(at 1 own-1.txt)" = 1 ] && [ "$(at 1 shared.txt)" = ours ] \
    && git -C "$TMP/origin.git" merge-base --is-ancestor refs/heads/main refs/heads/pr1; then
-  ok "pr1 has its own file, main's shared.txt, and main as an ancestor"
+  ok "pr1: 1.3.1 in Makefile and __version__, own-1.txt, main's shared.txt, main as ancestor"
 else
-  notok "pr1 lost its own change or main's"
+  notok "pr1: $(at 1 Makefile | head -n1) / $(at 1 pkg/__init__.py) / own=$(at 1 own-1.txt) / shared=$(at 1 shared.txt)"
 fi
-
-CASE="a non-version Makefile line survives (the panoptikon#1084 wipe)"
-if [ "$(at 8 Makefile)" = "$(printf 'VERSION=1.3.1\nPACKAGE_DIR=pkg\nEXTRA=1')" ]; then
-  ok "pr8's Makefile is exactly VERSION=1.3.1, PACKAGE_DIR=pkg, EXTRA=1"
-else
-  notok "pr8's Makefile is:"; at 8 Makefile | sed 's/^/         /'
-fi
-
-CASE="refusals and unready PRs push nothing"
-moved=""; for n in 4 5 7 9 10; do
-  case "$before" in *" $n=$(branch_sha $n)"*) ;; *) moved="$moved #$n";; esac
-done
-if [ -z "$moved" ]; then ok "#4 #5 #7 #9 #10 untouched"; else notok "moved:$moved"; fi
-
 CASE="the re-bump commit is the coder App's"
 if [ "$(git -C "$TMP/origin.git" log -1 --format='%an <%ae>' refs/heads/pr1)" = \
      'bdh-org-coder[bot] <305014630+bdh-org-coder[bot]@users.noreply.github.com>' ]; then
@@ -232,16 +237,43 @@ else
   notok "authored by $(git -C "$TMP/origin.git" log -1 --format='%an <%ae>' refs/heads/pr1)"
 fi
 
-CASE="a second run, after GitHub updates the PR heads, changes nothing"
-for n in 1 2 3 8; do git -C "$TMP/origin.git" update-ref "refs/pull/$n/head" "refs/heads/pr$n"; done
-mid=""; for n in 1 2 3 8; do mid="$mid $(branch_sha $n)"; done
+merge_pr 1; snap=""; for n in 1 2 3 4 5 7 8 9 10; do snap="$snap $n=$(branch_sha $n)"; done
 out="$(run push)"
-end=""; for n in 1 2 3 8; do end="$end $(branch_sha $n)"; done
-if [ "$mid" = "$end" ] && grep -qF "#1 1.3.1: ok: above main" <<<"$out"; then
-  ok "re-bumped PRs now read 'ok: above main' and nothing is pushed again"
+expect "after #1 merges, the agreement case goes next at its own level" "#2 1.3.0: RE-BUMPED to 1.4.0 (minor)"
+CASE="exactly one branch pushed in run 2"
+c="$(pushes "$snap")"; if [ "$c" = 1 ]; then ok "1 push"; else notok "$c pushes"; fi
+CASE="#2 holds 1.4.0 in every version file"
+if [ "$(at 2 Makefile | head -n1)" = VERSION=1.4.0 ] && [ "$(at 2 pkg/__init__.py)" = '__version__ = "1.4.0"' ]; then
+  ok "pr2 at 1.4.0"
 else
-  notok "second run:"; sed 's/^/         /' <<<"$out"
+  notok "pr2: $(at 2 Makefile | head -n1) / $(at 2 pkg/__init__.py)"
 fi
+
+merge_pr 2; out="$(run push)"
+expect "then #3, past #1's and #2's numbers" "#3 1.2.1: RE-BUMPED to 1.4.1 (patch)"
+merge_pr 3; out="$(run push)"
+expect "a PR that WAS above main falls behind as main passes it, and goes next" \
+  "#4 1.4.0: RE-BUMPED to 1.5.0 (minor)"
+merge_pr 4; out="$(run push)"
+expect "then #8" "#8 1.2.1: RE-BUMPED to 1.5.1 (patch)"
+CASE="a non-version Makefile line survives (the panoptikon#1084 wipe)"
+if [ "$(at 8 Makefile)" = "$(printf 'VERSION=1.5.1\nPACKAGE_DIR=pkg\nEXTRA=1')" ]; then
+  ok "pr8's Makefile is exactly VERSION=1.5.1, PACKAGE_DIR=pkg, EXTRA=1"
+else
+  notok "pr8's Makefile is:"; at 8 Makefile | sed 's/^/         /'
+fi
+
+merge_pr 8; snap=""; for n in 1 2 3 4 5 7 8 9 10; do snap="$snap $n=$(branch_sha $n)"; done
+out="$(run push)"
+CASE="once the queue is drained, a run pushes nothing"
+c="$(pushes "$snap")"
+if [ "$c" = 0 ] && ! grep -q "RE-BUMPED" <<<"$out"; then ok "no push, no RE-BUMPED"; else notok "$c pushes:"; sed 's/^/         /' <<<"$out"; fi
+
+CASE="refusals and unready PRs were never pushed in the whole drain"
+moved=""; for n in 5 7 9 10; do
+  case "$before" in *" $n=$(branch_sha $n)"*) ;; *) moved="$moved #$n";; esac
+done
+if [ -z "$moved" ]; then ok "#5 #7 #9 #10 untouched"; else notok "moved:$moved"; fi
 
 echo
 echo "passed: $pass   failed: $fail"

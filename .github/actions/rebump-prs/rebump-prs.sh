@@ -14,6 +14,13 @@
 # number; the first to merge keeps it and the next run moves the rest. Assigning
 # distinct numbers in queue order breaks the moment PRs merge out of order.
 #
+# ONE PUSH PER RUN (bdh-org/dev-common#351). Every push starts the PR's CI, and
+# only the PR about to merge needs to be current -- strict branch protection makes
+# it update anyway. Re-bumping every ready PR after each merge cost ~N^2/2 CI runs
+# to drain N PRs (28 for hog's 8, which backed up forge); one per run costs N. The
+# next in line is a PR with auto-merge armed (it merges itself), then the oldest;
+# a refused PR does not use up the run's push.
+#
 # MODE=report prints what it would do and pushes nothing (stage 1, kept as the
 # one-line rollback). MODE=push re-bumps each READY PR (approved, or auto-merge
 # armed): merge main, keep main's side of the version-only conflict blocks, then
@@ -213,6 +220,7 @@ if [ "$status" != 200 ] || ! jq -e '.data.repository.pullRequests.nodes' "$tmp/p
 fi
 prs="$(jq '.data.repository.pullRequests.nodes' "$tmp/prs.json")"
 
+pushed=""   # the PR this run re-bumped (or, in report mode, would): at most one
 while IFS=$'\t' read -r n branch draft fork review automerge; do
   verdict=""
   pr_version=""
@@ -239,12 +247,14 @@ while IFS=$'\t' read -r n branch draft fork review automerge; do
         if [ -n "$others" ]; then
           verdict="left alone: conflicts outside version lines in $others"
         elif [ "$review" = APPROVED ] || [ "$automerge" = true ]; then
-          if [ "$MODE" = report ]; then
-            verdict="WOULD RE-BUMP to $new_version ($level)"
+          if [ -n "$pushed" ]; then
+            verdict="waiting: #$pushed is next in line; re-bumped after it merges"
+          elif [ "$MODE" = report ]; then
+            verdict="WOULD RE-BUMP to $new_version ($level)"; pushed="$n"
           else
             refused="$(rebump "$n" "$branch" "$new_version")"
             verdict="${refused:+left alone: $refused}"
-            verdict="${verdict:-RE-BUMPED to $new_version ($level)}"
+            if [ -z "$verdict" ]; then verdict="RE-BUMPED to $new_version ($level)"; pushed="$n"; fi
           fi
         else
           verdict="would re-bump to $new_version ($level) once approved or set to auto-merge"
@@ -254,6 +264,6 @@ while IFS=$'\t' read -r n branch draft fork review automerge; do
   fi
   echo "#$n ${pr_version:-?}: $verdict"
   echo "| #$n | ${pr_version:-?} | $verdict |" >>"$SUMMARY"
-done < <(jq -r 'sort_by(.number)[]
+done < <(jq -r 'sort_by([(.autoMergeRequest == null), .number])[]
   | [.number, .headRefName, .isDraft, .isCrossRepository, (.reviewDecision // "-" | if . == "" then "-" else . end), (.autoMergeRequest != null)]
   | @tsv' <<<"$prs")
