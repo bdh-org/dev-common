@@ -227,6 +227,8 @@ if [ "$status" != 200 ] || ! jq -e '.data.repository.pullRequests.nodes' "$tmp/p
 fi
 prs="$(jq '.data.repository.pullRequests.nodes' "$tmp/prs.json")"
 
+pr_link() { echo "[#$1](${GITHUB_SERVER_URL:-https://github.com}/$REPO/pull/$1)"; }
+
 pushed=""   # the PR this run re-bumped (or, in report mode, would): at most one
 while IFS=$'\t' read -r n branch draft fork; do
   verdict=""
@@ -266,6 +268,8 @@ while IFS=$'\t' read -r n branch draft fork; do
     fi
   fi
   echo "#$n ${pr_version:-?}: $verdict"
-  echo "| #$n | ${pr_version:-?} | $verdict |" >>"$SUMMARY"
+  # A job summary does not autolink #N (bdh-org/dev-common#356): link it by hand.
+  [ -n "$pushed" ] && verdict="${verdict//"#$pushed"/$(pr_link "$pushed")}"
+  echo "| $(pr_link "$n") | ${pr_version:-?} | $verdict |" >>"$SUMMARY"
 done < <(jq -r 'sort_by([(.autoMergeRequest == null), (.reviewDecision != "APPROVED"), .number])[]
   | [.number, .headRefName, .isDraft, .isCrossRepository] | @tsv' <<<"$prs")

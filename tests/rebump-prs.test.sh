@@ -179,10 +179,16 @@ expect "a draft is skipped" "#6 ?: skipped: draft"
 expect "an unready PR waits in line like the rest" "#7 1.2.1: waiting: #9 is next in line"
 
 CASE="the job summary carries the table"
-if grep -qF '| #9 | 1.2.1 | WOULD RE-BUMP to 1.3.1 (patch) |' "$TMP/summary-report.md"; then
-  ok "summary has a row per PR"
+if grep -qF '| [#9](https://github.com/o/r/pull/9) | 1.2.1 | WOULD RE-BUMP to 1.3.1 (patch) |' "$TMP/summary-report.md"; then
+  ok "summary has a row per PR, the PR a link"
 else
-  notok "summary-report.md lacks the #9 row"
+  notok "summary-report.md lacks the linked #9 row:"; sed 's/^/         /' "$TMP/summary-report.md"
+fi
+CASE="the summary links the PR a waiting row names (a job summary does not autolink #N)"
+if grep -qF '| [#1](https://github.com/o/r/pull/1) | 1.2.1 | waiting: [#9](https://github.com/o/r/pull/9) is next in line' "$TMP/summary-report.md"; then
+  ok "waiting rows link the next PR"
+else
+  notok "the #1 row does not link #9:"; grep -F '#1]' "$TMP/summary-report.md" | sed 's/^/         /'
 fi
 
 CASE="the PR list comes from curl with the token, not from gh"
