@@ -1,0 +1,26 @@
+import marimo
+
+# What a bare-regex rename does to a page. `re.sub` on word boundaries underscored the
+# BINDING (`import _requests`) and left the USES alone, plus a string literal
+# (`aggfunc="_last"`) and a keyword argument (`margin=dict(_r=0)`) that are not
+# references at all. A textual edit does not know what a token means (home-infra#394).
+__generated_with = "0.23.16"
+app = marimo.App()
+
+
+@app.cell
+def _():
+    import marimo as mo
+    import _requests
+    return (mo,)
+
+
+@app.cell
+def _(mo):
+    payload = requests.get("http://hog:8000/positions", timeout=5).json()
+    view = mo.ui.table(payload, aggfunc="_last")
+    return (view,)
+
+
+if __name__ == "__main__":
+    app.run()

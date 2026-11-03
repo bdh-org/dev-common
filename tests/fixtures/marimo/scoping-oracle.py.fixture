@@ -1,0 +1,112 @@
+import marimo
+
+# THE ORACLE FIXTURE. Every cell here is pure stdlib and RUNS, so the test suite can
+# ask Python what each cell actually leaves bound instead of asserting what it ought to.
+#
+# marimo executes a cell's code in the shared notebook namespace, so "what this cell
+# defines" is exactly "what names remain bound after the cell body runs at module
+# level". test-marimo-graph-check.sh execs each of these bodies and compares that set,
+# name for name, against what marimo-graph-check.py computed statically.
+#
+# That is why the cells are contrived and dependency-free: this file is not a page, it
+# is a scoping experiment. Every rule the checker relies on has a cell here, including
+# the two whose intuitive answer is wrong -- a comprehension target does not leak even
+# though CPython 3.12 lists it in co_varnames (PEP 709 inlines comprehensions), and an
+# `except ... as` target is DELETED at the end of its handler.
+__generated_with = "0.23.16"
+app = marimo.App()
+
+
+@app.cell
+def _():
+    plain = 1
+    tup_a, tup_b = 2, 3
+    (nested_a, (nested_b, nested_c)) = 4, (5, 6)
+    star_head, *star_rest = [7, 8, 9]
+    annotated: int = 10
+    declared: int
+    augmented = 0
+    augmented += 1
+    return
+
+
+@app.cell
+def _():
+    import json
+    import os.path
+    import xml.etree.ElementTree as etree
+    from decimal import Decimal
+    from fractions import Fraction as Frac
+    return
+
+
+@app.cell
+def _():
+    comp_list = [comp_target for comp_target in range(3)]
+    comp_dict = {k: v for k, v in [("a", 1)]}
+    comp_set = {s for s in "abc"}
+    comp_gen = list(x for x in range(2))
+    lam = lambda lam_param: lam_param + 1  # noqa: E731
+    return
+
+
+@app.cell
+def _():
+    walrus_outer = [(walrus_target := n * 2) for n in range(3)]
+    return
+
+
+@app.cell
+def _():
+    def nested_fn(nested_param):
+        nested_local = nested_param + 1
+        with open("/dev/null") as nested_handle:
+            nested_handle.read()
+        for nested_loop in range(2):
+            pass
+        return nested_local, nested_loop
+
+    class NestedClass:
+        class_attr = 1
+
+    nested_fn(1)
+    return
+
+
+@app.cell
+def _():
+    for loop_target in range(2):
+        pass
+    with open("/dev/null") as with_target:
+        with_target.read()
+    return
+
+
+@app.cell
+def _():
+    try:
+        raise ValueError("x")
+    except ValueError as except_target:
+        handled = str(except_target)
+    return
+
+
+@app.cell
+def _():
+    _private = 1
+    _private_list = [_private_comp for _private_comp in range(2)]
+    return
+
+
+@app.cell
+def _():
+    match [1, 2]:
+        case [match_first, match_rest]:
+            matched = match_first + match_rest
+        case _:
+            matched = 0
+    return
+
+
+if __name__ == "__main__":
+    app.run()

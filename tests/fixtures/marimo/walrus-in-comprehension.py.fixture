@@ -1,0 +1,32 @@
+import marimo
+
+# The one comprehension case that IS a cell definition, next to the one that is not.
+# `v` is a comprehension target -- comprehension-scoped, bound in both cells, legal.
+# `scaled` is assigned with `:=`, which binds in the ENCLOSING scope, so binding it in
+# two cells is a real multiple-definition violation. A guard that treats every name
+# inside a comprehension the same way gets one of these two wrong (home-infra#394).
+__generated_with = "0.23.16"
+app = marimo.App()
+
+
+@app.cell
+def _():
+    values = [1, 2, 3]
+    others = [4, 5, 6]
+    return others, values
+
+
+@app.cell
+def _(values):
+    doubled = [(scaled := v * 2) for v in values]
+    return doubled, scaled
+
+
+@app.cell
+def _(others):
+    tripled = [(scaled := v * 3) for v in others]
+    return scaled, tripled
+
+
+if __name__ == "__main__":
+    app.run()
