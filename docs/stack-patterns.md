@@ -130,11 +130,12 @@ No backfill: earlier patch-only histories stay as they are.
 
 A merge leaves other open PRs at or below main's VERSION. Do not re-bump them by
 hand: after every push to main, the `rebump` job in both tag-version workflows
-re-bumps the NEXT ready PR (approved or auto-merge armed; auto-merge first, then
-oldest) to main's version plus the PR's own level, when its only conflicts are
-version lines. One per merge, so a queue of N costs N CI runs; the rest wait their
-turn. Anything else it leaves alone and names in its job summary
-(bdh-org/dev-common#344, #351).
+re-bumps the NEXT PR in line (auto-merge armed first, then approved, then
+unapproved; oldest first in each) to main's version plus the PR's own level, when
+its only conflicts are version lines. One per merge, so a queue of N costs N CI
+runs; the rest wait their turn. Unapproved PRs are included so that a version-only
+conflict never costs an agent `/revise`. Anything else it leaves alone and names in
+its job summary (bdh-org/dev-common#344, #351, #353).
 
 One known failure: if a commit touching `.github/workflows/` lands on main
 next to a bump merge, the tag push is rejected ("without `workflows`

@@ -18,12 +18,19 @@
 # only the PR about to merge needs to be current -- strict branch protection makes
 # it update anyway. Re-bumping every ready PR after each merge cost ~N^2/2 CI runs
 # to drain N PRs (28 for hog's 8, which backed up forge); one per run costs N. The
-# next in line is a PR with auto-merge armed (it merges itself), then the oldest;
-# a refused PR does not use up the run's push.
+# next in line is a PR with auto-merge armed (it merges itself), then an approved
+# one, then any other, oldest first in each; a refused PR does not use up the
+# run's push.
+#
+# UNREADY PRs TOO, but last (bdh-org/dev-common#353). An unapproved PR left in a
+# version-only conflict was otherwise handed to the hourly stuck-PR nudge, which
+# spends a model run on a `/revise` to change one number; a re-bump here costs one
+# CI run. It goes after every ready PR, so it only takes a run's push when no
+# ready PR needs it.
 #
 # MODE=report prints what it would do and pushes nothing (stage 1, kept as the
-# one-line rollback). MODE=push re-bumps each READY PR (approved, or auto-merge
-# armed): merge main, keep main's side of the version-only conflict blocks, then
+# one-line rollback). MODE=push re-bumps the next PR in line: merge main, keep
+# main's side of the version-only conflict blocks, then
 # move exactly the version lines the PR itself bumped from main's number to the
 # new one. Not `make bump-<level>`: that needs the PR's `common` submodule, which
 # for a finzeug repo means a second, cross-org token on forge -- while the lines
@@ -221,7 +228,7 @@ fi
 prs="$(jq '.data.repository.pullRequests.nodes' "$tmp/prs.json")"
 
 pushed=""   # the PR this run re-bumped (or, in report mode, would): at most one
-while IFS=$'\t' read -r n branch draft fork review automerge; do
+while IFS=$'\t' read -r n branch draft fork; do
   verdict=""
   pr_version=""
   if [ "$draft" = true ]; then
@@ -246,24 +253,19 @@ while IFS=$'\t' read -r n branch draft fork review automerge; do
         others="$(other_conflicts "$head" | paste -sd, -)"
         if [ -n "$others" ]; then
           verdict="left alone: conflicts outside version lines in $others"
-        elif [ "$review" = APPROVED ] || [ "$automerge" = true ]; then
-          if [ -n "$pushed" ]; then
-            verdict="waiting: #$pushed is next in line; re-bumped after it merges"
-          elif [ "$MODE" = report ]; then
-            verdict="WOULD RE-BUMP to $new_version ($level)"; pushed="$n"
-          else
-            refused="$(rebump "$n" "$branch" "$new_version")"
-            verdict="${refused:+left alone: $refused}"
-            if [ -z "$verdict" ]; then verdict="RE-BUMPED to $new_version ($level)"; pushed="$n"; fi
-          fi
+        elif [ -n "$pushed" ]; then
+          verdict="waiting: #$pushed is next in line; re-bumped after it merges"
+        elif [ "$MODE" = report ]; then
+          verdict="WOULD RE-BUMP to $new_version ($level)"; pushed="$n"
         else
-          verdict="would re-bump to $new_version ($level) once approved or set to auto-merge"
+          refused="$(rebump "$n" "$branch" "$new_version")"
+          verdict="${refused:+left alone: $refused}"
+          if [ -z "$verdict" ]; then verdict="RE-BUMPED to $new_version ($level)"; pushed="$n"; fi
         fi
       fi
     fi
   fi
   echo "#$n ${pr_version:-?}: $verdict"
   echo "| #$n | ${pr_version:-?} | $verdict |" >>"$SUMMARY"
-done < <(jq -r 'sort_by([(.autoMergeRequest == null), .number])[]
-  | [.number, .headRefName, .isDraft, .isCrossRepository, (.reviewDecision // "-" | if . == "" then "-" else . end), (.autoMergeRequest != null)]
-  | @tsv' <<<"$prs")
+done < <(jq -r 'sort_by([(.autoMergeRequest == null), (.reviewDecision != "APPROVED"), .number])[]
+  | [.number, .headRefName, .isDraft, .isCrossRepository] | @tsv' <<<"$prs")
