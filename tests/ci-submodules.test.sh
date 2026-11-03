@@ -114,11 +114,35 @@ CASE="data-submodules"
 assert_contains "$body" 'keep="common ${EXTRA:-} ${DATA_ONLY:-}"' \
   "hydration keeps the data-only paths alongside the installable ones"
 
-install_step="$(awk '/^      - name: Install the extra submodules into the env$/,/^      - name: Version consistency$/' "$WF_CI")"
-assert_contains "$install_step" 'pip install ${{ inputs.extra-submodules }}' \
+install_step="$(awk '/^      - name: Install the extra submodules into a per-run venv$/,/^      - name: Version consistency$/' "$WF_CI")"
+assert_contains "$install_step" 'EXTRA: ${{ inputs.extra-submodules }}' \
   "the install step still installs extra-submodules"
 assert_absent "$install_step" 'data-submodules' \
   "and never pip-installs a data-only sibling -- the whole reason the input exists"
+
+# --- 1b'. the lib/* install is private to the run (bdh-org/dev-common#345) ---
+
+# Every run of a repo shares one conda env on forge, and several runners run at
+# once: two runs pip-installing their own lib/* pins into it crashed one, and
+# could hand the other a pin it did not ask for -- a false green on a lib bump.
+CASE="private-lib-install"
+assert_contains "$install_step" 'python -m venv --system-site-packages "$LIB_VENV"' \
+  "the lib/* paths install into a venv layered on the conda env"
+assert_contains "$install_step" 'LIB_VENV="$RUNNER_TEMP/lib-venv"' \
+  "and that venv lives in RUNNER_TEMP, which is per job"
+assert_contains "$install_step" '"$LIB_VENV/bin/python" -m pip install' \
+  "pip runs as the venv's own python"
+# A bare `pip install` after `conda activate "$CI_ENV"` is the shared-env install.
+if [[ $'\n'"$install_step" == *$'\n'+( )'pip install'* ]]; then
+  notok "a bare pip install still writes the shared env"
+else
+  ok "and never into the shared env with a bare pip install"
+fi
+for step in Lint Test; do
+  body_of_step="$(awk -v n="$step" '$0 ~ "^      - name: "n"$" {on=1; print; next} on && /^      - name: / {exit} on' "$WF_CI")"
+  assert_contains "$body_of_step" 'source "$LIB_VENV/bin/activate"' \
+    "the $step step runs inside the per-run venv"
+done
 
 # --- 1c. test-env ------------------------------------------------------------
 

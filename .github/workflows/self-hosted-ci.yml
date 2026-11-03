@@ -522,12 +522,56 @@ jobs:
       # deliberately omits them -- which meant every code path behind them was
       # invisible to CI, degrading to a warning rather than a failure
       # (finzeug/panoptikon#648).
-      - name: Install the extra submodules into the env
+      #
+      # INTO A VENV PRIVATE TO THIS RUN, never into $CI_ENV. The conda env is
+      # shared by every run of the repo, and forge runs several runners at once:
+      # a PR's run and main's run pip-installed their own lib/* pins into one env
+      # together. The loud half was a crash (`No such file or directory:
+      # .../ratecraft-0.9.0.dist-info/INSTALLER*.tmp`); the quiet half was a run
+      # testing the pin ANOTHER run had just installed, a false green on exactly
+      # the lib-bump PRs (bdh-org/dev-common#345). `--system-site-packages` layers
+      # the venv on the conda env, so the conda packages are not reinstalled and
+      # the venv's own lib/* copies come first on sys.path. $RUNNER_TEMP is
+      # emptied at the start of every job, and a runner runs one job at a time.
+      #
+      # Not a `concurrency` group keyed on the env (it keeps one PENDING run and
+      # cancels the rest, silently dropping queued PR runs), and not a flock (it
+      # would have to cover install AND tests, serializing all CI per repo).
+      - name: Install the extra submodules into a per-run venv
         if: inputs.extra-submodules != ''
+        env:
+          EXTRA: ${{ inputs.extra-submodules }}
         run: |
+          set -euo pipefail
           source "$CONDA_ROOT/etc/profile.d/conda.sh"
           conda activate "$CI_ENV"
-          pip install ${{ inputs.extra-submodules }}
+          LIB_VENV="$RUNNER_TEMP/lib-venv"
+          rm -rf "$LIB_VENV"
+          python -m venv --system-site-packages "$LIB_VENV"
+          # shellcheck disable=SC2086 # EXTRA is a space-separated path list
+          "$LIB_VENV/bin/python" -m pip install --quiet --disable-pip-version-check $EXTRA
+          echo "LIB_VENV=$LIB_VENV" >> "$GITHUB_ENV"
+          # Prove each path resolved to THIS run's install of THIS pin: the
+          # distribution's version must be the one its pyproject.toml declares,
+          # and it must live in the venv rather than the shared env.
+          # shellcheck disable=SC2086
+          "$LIB_VENV/bin/python" - $EXTRA <<'PY'
+          import sys, tomllib
+          from importlib.metadata import distribution
+          from pathlib import Path
+          venv, bad = Path(sys.prefix).resolve(), []
+          for path in sys.argv[1:]:
+              project = tomllib.loads((Path(path) / "pyproject.toml").read_text())["project"]
+              name, want = project["name"], project.get("version")
+              dist = distribution(name)
+              where = Path(dist.locate_file("")).resolve()
+              ok = venv in where.parents and (want is None or dist.version == want)
+              print(f"{path}: {name} {dist.version} (pin declares {want}) from {where}")
+              if not ok:
+                  bad.append(path)
+          if bad:
+              sys.exit(f"::error::not this run's install of the pinned version: {' '.join(bad)}")
+          PY
 
       # `make init` is step 3 of creating a repo from devtemplate, and NOTHING
       # notices when it is skipped. GitHub's "Create from template" produces a
@@ -638,6 +682,8 @@ jobs:
         run: |
           source "$CONDA_ROOT/etc/profile.d/conda.sh"
           conda activate "$CI_ENV"
+          # The per-run lib/* venv, when the install step made one (see there).
+          if [ -n "${LIB_VENV:-}" ]; then source "$LIB_VENV/bin/activate"; fi
           make lint
 
       - name: Test
@@ -647,6 +693,7 @@ jobs:
         run: |
           source "$CONDA_ROOT/etc/profile.d/conda.sh"
           conda activate "$CI_ENV"
+          if [ -n "${LIB_VENV:-}" ]; then source "$LIB_VENV/bin/activate"; fi
           # `test-env`, one KEY=VALUE per line. Echoed by NAME so the log says
           # which variables the run had -- a suite that skips on a missing one
           # otherwise reports the same green as a suite that ran it.
