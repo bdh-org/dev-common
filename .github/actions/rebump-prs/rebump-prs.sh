@@ -198,7 +198,7 @@ echo "$BASE is at $main_version (mode: $MODE)"
 } >>"$SUMMARY"
 
 # curl and jq, not `gh`: forge's runner has no gh CLI (the first live run died
-# on "gh: command not found"), the same reason version-claimed.sh uses curl.
+# on "gh: command not found").
 # GraphQL, because REST has no reviewDecision.
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 query='query($o:String!,$n:String!,$b:String!){repository(owner:$o,name:$n){pullRequests(states:OPEN,baseRefName:$b,first:100){nodes{number headRefName isDraft isCrossRepository reviewDecision autoMergeRequest{enabledAt}}}}}'
