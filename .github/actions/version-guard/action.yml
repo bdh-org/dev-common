@@ -1,12 +1,10 @@
 name: Version guard
 description: >
-  The VERSION gate, both halves. Fails a pull request whose Makefile VERSION is
-  not strictly greater than its base branch's, naming a version the base has
-  already taken a COLLISION rather than a missing bump; then fails one whose
-  version is already claimed by an EARLIER OPEN pull request, which no branch can
-  see from its own contents. One implementation, called as a STEP by ci.yml,
-  self-hosted-ci.yml and version-guard.yml
-  (bdh-org/dev-common#124, #180, #182, #208, #232, #235, #338).
+  The VERSION gate. Fails a pull request whose Makefile VERSION is not strictly
+  greater than its base branch's, naming a version the base has already taken a
+  COLLISION rather than a missing bump. One implementation, called as a STEP by
+  ci.yml, self-hosted-ci.yml and version-guard.yml
+  (bdh-org/dev-common#124, #180, #182, #208, #232, #235, #338, #344).
 
 # A COMPOSITE ACTION, AND CALLED AS A STEP -- both halves of that are the point.
 #
@@ -44,41 +42,14 @@ description: >
 # checkout, where this action does not exist. The fully qualified form is not
 # redundancy; it is the only form that works from a `workflow_call`.
 #
-# TWO STEPS, because there are two ways to take a number that is not yours.
-# version-bumped.sh compares this branch against its BASE, which sees a collision
-# only after the other PR has MERGED. version-claimed.sh compares against the
-# repo's currently OPEN PRs, which is the case no single branch can see from its
-# own contents. Its body was inline in the same three workflows, held by a
-# byte-identity case of its own, until bdh-org/dev-common#338 brought it here --
-# the same duplication, one step lower down, left behind because #235's brief
-# scoped to one step.
-#
-# ONE CALL SITE PER WORKFLOW, not two. The two gates were adjacent steps; they are
-# now the two steps of one action, so each workflow `uses:` it once. A selector
-# input to run only one half would be configurability nothing has asked for, and
-# the composite steps are NAMED, so the log still attributes a failure to the
-# right gate.
-#
-# HOW THE TOKEN ARRIVES: `${{ github.token }}` in the step's `env:`, decided here
-# rather than taken as an input (bdh-org/dev-common#338).
-#   - It CANNOT be `secrets.GITHUB_TOKEN`: the `secrets` context is not available
-#     inside an action file at all. `github.token` is the documented equivalent
-#     and is the run's own token, scoped by the calling job's `permissions`.
-#   - NOT an input, because an input must be passed. A caller that omitted it
-#     would get "could not list open PRs" on every PR forever -- a check that
-#     reports its own absence, which is noise, and noise gets filtered. Nothing
-#     can forget an ambient token.
-#   - Via `env:`, never interpolated into the command line: a token in argv is
-#     visible in process listings and in the log's own command echo.
-#   REVERSAL TRIGGER: if a caller ever needs a DIFFERENT token -- to list PRs in
-#   another repo, or with a scope `github.token` cannot hold -- add an OPTIONAL
-#   `github-token` input defaulting to `${{ github.token }}`. Do not make it
-#   required; that is the forgettable-input failure above.
-#
-# THE PERMISSION SCOPE STAYS WITH THE CALLER. `pull-requests: read` cannot be
-# declared from here -- an action has no `permissions:` block -- so it remains in
-# each workflow that restricts permissions, and tests/version-claimed.test.sh
-# still owns that case. version-claimed.sh degrades to a warning without it.
+# ONE STEP SINCE bdh-org/dev-common#344. A second step, version-claimed.sh, failed
+# a PR whose number an EARLIER OPEN PR already held. It is gone because numbers
+# are now PROVISIONAL: after every merge the rebump job in tag-version moves each
+# ready PR past main at its own level, so several open PRs may share a number
+# and the first to merge keeps it. That gate would have failed every one of
+# those but the oldest. Two PRs at one number that merge back to back cannot
+# both land either: `strict` branch protection makes the second update first,
+# and that update is a re-bump; tag-version's collision check is the backstop.
 
 runs:
   using: composite
@@ -99,21 +70,3 @@ runs:
         # tests/version-bumped.test.sh run this exact file.
         BASE_REF: ${{ github.base_ref }}
       run: bash "${{ github.action_path }}/version-bumped.sh"
-
-    # SECOND, and only if the gate above passed. A composite action stops at its
-    # first failing step, which is the order that was already in effect while
-    # these were two adjacent workflow steps: a branch whose version is wrong
-    # against its own base has nothing to learn yet about other PRs' versions.
-    - name: Version claimed by another open PR
-      shell: bash
-      env:
-        # See action.yml's header for why the token is `github.token` via env
-        # rather than an input, and what would reverse that.
-        GITHUB_TOKEN: ${{ github.token }}
-        # `github.event.pull_request.number` is the run's context inside a
-        # composite action too, so this is the caller's PR. Empty on anything that
-        # is not a pull request, which the script reports as a skip rather than
-        # querying the API for PR "".
-        PR_NUMBER: ${{ github.event.pull_request.number }}
-        BASE_REF: ${{ github.base_ref }}
-      run: bash "${{ github.action_path }}/version-claimed.sh"

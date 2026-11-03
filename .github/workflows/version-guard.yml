@@ -14,13 +14,10 @@ name: version-guard
 # A PR that moves VERSION *backwards*, or onto a number another PR already took,
 # collides with a build that has already shipped.
 #
-# TWO STEPS, because there are two ways to take a number that is not yours.
-# "Version bumped" compares this branch against its BASE, which catches the
-# collision only after the other PR has MERGED. "Version claimed by another open
-# PR" compares against the repo's currently OPEN PRs, which is the case no single
-# branch can see from its own contents: two branches cut from one main each bump
-# to the same number, git merges the identical VERSION line as AGREEMENT rather
-# than as a conflict, and both land (bdh-org/dev-common#255).
+# ONE GATE. "Version bumped" compares this branch against its BASE. Its sibling,
+# "Version claimed by another open PR", was removed by bdh-org/dev-common#344:
+# open PRs now hold provisional numbers that may be shared, and the rebump job in
+# tag-version moves each ready PR past main after every merge.
 #
 # `ci.yml` and `self-hosted-ci.yml` have carried this check inline for months, so
 # the eleven repos that call one of them are covered. The repos that do NOT call
@@ -30,10 +27,9 @@ name: version-guard
 # that said otherwise) ratecraft and ledger-io, whose ci.yml only *mentions* the
 # shared workflow in a comment explaining why it is bespoke.
 #
-# NEITHER GATE IS A COPY ANY MORE. Both are steps of one composite action,
+# THE GATE IS NOT A COPY ANY MORE. It is the composite action
 # .github/actions/version-guard, called as a single step here and by ci.yml and
-# self-hosted-ci.yml ("Version bumped" in dev-common#235, "Version claimed by
-# another open PR" in #338). The duplication they replaced had drifted twice --
+# self-hosted-ci.yml (dev-common#235, #338). The duplication they replaced had drifted twice --
 # dev-common#182 tightened one copy and not the other, and #208's collision
 # message landed in self-hosted-ci.yml only (dev-common#232) -- and both times
 # the suite stayed green, because it compared exit codes and the divergence was
@@ -51,20 +47,8 @@ name: version-guard
 on:
   workflow_call:
 
-# `pull-requests: read` is for the open-PR collision step, which lists this
-# repo's other open PRs. A workflow-level block here REPLACES the caller's
-# grant rather than adding to it, so omitting the scope would leave that step
-# permanently warning "could not list open PRs" -- a check that reports its own
-# absence forever is noise, and noise gets filtered.
-#
-# Safe to request: a reusable workflow's permissions may not exceed its
-# caller's, and tag-version.yml is a reusable that already asks every repo in
-# this fleet for `contents: write`. A caller able to grant that is not on the
-# restricted default, so it can grant a read scope too. The step degrades to a
-# warning anyway if some future caller cannot.
 permissions:
   contents: read
-  pull-requests: read
 
 jobs:
   # NAMED FOR ONE GATE, RUNS BOTH, and that is deliberate rather than stale. The
