@@ -20,7 +20,7 @@
 # repo's own `make bump-<level>` -- so each repo's version files stay the business
 # of its own version.mk, not of a second copy here.
 #
-# Env: GH_TOKEN (lists PRs, fetches their heads), REPO (owner/name),
+# Env: GH_TOKEN (lists PRs; the checkout's own credential fetches their heads), REPO (owner/name),
 #      MODE (report), BASE (default main). Runs inside a full-history checkout.
 set -euo pipefail
 
@@ -119,8 +119,21 @@ echo "$BASE is at $main_version (mode: $MODE)"
   echo "| --- | --- | --- |"
 } >>"$SUMMARY"
 
-prs="$(gh pr list --repo "$REPO" --base "$BASE" --state open --limit 200 \
-  --json number,isDraft,isCrossRepository,reviewDecision,autoMergeRequest)"
+# curl and jq, not `gh`: forge's runner has no gh CLI (the first live run died
+# on "gh: command not found"), the same reason version-claimed.sh uses curl.
+# GraphQL, because REST has no reviewDecision.
+tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+query='query($o:String!,$n:String!,$b:String!){repository(owner:$o,name:$n){pullRequests(states:OPEN,baseRefName:$b,first:100){nodes{number isDraft isCrossRepository reviewDecision autoMergeRequest{enabledAt}}}}}'
+jq -n --arg q "$query" --arg o "${REPO%%/*}" --arg n "${REPO#*/}" --arg b "$BASE" \
+  '{query: $q, variables: {o: $o, n: $n, b: $b}}' >"$tmp/query.json"
+status="$(curl -sS -o "$tmp/prs.json" -w '%{http_code}' -X POST \
+  -H "Authorization: bearer $GH_TOKEN" --data @"$tmp/query.json" \
+  "${GITHUB_GRAPHQL_URL:-https://api.github.com/graphql}")" || status=000
+if [ "$status" != 200 ] || ! jq -e '.data.repository.pullRequests.nodes' "$tmp/prs.json" >/dev/null 2>&1; then
+  echo "::error::could not list open PRs of $REPO (HTTP $status): $(head -c 400 "$tmp/prs.json" 2>/dev/null)"
+  exit 1
+fi
+prs="$(jq '.data.repository.pullRequests.nodes' "$tmp/prs.json")"
 
 while IFS=$'\t' read -r n draft fork review automerge; do
   verdict=""

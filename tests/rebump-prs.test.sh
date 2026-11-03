@@ -2,7 +2,7 @@
 # rebump-prs.test.sh -- .github/actions/rebump-prs (bdh-org/dev-common#344).
 #
 # Runs the REAL script against a fixture repo with a bare "origin" holding
-# refs/pull/N/head, and `gh` stubbed on PATH to list those PRs. The cases are the
+# refs/pull/N/head, and `curl` stubbed on PATH to answer the GraphQL PR query. The cases are the
 # ones a merge queue actually produces (the 2026-11-03 panoptikon run):
 #   - a PR left in a version-line conflict by a merge
 #   - a PR at the SAME number as main, which merges cleanly as agreement --
@@ -70,23 +70,30 @@ G checkout -q main; set_version 1.3.0; echo "ours" >"$TMP/work/shared.txt"
 G add -A; G commit -qm "feat merged"; G push -q origin main
 
 mkdir -p "$TMP/bin"
-cat >"$TMP/bin/gh" <<'STUB'
+# curl stub: writes the GraphQL answer to the -o file and prints the HTTP code,
+# as `curl -o FILE -w '%{http_code}'` does. Also records that it was called with a
+# bearer token, so a refactor back to `gh` (absent on forge) fails here.
+cat >"$TMP/bin/curl" <<STUB
 #!/usr/bin/env bash
-cat <<'JSON'
-[
+out=""; while [ \$# -gt 0 ]; do
+  case "\$1" in -o) out="\$2"; shift;; -H) case "\$2" in *"bearer "*) touch "$TMP/curl-authed";; esac; shift;; esac; shift
+done
+cp "$TMP/prs.json" "\$out"; printf 200
+STUB
+cat >"$TMP/prs.json" <<'JSON'
+{"data":{"repository":{"pullRequests":{"nodes":[
  {"number":1,"isDraft":false,"isCrossRepository":false,"reviewDecision":"APPROVED","autoMergeRequest":null},
- {"number":2,"isDraft":false,"isCrossRepository":false,"reviewDecision":"","autoMergeRequest":{"mergeMethod":"SQUASH"}},
+ {"number":2,"isDraft":false,"isCrossRepository":false,"reviewDecision":null,"autoMergeRequest":{"enabledAt":"2026-11-03T00:00:00Z"}},
  {"number":3,"isDraft":false,"isCrossRepository":false,"reviewDecision":"APPROVED","autoMergeRequest":null},
  {"number":4,"isDraft":false,"isCrossRepository":false,"reviewDecision":"APPROVED","autoMergeRequest":null},
  {"number":5,"isDraft":false,"isCrossRepository":false,"reviewDecision":"APPROVED","autoMergeRequest":null},
- {"number":6,"isDraft":true,"isCrossRepository":false,"reviewDecision":"","autoMergeRequest":null},
+ {"number":6,"isDraft":true,"isCrossRepository":false,"reviewDecision":null,"autoMergeRequest":null},
  {"number":7,"isDraft":false,"isCrossRepository":false,"reviewDecision":"REVIEW_REQUIRED","autoMergeRequest":null}
-]
+]}}}}
 JSON
-STUB
-chmod +x "$TMP/bin/gh"
+chmod +x "$TMP/bin/curl"
 
-out="$(cd "$TMP/work" && PATH="$TMP/bin:$PATH" REPO=o/r GITHUB_STEP_SUMMARY="$TMP/summary.md" \
+out="$(cd "$TMP/work" && PATH="$TMP/bin:$PATH" GH_TOKEN=t REPO=o/r GITHUB_STEP_SUMMARY="$TMP/summary.md" \
   bash "$SCRIPT" 2>&1)"; rc=$?
 
 CASE="the run succeeds"
@@ -116,6 +123,13 @@ if grep -qF '| #1 | 1.2.1 | WOULD RE-BUMP to 1.3.1 (patch) |' "$TMP/summary.md";
   ok "summary has a row per PR"
 else
   notok "summary.md lacks the #1 row"
+fi
+
+CASE="the PR list comes from curl with the token, not from gh"
+if [ -f "$TMP/curl-authed" ] && ! grep -qE '(^|[^-])\bgh (pr|api)\b' "$SCRIPT"; then
+  ok "curl was called with a bearer token, and the script never runs gh (absent on forge)"
+else
+  notok "the script did not list PRs via curl with a bearer token, or still calls gh"
 fi
 
 CASE="report mode pushes nothing"
