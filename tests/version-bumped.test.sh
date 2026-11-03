@@ -53,7 +53,13 @@ ACTION_YML="$ACTION_DIR/action.yml"
 # Every workflow that calls the action. A file that stops calling it fails the
 # cases below rather than silently dropping out of coverage.
 WORKFLOWS="ci.yml self-hosted-ci.yml version-guard.yml"
-STEP_NAME="Version bumped"
+# The workflow step that CALLS the action. It is named for the action rather than
+# for this gate because the action runs both gates since bdh-org/dev-common#338 --
+# "Version bumped" is now the name of the composite step INSIDE it, asserted
+# below. tests/version-claimed.test.sh owns the sibling.
+STEP_NAME="Version guard"
+# The composite step within the action that runs the script this file tests.
+INNER_STEP_NAME="Version bumped"
 # The only form that works from inside a `workflow_call`: a relative `uses: ./`
 # resolves against the CALLING repo's checkout, where this action does not exist.
 ACTION_REF="bdh-org/dev-common/.github/actions/version-guard@main"
@@ -122,12 +128,19 @@ import sys, yaml
 d = yaml.safe_load(open(sys.argv[1]))
 assert d["runs"]["using"] == "composite", d["runs"]["using"]
 steps = d["runs"]["steps"]
-assert len(steps) == 1, f"{len(steps)} steps, expected 1"
-assert steps[0]["shell"] == "bash", steps[0].get("shell")
-assert "BASE_REF" in steps[0]["env"], list(steps[0]["env"])
+# TWO steps since bdh-org/dev-common#338: this gate, then "Version claimed by
+# another open PR". This file asserts the shape of ITS OWN step and leaves the
+# sibling to tests/version-claimed.test.sh, which owns the pair-and-order case.
+assert len(steps) == 2, f"{len(steps)} steps, expected 2"
+mine = [s for s in steps if "version-bumped.sh" in s["run"]]
+assert len(mine) == 1, f"{len(mine)} steps run version-bumped.sh, expected 1"
+s = mine[0]
+assert s["shell"] == "bash", s.get("shell")
+assert "BASE_REF" in s["env"], list(s["env"])
+assert s.get("name") == sys.argv[2], s.get("name")
 assert d.get("description"), "no description"
-' "$ACTION_YML" 2>"$TMP/yamlerr"; then
-    ok "valid YAML, using: composite, one bash step taking BASE_REF"
+' "$ACTION_YML" "$INNER_STEP_NAME" 2>"$TMP/yamlerr"; then
+    ok "valid YAML, using: composite, a bash step named '$INNER_STEP_NAME' taking BASE_REF"
   else
     notok "action.yml shape check failed:"; sed 's/^/         /' "$TMP/yamlerr"
   fi
