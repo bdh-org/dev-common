@@ -128,6 +128,12 @@ for `ledger-io` and `ratecraft`, which reach production only as pins. Precedent:
 finzeug/slingshot#279 shipped as 0.2.0 (slingshot became a writer of the book).
 No backfill: earlier patch-only histories stay as they are.
 
+A merge leaves other open PRs at or below main's VERSION. Do not re-bump them by
+hand: after every push to main, the `rebump` job in both tag-version workflows
+re-bumps each ready PR (approved or auto-merge armed) to main's version plus the
+PR's own level, when its only conflicts are version lines; anything else it
+leaves alone and names in its job summary (bdh-org/dev-common#344).
+
 One known failure: if a commit touching `.github/workflows/` lands on main
 next to a bump merge, the tag push is rejected ("without `workflows`
 permission") because GitHub checks a new ref's workflow files against the
