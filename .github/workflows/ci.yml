@@ -230,9 +230,11 @@ jobs:
           [ -n "$RUFF_V" ] || { echo "::error::no ruff version resolved -- refusing to install an unpinned formatter"; exit 1; }
           pip install "ruff==${RUFF_V}" pytest pytest-cov
 
+      # Same vendored excludes as the format check below, and as make/python.mk's
+      # `lint` (bdh-org/dev-common#341).
       - name: Lint
         if: inputs.run-lint
-        run: ruff check .
+        run: ruff check --exclude common --exclude stack-common --exclude lib .
 
       # Excludes the VENDORED trees. `ruff format --check .` from the repo root
       # walks the hydrated submodules too, so ferret's first gated run failed on

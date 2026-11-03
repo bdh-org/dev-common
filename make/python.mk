@@ -79,17 +79,19 @@ requirements: ## generate pinned production requirements file
 # Linting and formatting
 # -----------------------------------------------------------------------------
 
-lint: ## lint with ruff
-	$(CONDA_PREFIX)/bin/ruff check .
+lint: ## lint with ruff (excludes vendored submodules)
+	$(CONDA_PREFIX)/bin/ruff check $(RUFF_VENDORED_EXCLUDES) .
 
-lint-fix: ## lint with ruff and auto-fix
-	$(CONDA_PREFIX)/bin/ruff check --fix .
+lint-fix: ## lint with ruff and auto-fix (excludes vendored submodules)
+	$(CONDA_PREFIX)/bin/ruff check --fix $(RUFF_VENDORED_EXCLUDES) .
 
-# VENDORED trees are excluded from both format targets. `ruff format .` from a
+# VENDORED trees are excluded from lint and both format targets. `ruff format .` from a
 # repo root walks the hydrated submodules, so a repo would reformat -- or be
 # failed by -- its DEPENDENCIES' code. ferret's first gated CI run failed on two
 # files belonging to dev-common, which the PR author could not have fixed from
-# there (bdh-org/dev-common#191).
+# there (bdh-org/dev-common#191). `lint` took the same set once common/ began
+# shipping .py files (bdh-org/dev-common#340, #341); every consumer's lib/* is a
+# submodule, so no repo loses coverage of code it owns.
 #
 # The set is a property of how this fleet vendors, not of any repo's style, so it
 # lives here rather than in ten ruff.toml files that would be ten places to
