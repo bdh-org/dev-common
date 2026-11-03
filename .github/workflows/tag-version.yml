@@ -127,3 +127,32 @@ jobs:
             echo "::error::Tag $VERSION was NOT created -- git push failed (see log above)."
           fi
           exit "$status"
+
+  # After main moves, report which open PRs it left at or below main's VERSION and
+  # the number each must be re-bumped to (bdh-org/dev-common#344). Report-only for
+  # now: it pushes nothing. Its own job, on forge, because only forge can mint the
+  # App token that lists PRs; and continue-on-error, because a report must never
+  # turn the tag run red. Superseded runs cancel: only the newest main matters.
+  rebump:
+    if: github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, forge]
+    continue-on-error: true
+    concurrency:
+      group: rebump-${{ github.repository }}
+      cancel-in-progress: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0      # merge bases and git merge-tree need real history
+          submodules: false
+          clean: true
+      - name: Mint the coder App token
+        id: coder
+        env:
+          VAULT_ADDR: ${{ vars.VAULT_ADDR }}
+        run: /srv/github-runner/bin/mint-coder-app-token.sh
+      - name: Report PRs that need a re-bump
+        uses: bdh-org/dev-common/.github/actions/rebump-prs@main
+        with:
+          github-token: ${{ steps.coder.outputs.coder_token }}

@@ -198,6 +198,11 @@ jobs:
       - name: Tag collision (embedded in tag-version.yml AND tag-version-self-hosted.yml)
         run: bash tests/tag-version-collision.test.sh
 
+      # The re-bump report both tagging workflows run after main moves
+      # (dev-common#344): the real script against a fixture repo, gh stubbed.
+      - name: Re-bump open PRs (.github/actions/rebump-prs)
+        run: bash tests/rebump-prs.test.sh
+
       # make/utils.mk's two listings select targets with a grep character class,
       # and a target the class rejects still RUNS -- it is only undiscoverable.
       # So the failure is silent in every consumer at once, and the only thing
