@@ -14,14 +14,19 @@
 # number; the first to merge keeps it and the next run moves the rest. Assigning
 # distinct numbers in queue order breaks the moment PRs merge out of order.
 #
-# STAGE 1: MODE=report only. It pushes nothing; it prints what it WOULD do so the
-# numbering can be checked against real merges before anything writes. Stage 2
-# (MODE=push) merges main, keeps main's side of version-only hunks, and runs the
-# repo's own `make bump-<level>` -- so each repo's version files stay the business
-# of its own version.mk, not of a second copy here.
+# MODE=report prints what it would do and pushes nothing (stage 1, kept as the
+# one-line rollback). MODE=push re-bumps each READY PR (approved, or auto-merge
+# armed): merge main, keep main's side of the version-only conflict blocks, then
+# move exactly the version lines the PR itself bumped from main's number to the
+# new one. Not `make bump-<level>`: that needs the PR's `common` submodule, which
+# for a finzeug repo means a second, cross-org token on forge -- while the lines
+# to move are already named by the PR's own diff. A count mismatch, or any change
+# to the PR outside version lines, leaves the PR alone and pushes nothing.
 #
-# Env: GH_TOKEN (lists PRs; the checkout's own credential fetches their heads), REPO (owner/name),
-#      MODE (report), BASE (default main). Runs inside a full-history checkout.
+# Env: GH_TOKEN (lists PRs), REPO (owner/name), MODE (report|push), BASE (default
+#      main). Runs inside a full-history checkout made with the App token, so its
+#      fetches and pushes are the App's -- a push with the job's GITHUB_TOKEN
+#      would not trigger the PR's CI, and the PR could never go green.
 set -euo pipefail
 
 MODE="${MODE:-report}"
@@ -29,10 +34,10 @@ BASE="${BASE:-main}"
 : "${REPO:?REPO=owner/name is required}"
 SUMMARY="${GITHUB_STEP_SUMMARY:-/dev/null}"
 
-if [ "$MODE" != report ]; then
-  echo "::error::MODE=$MODE is not built yet; only MODE=report exists (stage 1 of bdh-org/dev-common#344)"
-  exit 2
-fi
+case "$MODE" in
+  report|push) ;;
+  *) echo "::error::MODE must be report or push, not '$MODE'"; exit 2 ;;
+esac
 
 version_at() {  # the Makefile VERSION at a revision, empty if none
   git show "$1:Makefile" 2>/dev/null \
@@ -88,6 +93,70 @@ only_version_conflicts() {
     END { exit bad }'
 }
 
+# Keep main's side of every conflict block in a file. With conflictStyle=merge the
+# PR's side comes first (HEAD) and main's second; marker lines match as single lines.
+take_main_side() {
+  awk '/^<<<<<<< /{s=1; next} /^=======$/ && s==1 {s=2; next} /^>>>>>>> / && s {s=0; next} s!=1' "$1" >"$1.rebump"
+  mv "$1.rebump" "$1"
+}
+
+# The +/- lines of a diff that are not version lines, sorted: what a PR changes,
+# independent of line numbers, so a re-bump can be checked to have changed nothing
+# else.
+non_version_changes() {
+  grep -E '^[-+]' | grep -vE '^(\+\+\+|---) ' | sed 's/^\(.\)/\1\t/' \
+    | awk -F'\t' -v re="$VERSION_LINE" '$2 !~ re' | sort || true
+}
+
+# Re-bump PR $1 (branch $2) to $3. Prints nothing on success; on refusal prints
+# the reason and leaves the checkout clean.
+rebump() {
+  local n="$1" branch="$2" new="$3" pr="refs/rebump/pr/$1" mb pv f want got expected moved
+  git reset -q --hard; git clean -fdq
+  git checkout -q --detach "$pr"
+  mb="$(git merge-base "origin/$BASE" "$pr")"; pv="$(version_at "$pr")"
+  if ! git -c merge.conflictStyle=merge merge -q --no-ff --no-commit "origin/$BASE" >/dev/null 2>&1; then
+    while IFS= read -r f; do take_main_side "$f"; git add -- "$f"; done < <(git diff --name-only --diff-filter=U)
+  fi
+  # Every file whose version line the PR bumped now holds main's number: move it.
+  while IFS= read -r f; do
+    expected="$(git diff "$mb" "$pr" -- "$f" | grep -E '^\+[^+]' | cut -c2- | grep -E "$VERSION_LINE" | grep -cF "$pv" || true)"
+    [ "$expected" -gt 0 ] || continue
+    moved="$(awk -v re="$VERSION_LINE" -v old="$main_version" -v new="$new" '
+      $0 ~ re && (i = index($0, old)) && substr($0, i + length(old), 1) !~ /[0-9.]/ {
+        $0 = substr($0, 1, i - 1) new substr($0, i + length(old)); n++ }
+      { print > (FILENAME ".rebump") } END { print n + 0 }' "$f")"
+    mv "$f.rebump" "$f"; git add -- "$f"
+    if [ "$moved" != "$expected" ]; then
+      git merge --abort 2>/dev/null || git reset -q --hard
+      echo "moved $moved version lines in $f, but the PR bumped $expected"; return
+    fi
+  done < <(git diff --name-only "$mb" "$pr")
+  if [ "$(sed -nE 's/^VERSION[[:space:]]*=[[:space:]]*([0-9.]+).*/\1/p' Makefile | head -n1)" != "$new" ]; then
+    git merge --abort 2>/dev/null || git reset -q --hard
+    echo "Makefile VERSION did not reach $new"; return
+  fi
+  want="$(git diff "$mb" "$pr" | non_version_changes)"
+  got="$(git diff --cached "origin/$BASE" | non_version_changes)"
+  if [ "$want" != "$got" ]; then
+    git merge --abort 2>/dev/null || git reset -q --hard
+    echo "the merge changes the PR outside version lines"; return
+  fi
+  # The identity by environment, which outranks any git config and any inherited
+  # GIT_AUTHOR_* (a devcontainer sets one; `-c user.name` lost to it in the test).
+  GIT_AUTHOR_NAME='bdh-org-coder[bot]' GIT_COMMITTER_NAME='bdh-org-coder[bot]' \
+  GIT_AUTHOR_EMAIL='305014630+bdh-org-coder[bot]@users.noreply.github.com' \
+  GIT_COMMITTER_EMAIL='305014630+bdh-org-coder[bot]@users.noreply.github.com' \
+    git commit -q --no-edit -m "chore: merge $BASE and re-bump to $new" \
+      -m "$BASE moved to $main_version; this PR's own level puts it at $new (bdh-org/dev-common#344)."
+  # A plain push, never a force: if the branch moved since we fetched it, it is
+  # refused and the next run, on the next merge, starts from the new head.
+  if ! git push -q origin "HEAD:refs/heads/$branch" 2>/dev/null; then
+    git reset -q --hard
+    echo "push refused (the branch moved); the next run retries"; return
+  fi
+}
+
 # Prints the files git cannot merge for reasons other than version lines.
 # Empty output: the PR merges with main cleanly or with version-only conflicts.
 other_conflicts() {
@@ -113,7 +182,7 @@ if [ -z "$main_version" ]; then
 fi
 echo "$BASE is at $main_version (mode: $MODE)"
 {
-  echo "### Re-bump report -- $BASE at \`$main_version\` (mode: $MODE, nothing pushed)"
+  echo "### Re-bump report -- $BASE at \`$main_version\` (mode: $MODE)"
   echo
   echo "| PR | version | verdict |"
   echo "| --- | --- | --- |"
@@ -123,7 +192,7 @@ echo "$BASE is at $main_version (mode: $MODE)"
 # on "gh: command not found"), the same reason version-claimed.sh uses curl.
 # GraphQL, because REST has no reviewDecision.
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
-query='query($o:String!,$n:String!,$b:String!){repository(owner:$o,name:$n){pullRequests(states:OPEN,baseRefName:$b,first:100){nodes{number isDraft isCrossRepository reviewDecision autoMergeRequest{enabledAt}}}}}'
+query='query($o:String!,$n:String!,$b:String!){repository(owner:$o,name:$n){pullRequests(states:OPEN,baseRefName:$b,first:100){nodes{number headRefName isDraft isCrossRepository reviewDecision autoMergeRequest{enabledAt}}}}}'
 jq -n --arg q "$query" --arg o "${REPO%%/*}" --arg n "${REPO#*/}" --arg b "$BASE" \
   '{query: $q, variables: {o: $o, n: $n, b: $b}}' >"$tmp/query.json"
 status="$(curl -sS -o "$tmp/prs.json" -w '%{http_code}' -X POST \
@@ -135,7 +204,7 @@ if [ "$status" != 200 ] || ! jq -e '.data.repository.pullRequests.nodes' "$tmp/p
 fi
 prs="$(jq '.data.repository.pullRequests.nodes' "$tmp/prs.json")"
 
-while IFS=$'\t' read -r n draft fork review automerge; do
+while IFS=$'\t' read -r n branch draft fork review automerge; do
   verdict=""
   pr_version=""
   if [ "$draft" = true ]; then
@@ -161,7 +230,13 @@ while IFS=$'\t' read -r n draft fork review automerge; do
         if [ -n "$others" ]; then
           verdict="left alone: conflicts outside version lines in $others"
         elif [ "$review" = APPROVED ] || [ "$automerge" = true ]; then
-          verdict="WOULD RE-BUMP to $new_version ($level)"
+          if [ "$MODE" = report ]; then
+            verdict="WOULD RE-BUMP to $new_version ($level)"
+          else
+            refused="$(rebump "$n" "$branch" "$new_version")"
+            verdict="${refused:+left alone: $refused}"
+            verdict="${verdict:-RE-BUMPED to $new_version ($level)}"
+          fi
         else
           verdict="would re-bump to $new_version ($level) once approved or set to auto-merge"
         fi
@@ -171,5 +246,5 @@ while IFS=$'\t' read -r n draft fork review automerge; do
   echo "#$n ${pr_version:-?}: $verdict"
   echo "| #$n | ${pr_version:-?} | $verdict |" >>"$SUMMARY"
 done < <(jq -r 'sort_by(.number)[]
-  | [.number, .isDraft, .isCrossRepository, (.reviewDecision // "-" | if . == "" then "-" else . end), (.autoMergeRequest != null)]
+  | [.number, .headRefName, .isDraft, .isCrossRepository, (.reviewDecision // "-" | if . == "" then "-" else . end), (.autoMergeRequest != null)]
   | @tsv' <<<"$prs")

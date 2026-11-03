@@ -11,16 +11,22 @@ description: >
 
 inputs:
   github-token:
-    description: An App installation token able to list PRs and fetch their heads.
+    description: >
+      An App installation token able to list PRs. The checkout must be made with
+      the same token, since pushes go through the checkout's credential.
     required: true
+  mode:
+    description: report (print only) or push (re-bump ready PRs). report is the rollback.
+    required: false
+    default: report
 
 runs:
   using: composite
   steps:
-    - name: Report PRs that need a re-bump
+    - name: Re-bump open PRs
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github-token }}
         REPO: ${{ github.repository }}
-        MODE: report
+        MODE: ${{ inputs.mode }}
       run: bash "$GITHUB_ACTION_PATH/rebump-prs.sh"
