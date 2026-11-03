@@ -56,7 +56,7 @@ WORKFLOWS="ci.yml self-hosted-ci.yml version-guard.yml"
 # The workflow step that CALLS the action. It is named for the action rather than
 # for this gate because the action runs both gates since bdh-org/dev-common#338 --
 # "Version bumped" is now the name of the composite step INSIDE it, asserted
-# below. tests/version-claimed.test.sh owns the sibling.
+# below.
 STEP_NAME="Version guard"
 # The composite step within the action that runs the script this file tests.
 INNER_STEP_NAME="Version bumped"
@@ -128,10 +128,9 @@ import sys, yaml
 d = yaml.safe_load(open(sys.argv[1]))
 assert d["runs"]["using"] == "composite", d["runs"]["using"]
 steps = d["runs"]["steps"]
-# TWO steps since bdh-org/dev-common#338: this gate, then "Version claimed by
-# another open PR". This file asserts the shape of ITS OWN step and leaves the
-# sibling to tests/version-claimed.test.sh, which owns the pair-and-order case.
-assert len(steps) == 2, f"{len(steps)} steps, expected 2"
+# ONE step again since bdh-org/dev-common#344 removed "Version claimed by another
+# open PR" (numbers are provisional; the rebump job moves them after each merge).
+assert len(steps) == 1, f"{len(steps)} steps, expected 1"
 mine = [s for s in steps if "version-bumped.sh" in s["run"]]
 assert len(mine) == 1, f"{len(mine)} steps run version-bumped.sh, expected 1"
 s = mine[0]
@@ -170,9 +169,8 @@ fi
 # the job's steps. Used to assert the step has NO inline body left.
 #
 # Deliberately NOT the old `run: |`-seeking extractor: with nothing to extract,
-# that one keeps scanning and latches onto the NEXT step's body -- here the
-# sibling "Version claimed by another open PR" -- so it reports a copy of the
-# gate that is not there.
+# that one keeps scanning and latches onto the NEXT step's body, so it reports a
+# copy of the gate that is not there.
 step_block() { # workflow-file step-name
   awk -v name="      - name: $2" '
     $0 == name        { instep = 1; next }

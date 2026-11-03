@@ -111,20 +111,8 @@ on:
         type: string
         default: .github/ci-environment.yml
 
-# `pull-requests: read` is for the open-PR collision step, which lists this
-# repo's other open PRs. A workflow-level block here REPLACES the caller's
-# grant rather than adding to it, so omitting the scope would leave that step
-# permanently warning "could not list open PRs" -- a check that reports its own
-# absence forever is noise, and noise gets filtered.
-#
-# Safe to request: a reusable workflow's permissions may not exceed its
-# caller's, and tag-version.yml is a reusable that already asks every repo in
-# this fleet for `contents: write`. A caller able to grant that is not on the
-# restricted default, so it can grant a read scope too. The step degrades to a
-# warning anyway if some future caller cannot.
 permissions:
   contents: read
-  pull-requests: read
 
 # Cancel a PR's previous run when a new commit supersedes it.
 #
@@ -624,13 +612,10 @@ jobs:
       #                           version that went BACKWARDS, and a number the
       #                           base has already reached (a COLLISION, which
       #                           needs the opposite remedy from a missing bump).
-      #   "Version claimed by
-      #    another open PR"    -- compares against the repo's currently OPEN PRs.
-      #                           The case no branch can see from its own
-      #                           contents: two branches cut from one main each
-      #                           bump to the same number, git merges the
-      #                           identical VERSION line as AGREEMENT rather than
-      #                           as a conflict, and both land.
+      #   (A second gate, "Version claimed by another open PR", was removed by
+      #   dev-common#344: open PRs now hold PROVISIONAL numbers that may be
+      #   shared, and the rebump job in tag-version moves each one past main
+      #   after every merge -- so the number is decided at merge, not at open.)
       #
       # version-check above tests INTERNAL consistency (Makefile VERSION against
       # __init__.py / package.json) and has no notion of a base branch or of
@@ -645,11 +630,6 @@ jobs:
       # STILL A STEP IN THIS JOB: `ci / ci` is the required context in nine
       # consumer repos. See the action's header for why, for how it gets its
       # token, and for what would reverse either.
-      #
-      # `pull-requests: read` is declared in this workflow's own `permissions:`
-      # block, which the open-PR gate needs: a workflow-level block REPLACES the
-      # caller's grant rather than adding to it, so leaving the scope out would
-      # leave that gate permanently warning that it could not list open PRs.
       - name: Version guard
         if: github.event_name == 'pull_request'
         uses: bdh-org/dev-common/.github/actions/version-guard@main
