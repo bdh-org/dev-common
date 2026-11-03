@@ -16,7 +16,7 @@ inputs:
       the same token, since pushes go through the checkout's credential.
     required: true
   mode:
-    description: report (print only) or push (re-bump ready PRs). report is the rollback.
+    description: report (print only) or push (re-bump the next PR in line). report is the rollback.
     required: false
     default: report
 

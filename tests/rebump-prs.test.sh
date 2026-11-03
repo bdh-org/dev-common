@@ -13,7 +13,9 @@
 # re-bumped PR "merged", the next run re-bumping the next PR -- each landing at the
 # right number with its own changes intact, including a non-version Makefile line
 # (the line a greedy resolver wiped in panoptikon#1084) -- and every refusal
-# pushing nothing and not using up the run's one push.
+# pushing nothing and not using up the run's one push. The unapproved PR is
+# re-bumped too, but only after every ready one, though its number is lower
+# (dev-common#353).
 #
 # Usage:  bash tests/rebump-prs.test.sh      (or: make test)
 
@@ -174,8 +176,7 @@ expect "a PR already above main is left as it is" "#4 1.4.0: ok: above main"
 expect "a conflict outside version lines is left alone, naming the file" \
   "#5 1.2.1: left alone: conflicts outside version lines in shared.txt"
 expect "a draft is skipped" "#6 ?: skipped: draft"
-expect "an unready PR is reported but not marked for re-bump" \
-  "#7 1.2.1: would re-bump to 1.3.1 (patch) once approved or set to auto-merge"
+expect "an unready PR waits in line like the rest" "#7 1.2.1: waiting: #9 is next in line"
 
 CASE="the job summary carries the table"
 if grep -qF '| #9 | 1.2.1 | WOULD RE-BUMP to 1.3.1 (patch) |' "$TMP/summary-report.md"; then
@@ -255,7 +256,8 @@ merge_pr 3; out="$(run push)"
 expect "a PR that WAS above main falls behind as main passes it, and goes next" \
   "#4 1.4.0: RE-BUMPED to 1.5.0 (minor)"
 merge_pr 4; out="$(run push)"
-expect "then #8" "#8 1.2.1: RE-BUMPED to 1.5.1 (patch)"
+expect "then #8, approved, ahead of the older unapproved #7" "#8 1.2.1: RE-BUMPED to 1.5.1 (patch)"
+expect "the unready PR waits for every ready one" "#7 1.2.1: waiting: #8 is next in line"
 CASE="a non-version Makefile line survives (the panoptikon#1084 wipe)"
 if [ "$(at 8 Makefile)" = "$(printf 'VERSION=1.5.1\nPACKAGE_DIR=pkg\nEXTRA=1')" ]; then
   ok "pr8's Makefile is exactly VERSION=1.5.1, PACKAGE_DIR=pkg, EXTRA=1"
@@ -265,15 +267,22 @@ fi
 
 merge_pr 8; snap=""; for n in 1 2 3 4 5 7 8 9 10; do snap="$snap $n=$(branch_sha $n)"; done
 out="$(run push)"
+expect "with no ready PR left, the unready one is re-bumped (no /revise needed)" \
+  "#7 1.2.1: RE-BUMPED to 1.5.2 (patch)"
+CASE="exactly one branch pushed for the unready PR"
+c="$(pushes "$snap")"; if [ "$c" = 1 ]; then ok "1 push"; else notok "$c pushes"; fi
+
+merge_pr 7; snap=""; for n in 1 2 3 4 5 7 8 9 10; do snap="$snap $n=$(branch_sha $n)"; done
+out="$(run push)"
 CASE="once the queue is drained, a run pushes nothing"
 c="$(pushes "$snap")"
 if [ "$c" = 0 ] && ! grep -q "RE-BUMPED" <<<"$out"; then ok "no push, no RE-BUMPED"; else notok "$c pushes:"; sed 's/^/         /' <<<"$out"; fi
 
-CASE="refusals and unready PRs were never pushed in the whole drain"
-moved=""; for n in 5 7 9 10; do
+CASE="refusals were never pushed in the whole drain"
+moved=""; for n in 5 9 10; do
   case "$before" in *" $n=$(branch_sha $n)"*) ;; *) moved="$moved #$n";; esac
 done
-if [ -z "$moved" ]; then ok "#5 #7 #9 #10 untouched"; else notok "moved:$moved"; fi
+if [ -z "$moved" ]; then ok "#5 #9 #10 untouched"; else notok "moved:$moved"; fi
 
 echo
 echo "passed: $pass   failed: $fail"

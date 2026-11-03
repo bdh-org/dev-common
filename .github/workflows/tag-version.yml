@@ -128,8 +128,9 @@ jobs:
           fi
           exit "$status"
 
-  # After main moves, re-bump each ready open PR that main left at or below its
-  # VERSION, to main's version plus the PR's own level (bdh-org/dev-common#344).
+  # After main moves, re-bump the next open PR that main left at or below its
+  # VERSION (ready PRs first), to main's version plus the PR's own level
+  # (bdh-org/dev-common#344, #351, #353).
   # Its own job, on forge, because only forge can mint the App token; the checkout
   # is made WITH that token so the push triggers the PR's CI, which a push with
   # GITHUB_TOKEN never does. continue-on-error: a re-bump must never turn the tag
