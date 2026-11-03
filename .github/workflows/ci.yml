@@ -143,13 +143,10 @@ jobs:
       #                           version that went BACKWARDS, and a number the
       #                           base has already reached (a COLLISION, which
       #                           needs the opposite remedy from a missing bump).
-      #   "Version claimed by
-      #    another open PR"    -- compares against the repo's currently OPEN PRs.
-      #                           The case no branch can see from its own
-      #                           contents: two branches cut from one main each
-      #                           bump to the same number, git merges the
-      #                           identical VERSION line as AGREEMENT rather than
-      #                           as a conflict, and both land.
+      #   (A second gate, "Version claimed by another open PR", was removed by
+      #   dev-common#344: open PRs now hold PROVISIONAL numbers that may be
+      #   shared, and the rebump job in tag-version moves each one past main
+      #   after every merge -- so the number is decided at merge, not at open.)
       #
       # `version-check` above tests INTERNAL consistency -- Makefile VERSION
       # against __init__.py / package.json / VERSION_TXT. It has no notion of a
@@ -168,11 +165,6 @@ jobs:
       # STILL A STEP IN THIS JOB, deliberately: nine repos require the status
       # check `ci / ci`, so a sibling job would report under a context none of
       # them requires and the guard would stop gating merges while looking green.
-      #
-      # `pull-requests: read` IS NOT DECLARED HERE, and that is not an omission:
-      # this workflow has no `permissions:` block, so it inherits the caller's
-      # grant, and adding one would REPLACE that grant rather than extend it. The
-      # open-PR gate degrades to a warning naming the scope if a caller lacks it.
       #
       # Fully qualified `@main`, never `./`: inside a `workflow_call` a relative
       # `uses:` resolves against the CALLING repo's checkout, where this action

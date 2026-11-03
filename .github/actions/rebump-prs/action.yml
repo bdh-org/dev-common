@@ -1,0 +1,32 @@
+name: Re-bump open PRs
+description: >
+  After main moves, report each open pull request whose Makefile VERSION is no
+  longer above main's, and the number it must be re-bumped to: main's version
+  plus the PR's own level. Report-only (stage 1 of bdh-org/dev-common#344);
+  it pushes nothing.
+
+# A composite action for the same reason as version-guard: a reusable workflow's
+# steps run against the CALLER's checkout, so a script path would resolve into the
+# consumer repo; the runner fetches this action from dev-common by ref.
+
+inputs:
+  github-token:
+    description: >
+      An App installation token able to list PRs. The checkout must be made with
+      the same token, since pushes go through the checkout's credential.
+    required: true
+  mode:
+    description: report (print only) or push (re-bump the next PR in line). report is the rollback.
+    required: false
+    default: report
+
+runs:
+  using: composite
+  steps:
+    - name: Re-bump open PRs
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        REPO: ${{ github.repository }}
+        MODE: ${{ inputs.mode }}
+      run: bash "$GITHUB_ACTION_PATH/rebump-prs.sh"

@@ -187,20 +187,15 @@ jobs:
       - name: Version bumped (.github/actions/version-guard, called by all three workflows)
         run: bash tests/version-bumped.test.sh
 
-      # Its sibling, and the half the gate above cannot see: a version claimed by
-      # an OPEN PR rather than by the base branch. Now the SECOND STEP of the same
-      # composite action (dev-common#338, #255) -- so this suite runs the shipped
-      # script rather than a copy extracted from each workflow, and asserts the
-      # token still arrives by env from `github.token`. The one part that did NOT
-      # converge is `pull-requests: read`: an action has no permissions block, so
-      # the scope stays declared per workflow and keeps its own case here.
-      - name: Version claimed by another open PR (.github/actions/version-guard)
-        run: bash tests/version-claimed.test.sh
-
       # Same shape, same reason: the step is duplicated across the two tagging
       # workflows, so the suite runs against BOTH rather than picking one.
       - name: Tag collision (embedded in tag-version.yml AND tag-version-self-hosted.yml)
         run: bash tests/tag-version-collision.test.sh
+
+      # The re-bump report both tagging workflows run after main moves
+      # (dev-common#344): the real script against a fixture repo, gh stubbed.
+      - name: Re-bump open PRs (.github/actions/rebump-prs)
+        run: bash tests/rebump-prs.test.sh
 
       # make/utils.mk's two listings select targets with a grep character class,
       # and a target the class rejects still RUNS -- it is only undiscoverable.
