@@ -120,7 +120,12 @@ JSON
 chmod +x "$TMP/bin/curl"
 
 run() {  # run <MODE> -- the real script, in the fixture checkout
-  (cd "$TMP/work" && PATH="$TMP/bin:$PATH" GH_TOKEN=t REPO=o/r MODE="$1" GITHUB_STEP_SUMMARY="$TMP/summary-$1.md" \
+  # With NO git identity, as on forge and the CI runner: `git merge` will not start
+  # without one, and a developer's own identity hid that until CI (dev-common#344).
+  mkdir -p "$TMP/home"
+  (cd "$TMP/work" && env -u GIT_AUTHOR_NAME -u GIT_AUTHOR_EMAIL -u GIT_COMMITTER_NAME -u GIT_COMMITTER_EMAIL \
+    HOME="$TMP/home" XDG_CONFIG_HOME="$TMP/home" GIT_CONFIG_NOSYSTEM=1 \
+    PATH="$TMP/bin:$PATH" GH_TOKEN=t REPO=o/r MODE="$1" GITHUB_STEP_SUMMARY="$TMP/summary-$1.md" \
     bash "$SCRIPT" 2>&1)
 }
 branch_sha() { git -C "$TMP/origin.git" rev-parse "refs/heads/pr$1"; }

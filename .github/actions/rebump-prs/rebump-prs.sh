@@ -111,11 +111,25 @@ non_version_changes() {
 # Re-bump PR $1 (branch $2) to $3. Prints nothing on success; on refusal prints
 # the reason and leaves the checkout clean.
 rebump() {
-  local n="$1" branch="$2" new="$3" pr="refs/rebump/pr/$1" mb pv f want got expected moved
+  local n="$1" branch="$2" new="$3" pr="refs/rebump/pr/$1" mb pv f want got expected moved merge_err
+  # The identity for the whole re-bump, by environment: it outranks any git config
+  # and any inherited GIT_AUTHOR_*, and `git merge` refuses to START without one
+  # even with --no-commit -- forge has none, and the first CI run of this code
+  # failed every PR on exactly that.
+  local GIT_AUTHOR_NAME='bdh-org-coder[bot]' GIT_COMMITTER_NAME='bdh-org-coder[bot]'
+  local GIT_AUTHOR_EMAIL='305014630+bdh-org-coder[bot]@users.noreply.github.com'
+  local GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EMAIL"
+  export GIT_AUTHOR_NAME GIT_COMMITTER_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_EMAIL
   git reset -q --hard; git clean -fdq
   git checkout -q --detach "$pr"
   mb="$(git merge-base "origin/$BASE" "$pr")"; pv="$(version_at "$pr")"
-  if ! git -c merge.conflictStyle=merge merge -q --no-ff --no-commit "origin/$BASE" >/dev/null 2>&1; then
+  if ! merge_err="$(git -c merge.conflictStyle=merge merge -q --no-ff --no-commit "origin/$BASE" 2>&1)"; then
+    # A failed merge with nothing conflicted never started: say why, never
+    # carry on with the PR's own tree as if main were in it.
+    if [ -z "$(git diff --name-only --diff-filter=U)" ]; then
+      git merge --abort 2>/dev/null; git reset -q --hard
+      echo "git merge failed: $(tr '\n' ' ' <<<"$merge_err" | cut -c1-200)"; return
+    fi
     while IFS= read -r f; do take_main_side "$f"; git add -- "$f"; done < <(git diff --name-only --diff-filter=U)
   fi
   # Every file whose version line the PR bumped now holds main's number: move it.
@@ -142,12 +156,7 @@ rebump() {
     git merge --abort 2>/dev/null || git reset -q --hard
     echo "the merge changes the PR outside version lines"; return
   fi
-  # The identity by environment, which outranks any git config and any inherited
-  # GIT_AUTHOR_* (a devcontainer sets one; `-c user.name` lost to it in the test).
-  GIT_AUTHOR_NAME='bdh-org-coder[bot]' GIT_COMMITTER_NAME='bdh-org-coder[bot]' \
-  GIT_AUTHOR_EMAIL='305014630+bdh-org-coder[bot]@users.noreply.github.com' \
-  GIT_COMMITTER_EMAIL='305014630+bdh-org-coder[bot]@users.noreply.github.com' \
-    git commit -q --no-edit -m "chore: merge $BASE and re-bump to $new" \
+  git commit -q --no-edit -m "chore: merge $BASE and re-bump to $new" \
       -m "$BASE moved to $main_version; this PR's own level puts it at $new (bdh-org/dev-common#344)."
   # A plain push, never a force: if the branch moved since we fetched it, it is
   # refused and the next run, on the next merge, starts from the new head.
