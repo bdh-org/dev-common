@@ -10,6 +10,11 @@
 #   - two PRs landing on one provisional number, which is allowed
 #   - a PR above main that merges cleanly, left untouched, and one above main whose
 #     version line conflicts, which is merged at its OWN number (dev-common#354)
+#   - a PR that bumps a version file main's own bump never touched, so the merge
+#     leaves it at the PR's number and not main's: re-bumped all the same, because
+#     the move accepts either number (dev-common#361)
+#   - a PR whose version line the merge leaves at NEITHER number, which the count
+#     check still refuses -- the guard the #361 fix must not loosen away
 #   - a PR with a real conflict, a draft, an unapproved PR
 # then, in MODE=push, a whole DRAIN: one re-bump per run (dev-common#351), the
 # re-bumped PR "merged", the next run re-bumping the next PR -- each landing at the
@@ -67,7 +72,10 @@ set_version() {  # set_version <v> -- Makefile plus a Python __version__
   printf 'VERSION=%s\nPACKAGE_DIR=pkg\n' "$1" >"$TMP/work/Makefile"
   mkdir -p "$TMP/work/pkg"; printf '__version__ = "%s"\n' "$1" >"$TMP/work/pkg/__init__.py"
 }
-set_version 1.2.0; echo base >"$TMP/work/shared.txt"
+set_manifest() {  # a JSON "version" field that is NOT the repo's own version
+  printf '{\n  "name": "r",\n  "version": "%s"\n}\n' "$1" >"$TMP/work/manifest.json"
+}
+set_version 1.2.0; set_manifest 0.4.0; echo base >"$TMP/work/shared.txt"
 G add -A; G commit -qm base; G push -q origin main
 base="$(G rev-parse HEAD)"
 
@@ -91,12 +99,20 @@ pr 11 1.2.1                     # auto-merge armed, but CI failed on the job's o
 pr 9 1.2.1                      # its branch moves before the push: push refused
 G commit -q --allow-empty -m "pushed later"; G push -q origin "HEAD:refs/heads/pr9"
 G checkout -q -B pr10 "$base"; set_version 1.2.1; echo 1.2.1 >"$TMP/work/version.txt"
+echo 10 >"$TMP/work/own-10.txt"
 G add -A; G commit -qm "pr 10"; G push -q origin HEAD:refs/pull/10/head HEAD:refs/heads/pr10
 #   ^ bumps a version.txt that main's bump never touched, so the merge leaves it at
-#     1.2.1, not main's 1.3.0: the line count disagrees and the PR is left alone
+#     1.2.1, the PR's own number, and not main's 1.3.0. The move accepts either, so
+#     the count agrees and the PR is re-bumped (dev-common#361).
+G checkout -q -B pr13 "$base"; set_version 1.2.1; set_manifest 1.2.1
+echo 13 >"$TMP/work/own-13.txt"
+G add -A; G commit -qm "pr 13"; G push -q origin HEAD:refs/pull/13/head HEAD:refs/heads/pr13
+#   ^ also set an unrelated JSON "version" field to its own number. main holds that
+#     field at 0.5.0, so the conflict resolves to a version line at NEITHER number:
+#     the count check must still refuse this PR, all through the drain.
 
 # main moves: a minor merge to 1.3.0 that also edits shared.txt
-G checkout -q main; set_version 1.3.0; echo "ours" >"$TMP/work/shared.txt"
+G checkout -q main; set_version 1.3.0; set_manifest 0.5.0; echo "ours" >"$TMP/work/shared.txt"
 G add -A; G commit -qm "feat merged"; G push -q origin main
 
 # A PR branched off main AS IT NOW IS, at a hand-picked target version several
@@ -124,8 +140,8 @@ chmod +x "$TMP/bin/curl"
 
 # The open PRs, one per line: <number> <review|-> <auto-merge 0|1> <draft 0|1>
 # [<head: 1 = the job's own re-bump commit with FAILED checks>].
-# #9 and #10 have auto-merge armed, so they come first in line -- and both are
-# refused, which must not use up the run's one push.
+# #9, #10 and #13 have auto-merge armed, so they come first in line -- and #9 and
+# #13 are refused, which must not use up the run's one push.
 cat >"$TMP/open.txt" <<'EOF'
 1 APPROVED 0 0
 2 APPROVED 0 0
@@ -139,6 +155,7 @@ cat >"$TMP/open.txt" <<'EOF'
 10 APPROVED 1 0
 11 - 1 0 1
 12 APPROVED 0 0
+13 APPROVED 1 0
 EOF
 write_prs() {
   awk 'BEGIN { printf "{\"data\":{\"repository\":{\"pullRequests\":{\"nodes\":[" }
@@ -159,7 +176,7 @@ run() {  # run <MODE> -- the real script, in the fixture checkout
     PATH="$TMP/bin:$PATH" GH_TOKEN=t REPO=o/r MODE="$1" GITHUB_STEP_SUMMARY="$TMP/summary-$1.md" \
     bash "$SCRIPT" 2>&1)
 }
-PRS="1 2 3 4 5 7 8 9 10 11 12"   # every PR with a branch, so a stray push is seen
+PRS="1 2 3 4 5 7 8 9 10 11 12 13"   # every PR with a branch, so a stray push is seen
 branch_sha() { git -C "$TMP/origin.git" rev-parse "refs/heads/pr$1"; }
 # What GitHub does on a merge: main moves to the PR head -- which the previous run
 # re-bumped, so it must contain main (asserted: a harness that merges a stale PR
@@ -243,11 +260,9 @@ snap="$before"; out="$(run push)"; rc=$?
 CASE="push run 1 succeeds"
 if [ "$rc" -eq 0 ]; then ok "exit 0"; else notok "exit $rc:"; sed 's/^/         /' <<<"$out"; fi
 expect "a branch that moved is not overwritten" "#9 1.2.1: left alone: push refused (the branch moved); the next run retries"
-expect "a version line the merge did not bring to main's number is refused" \
-  "#10 1.2.1: left alone: moved 0 version lines in version.txt, but the PR bumped 1"
-expect "two refusals do not use up the run's push: the oldest ready PR goes next" \
-  "#1 1.2.1: RE-BUMPED to 1.3.1 (patch)"
-expect "the rest wait for it" "#8 1.2.1: waiting: #1 is next in line"
+expect "a refusal does not use up the run's push: the next in line goes" \
+  "#10 1.2.1: RE-BUMPED to 1.3.1 (patch)"
+expect "the rest wait for it" "#8 1.2.1: waiting: #10 is next in line"
 CASE="exactly one branch pushed in run 1"
 c="$(pushes "$snap")"; if [ "$c" = 1 ]; then ok "1 push"; else notok "$c pushes"; fi
 CASE="a PR above main that merges cleanly is not pushed to"
@@ -255,26 +270,43 @@ case "$snap" in
   *" 12=$(branch_sha 12)"*) ok "pr12's branch did not move" ;;
   *) notok "pr12 was pushed to though it merges cleanly" ;;
 esac
-CASE="the re-bumped PR holds the new number in every version file, its own change and main's"
-if [ "$(at 1 Makefile | head -n1)" = VERSION=1.3.1 ] && [ "$(at 1 pkg/__init__.py)" = '__version__ = "1.3.1"' ] \
-   && [ "$(at 1 own-1.txt)" = 1 ] && [ "$(at 1 shared.txt)" = ours ] \
-   && git -C "$TMP/origin.git" merge-base --is-ancestor refs/heads/main refs/heads/pr1; then
-  ok "pr1: 1.3.1 in Makefile and __version__, own-1.txt, main's shared.txt, main as ancestor"
+CASE="a version file main's own bump never touched reaches the new number (dev-common#361)"
+if [ "$(at 10 Makefile | head -n1)" = VERSION=1.3.1 ] && [ "$(at 10 pkg/__init__.py)" = '__version__ = "1.3.1"' ] \
+   && [ "$(at 10 version.txt)" = 1.3.1 ] && [ "$(at 10 own-10.txt)" = 10 ] && [ "$(at 10 shared.txt)" = ours ] \
+   && git -C "$TMP/origin.git" merge-base --is-ancestor refs/heads/main refs/heads/pr10; then
+  ok "pr10: 1.3.1 in Makefile, __version__ and version.txt, own-10.txt, main's shared.txt, main as ancestor"
 else
-  notok "pr1: $(at 1 Makefile | head -n1) / $(at 1 pkg/__init__.py) / own=$(at 1 own-1.txt) / shared=$(at 1 shared.txt)"
+  notok "pr10: $(at 10 Makefile | head -n1) / $(at 10 pkg/__init__.py) / version.txt=$(at 10 version.txt) / own=$(at 10 own-10.txt) / shared=$(at 10 shared.txt)"
 fi
 CASE="the re-bump commit is the coder App's"
-if [ "$(git -C "$TMP/origin.git" log -1 --format='%an <%ae>' refs/heads/pr1)" = \
+if [ "$(git -C "$TMP/origin.git" log -1 --format='%an <%ae>' refs/heads/pr10)" = \
      'bdh-org-coder[bot] <305014630+bdh-org-coder[bot]@users.noreply.github.com>' ]; then
   ok "authored by bdh-org-coder[bot]"
 else
-  notok "authored by $(git -C "$TMP/origin.git" log -1 --format='%an <%ae>' refs/heads/pr1)"
+  notok "authored by $(git -C "$TMP/origin.git" log -1 --format='%an <%ae>' refs/heads/pr10)"
+fi
+
+merge_pr 10; snap=""; for n in $PRS; do snap="$snap $n=$(branch_sha $n)"; done
+out="$(run push)"
+expect "a version line the merge leaves at NEITHER number is still refused" \
+  "#13 1.2.1: left alone: moved 0 version lines in manifest.json, but the PR bumped 1"
+expect "two refusals do not use up the run's push: the oldest ready PR goes next" \
+  "#1 1.2.1: RE-BUMPED to 1.3.2 (patch)"
+CASE="exactly one branch pushed in run 2"
+c="$(pushes "$snap")"; if [ "$c" = 1 ]; then ok "1 push"; else notok "$c pushes"; fi
+CASE="the re-bumped PR holds the new number in every version file, its own change and main's"
+if [ "$(at 1 Makefile | head -n1)" = VERSION=1.3.2 ] && [ "$(at 1 pkg/__init__.py)" = '__version__ = "1.3.2"' ] \
+   && [ "$(at 1 own-1.txt)" = 1 ] && [ "$(at 1 shared.txt)" = ours ] \
+   && git -C "$TMP/origin.git" merge-base --is-ancestor refs/heads/main refs/heads/pr1; then
+  ok "pr1: 1.3.2 in Makefile and __version__, own-1.txt, main's shared.txt, main as ancestor"
+else
+  notok "pr1: $(at 1 Makefile | head -n1) / $(at 1 pkg/__init__.py) / own=$(at 1 own-1.txt) / shared=$(at 1 shared.txt)"
 fi
 
 merge_pr 1; snap=""; for n in $PRS; do snap="$snap $n=$(branch_sha $n)"; done
 out="$(run push)"
 expect "after #1 merges, the agreement case goes next at its own level" "#2 1.3.0: RE-BUMPED to 1.4.0 (minor)"
-CASE="exactly one branch pushed in run 2"
+CASE="exactly one branch pushed in run 3"
 c="$(pushes "$snap")"; if [ "$c" = 1 ]; then ok "1 push"; else notok "$c pushes"; fi
 CASE="#2 holds 1.4.0 in every version file"
 if [ "$(at 2 Makefile | head -n1)" = VERSION=1.4.0 ] && [ "$(at 2 pkg/__init__.py)" = '__version__ = "1.4.0"' ]; then
@@ -330,10 +362,10 @@ c="$(pushes "$snap")"
 if [ "$c" = 0 ] && ! grep -qE "RE-BUMPED|MERGED" <<<"$out"; then ok "no push, no re-bump"; else notok "$c pushes:"; sed 's/^/         /' <<<"$out"; fi
 
 CASE="refusals were never pushed in the whole drain"
-moved=""; for n in 5 9 10 11; do
+moved=""; for n in 5 9 11 13; do
   case "$before" in *" $n=$(branch_sha $n)"*) ;; *) moved="$moved #$n";; esac
 done
-if [ -z "$moved" ]; then ok "#5 #9 #10 #11 untouched"; else notok "moved:$moved"; fi
+if [ -z "$moved" ]; then ok "#5 #9 #11 #13 untouched"; else notok "moved:$moved"; fi
 
 echo
 echo "passed: $pass   failed: $fail"

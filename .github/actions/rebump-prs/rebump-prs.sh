@@ -47,8 +47,9 @@
 # MODE=report prints what it would do and pushes nothing (stage 1, kept as the
 # one-line rollback). MODE=push re-bumps the next PR in line: merge main, keep
 # main's side of the version-only conflict blocks, then move exactly the version
-# lines the PR itself bumped from main's number to the new one -- which, for a PR
-# above main, is the number it already had, so the merge is all it gains. Not
+# lines the PR itself bumped -- from main's number OR the PR's own, whichever the
+# merge left there (bdh-org/dev-common#361) -- to the new one, which for a PR
+# above main is the number it already had, so the merge is all it gains. Not
 # `make bump-<level>`: that needs the PR's `common` submodule, which for a finzeug
 # repo means a second, cross-org token on forge -- while the lines to move are
 # already named by the PR's own diff. A count mismatch, or any change to the PR
@@ -169,13 +170,24 @@ rebump() {
     fi
     while IFS= read -r f; do take_main_side "$f"; git add -- "$f"; done < <(git diff --name-only --diff-filter=U)
   fi
-  # Every file whose version line the PR bumped now holds main's number: move it.
+  # Every file whose version line the PR bumped holds EITHER number now: main's,
+  # where the merge kept main's side of a version-only conflict, or the PR's own,
+  # where the file merged cleanly because main's bump never touched it. Accept both
+  # (bdh-org/dev-common#361): moving only main's number counted 0 moves against the
+  # PR's 1 for such a file, and the refusal was final -- nothing else re-bumps that
+  # PR, so it stayed DIRTY until a human merged main by hand. A line already at the
+  # target counts as moved, so the count check still refuses anything else -- except
+  # a modify/delete, which the count used to refuse by accident (bdh-org/dev-common#364).
   while IFS= read -r f; do
     expected="$(git diff "$mb" "$pr" -- "$f" | grep -E '^\+[^+]' | cut -c2- | grep -E "$VERSION_LINE" | grep -cF "$pv" || true)"
     [ "$expected" -gt 0 ] || continue
-    moved="$(awk -v re="$VERSION_LINE" -v old="$main_version" -v new="$new" '
-      $0 ~ re && (i = index($0, old)) && substr($0, i + length(old), 1) !~ /[0-9.]/ {
-        $0 = substr($0, 1, i - 1) new substr($0, i + length(old)); n++ }
+    moved="$(awk -v re="$VERSION_LINE" -v olds="$main_version $pv" -v new="$new" '
+      BEGIN { n_olds = split(olds, old, " ") }
+      $0 ~ re {
+        for (k = 1; k <= n_olds; k++)
+          if ((i = index($0, old[k])) && substr($0, i + length(old[k]), 1) !~ /[0-9.]/) {
+            $0 = substr($0, 1, i - 1) new substr($0, i + length(old[k])); n++; break }
+      }
       { print > (FILENAME ".rebump") } END { print n + 0 }' "$f")"
     mv "$f.rebump" "$f"; git add -- "$f"
     if [ "$moved" != "$expected" ]; then
