@@ -583,6 +583,28 @@ jobs:
         run: |
           p="$HOME/miniforge3/envs/$CI_ENV"
           if [ -x "$p/bin/python" ] && [ -x "$p/bin/ruff" ]; then
+            # The checkout's vendored lib/* go into a venv PRIVATE TO THIS RUN, layered
+            # on the shared env -- the install self-hosted-ci makes (bdh-org/dev-common#345).
+            # Without it the agent tested against whatever lib/* was last installed INTO
+            # the shared env, from before CI moved to a per-run venv: slingshot's held
+            # ledger_io 0.5.1 against a 0.10.0 pin and failed 4 tests on a green main
+            # (finzeug/slingshot#628). The env's own tools are linked in, so
+            # $CONDA_PREFIX/bin/ruff still resolves; the shared env is never written.
+            libs=()
+            for d in lib/*/; do
+              if [ -f "${d}pyproject.toml" ]; then libs+=("${d%/}"); fi
+            done
+            if [ "${#libs[@]}" -gt 0 ]; then
+              v="$RUNNER_TEMP/agent-lib-venv"
+              rm -rf "$v"
+              "$p/bin/python" -m venv --system-site-packages "$v"
+              "$v/bin/python" -m pip install --quiet --disable-pip-version-check "${libs[@]}"
+              for f in "$p"/bin/*; do
+                if [ ! -e "$v/bin/${f##*/}" ]; then ln -s "$f" "$v/bin/${f##*/}"; fi
+              done
+              echo "agent lib/* venv over $CI_ENV: $("$v/bin/python" -m pip list --local --format=freeze | tr '\n' ' ')"
+              p="$v"
+            fi
             echo "prefix=$p" >> "$GITHUB_OUTPUT"
             echo "status=ok" >> "$GITHUB_OUTPUT"
             echo "agent checks run in CI env $CI_ENV: $("$p/bin/python" --version 2>&1), ruff $("$p/bin/ruff" --version 2>&1 | awk '{print $2}')"
