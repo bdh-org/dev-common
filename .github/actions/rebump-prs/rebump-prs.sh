@@ -176,7 +176,8 @@ rebump() {
   # (bdh-org/dev-common#361): moving only main's number counted 0 moves against the
   # PR's 1 for such a file, and the refusal was final -- nothing else re-bumps that
   # PR, so it stayed DIRTY until a human merged main by hand. A line already at the
-  # target counts as moved, so the count check still refuses anything else.
+  # target counts as moved, so the count check still refuses anything else -- except
+  # a modify/delete, which the count used to refuse by accident (bdh-org/dev-common#364).
   while IFS= read -r f; do
     expected="$(git diff "$mb" "$pr" -- "$f" | grep -E '^\+[^+]' | cut -c2- | grep -E "$VERSION_LINE" | grep -cF "$pv" || true)"
     [ "$expected" -gt 0 ] || continue
