@@ -45,6 +45,10 @@ for name in agent-issue-to-pr agent-pr-revise; do
   others="$(grep -c 'steps.cienv.outputs.prefix' "$WF")"
   [ "$others" = 1 ] && ok "$name: CONDA_PREFIX reaches no other step" || notok "$name: steps.cienv.outputs.prefix used $others times"
 
+  # The checkout's lib/* pins reach the agent through a per-run venv, never the stale
+  # copy last installed into the shared env (finzeug/slingshot#628).
+  grep -q 'venv --system-site-packages "$v"' "$WF" && grep -q 'p="$v"' "$WF" \
+    && ok "$name: cienv layers the checkout's lib/* in a per-run venv" || notok "$name: cienv installs lib/* per run"
   grep -q '`make lint` and `make test`' "$WF" && ok "$name: the prompt asks for lint AND test" || notok "$name: the prompt asks for lint and test"
   grep -q 'NEVER `pip install` or `conda' "$WF" && ok "$name: the prompt forbids installing into the env" || notok "$name: the prompt forbids installing"
   grep -q 'AGENT_CI_ENV is$' "$WF" || grep -q 'If AGENT_CI_ENV is' "$WF" \
