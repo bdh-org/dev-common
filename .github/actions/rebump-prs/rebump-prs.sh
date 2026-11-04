@@ -4,15 +4,24 @@
 #
 # Every PR bumps VERSION from the main it branched from, so each merge leaves the
 # other open PRs either in a version-line conflict or, when two picked the same
-# number, merging cleanly as AGREEMENT under a number that is already taken. The
-# trigger is therefore "PR version <= main version", not "git reports a conflict".
+# number, merging cleanly as AGREEMENT under a number that is already taken.
 #
-# THE NUMBER IS PROVISIONAL. A PR is re-bumped to main's version plus its own
-# level (patch/minor/major, read from its version against its merge base -- an
-# invariant that survives re-bumps, since a re-bumped branch's merge base is the
-# main it was bumped from). Several open PRs may land on the same provisional
-# number; the first to merge keeps it and the next run moves the rest. Assigning
-# distinct numbers in queue order breaks the moment PRs merge out of order.
+# THE TRIGGER IS THE MERGE, NOT THE NUMBER (bdh-org/dev-common#354). A PR is in
+# line when its only conflicts with main are version lines, or when it merges
+# cleanly at a number main has already reached. Deciding on the number alone
+# skipped exactly the PR this job exists for: a ready PR already ABOVE main whose
+# `VERSION=` line still conflicted was reported "ok: above main" and left DIRTY,
+# which after each merge is every open PR above main (three in home-infra,
+# 2026-11-03). A PR above main that merges CLEANLY is still left untouched.
+#
+# THE NUMBER IS PROVISIONAL, and it is the HIGHER of the PR's own version and
+# main's plus the PR's own level (patch/minor/major, read from its version against
+# its merge base -- an invariant that survives re-bumps, since a re-bumped
+# branch's merge base is the main it was bumped from). A PR above main therefore
+# keeps its own number and takes only the merge; it is never bumped DOWN to
+# main-plus-level. Several open PRs may land on the same provisional number; the
+# first to merge keeps it and the next run moves the rest. Assigning distinct
+# numbers in queue order breaks the moment PRs merge out of order.
 #
 # ONE PUSH PER RUN (bdh-org/dev-common#351). Every push starts the PR's CI, and
 # only the PR about to merge needs to be current -- strict branch protection makes
@@ -37,12 +46,13 @@
 #
 # MODE=report prints what it would do and pushes nothing (stage 1, kept as the
 # one-line rollback). MODE=push re-bumps the next PR in line: merge main, keep
-# main's side of the version-only conflict blocks, then
-# move exactly the version lines the PR itself bumped from main's number to the
-# new one. Not `make bump-<level>`: that needs the PR's `common` submodule, which
-# for a finzeug repo means a second, cross-org token on forge -- while the lines
-# to move are already named by the PR's own diff. A count mismatch, or any change
-# to the PR outside version lines, leaves the PR alone and pushes nothing.
+# main's side of the version-only conflict blocks, then move exactly the version
+# lines the PR itself bumped from main's number to the new one -- which, for a PR
+# above main, is the number it already had, so the merge is all it gains. Not
+# `make bump-<level>`: that needs the PR's `common` submodule, which for a finzeug
+# repo means a second, cross-org token on forge -- while the lines to move are
+# already named by the PR's own diff. A count mismatch, or any change to the PR
+# outside version lines, leaves the PR alone and pushes nothing.
 #
 # Env: GH_TOKEN (lists PRs), REPO (owner/name), MODE (report|push), BASE (default
 #      main). Runs inside a full-history checkout made with the App token, so its
@@ -95,6 +105,12 @@ next_version() {
     minor) echo "${v[0]}.$((v[1] + 1)).0" ;;
     patch) echo "${v[0]}.${v[1]}.$((v[2] + 1))" ;;
   esac
+}
+
+# The higher of two versions: a PR already past main-plus-its-level keeps its own
+# number rather than being bumped down to meet it.
+max_version() {
+  if [ "$(compare_versions "$1" "$2")" = -1 ]; then echo "$2"; else echo "$1"; fi
 }
 
 # A line that only states a version: the Makefile line, __version__, a JSON
@@ -177,8 +193,10 @@ rebump() {
     git merge --abort 2>/dev/null || git reset -q --hard
     echo "the merge changes the PR outside version lines"; return
   fi
+  # The headline is the same even when $new is the number the PR already had: the
+  # "its CI failed on our own re-bump" check matches on it (bdh-org/dev-common#358).
   git commit -q --no-edit -m "chore: merge $BASE and re-bump to $new" \
-      -m "$BASE moved to $main_version; this PR's own level puts it at $new (bdh-org/dev-common#344)."
+      -m "$BASE moved to $main_version; this PR lands at $new (bdh-org/dev-common#344)."
   # A plain push, never a force: if the branch moved since we fetched it, it is
   # refused and the next run, on the next merge, starts from the new head.
   if ! git push -q origin "HEAD:refs/heads/$branch" 2>/dev/null; then
@@ -187,21 +205,24 @@ rebump() {
   fi
 }
 
-# Prints the files git cannot merge for reasons other than version lines.
-# Empty output: the PR merges with main cleanly or with version-only conflicts.
-other_conflicts() {
-  local head="$1" out tree file
+# How a PR merges with main: `clean`, `version-only` (it conflicts, and every
+# conflict block holds nothing but version lines), or `other:<paths>` naming the
+# files git cannot merge for another reason. This, not the version number, is what
+# puts a PR in line (bdh-org/dev-common#354).
+merge_state() {
+  local head="$1" out tree file others=""
   if out="$(git -c merge.conflictStyle=merge merge-tree --write-tree --name-only "origin/$BASE" "$head")"; then
-    return 0
+    echo clean; return
   fi
   tree="$(sed -n 1p <<<"$out")"
   # Lines 2.. up to the first blank line are the conflicted paths.
   while IFS= read -r file; do
     [ -n "$file" ] || break
     if ! git cat-file -p "$tree:$file" 2>/dev/null | only_version_conflicts; then
-      echo "$file"
+      others="${others:+$others,}$file"
     fi
   done < <(sed -n '2,$p' <<<"$out")
+  if [ -n "$others" ]; then echo "other:$others"; else echo version-only; fi
 }
 
 git fetch -q origin "+refs/heads/$BASE:refs/remotes/origin/$BASE"
@@ -251,27 +272,34 @@ while IFS=$'\t' read -r n branch draft fork failed_rebump; do
     base_version="$(version_at "$(git merge-base "origin/$BASE" "$head")")"
     if [ -z "$pr_version" ] || [ -z "$base_version" ]; then
       verdict="skipped: no Makefile VERSION on the PR or its base"
-    elif [ "$(compare_versions "$pr_version" "$main_version")" = 1 ]; then
-      verdict="ok: above $BASE"
     else
       level="$(bump_level "$base_version" "$pr_version")"
+      state="$(merge_state "$head")"
       if [ "$level" = none ]; then
         verdict="skipped: no bump of its own (the version guard reports it)"
+      elif [ "$state" = clean ] && [ "$(compare_versions "$pr_version" "$main_version")" = 1 ]; then
+        # Above main and it merges: nothing is owed it.
+        verdict="ok: above $BASE"
+      elif [ "$state" != clean ] && [ "$state" != version-only ]; then
+        verdict="left alone: conflicts outside version lines in ${state#other:}"
+      elif [ "$failed_rebump" = true ]; then
+        verdict="left alone: its CI failed after its last re-bump; a fix pushed to the branch puts it back in line"
+      elif [ -n "$pushed" ]; then
+        verdict="waiting: #$pushed is next in line; re-bumped after it merges"
       else
-        new_version="$(next_version "$main_version" "$level")"
-        others="$(other_conflicts "$head" | paste -sd, -)"
-        if [ -n "$others" ]; then
-          verdict="left alone: conflicts outside version lines in $others"
-        elif [ "$failed_rebump" = true ]; then
-          verdict="left alone: its CI failed after its last re-bump; a fix pushed to the branch puts it back in line"
-        elif [ -n "$pushed" ]; then
-          verdict="waiting: #$pushed is next in line; re-bumped after it merges"
-        elif [ "$MODE" = report ]; then
-          verdict="WOULD RE-BUMP to $new_version ($level)"; pushed="$n"
+        new_version="$(max_version "$pr_version" "$(next_version "$main_version" "$level")")"
+        # A PR already at the number it should hold needs the merge, not a bump.
+        if [ "$new_version" = "$pr_version" ]; then
+          would="WOULD MERGE $BASE, keeping $pr_version"; did="MERGED $BASE, keeping $pr_version"
+        else
+          would="WOULD RE-BUMP to $new_version ($level)"; did="RE-BUMPED to $new_version ($level)"
+        fi
+        if [ "$MODE" = report ]; then
+          verdict="$would"; pushed="$n"
         else
           refused="$(rebump "$n" "$branch" "$new_version")"
           verdict="${refused:+left alone: $refused}"
-          if [ -z "$verdict" ]; then verdict="RE-BUMPED to $new_version ($level)"; pushed="$n"; fi
+          if [ -z "$verdict" ]; then verdict="$did"; pushed="$n"; fi
         fi
       fi
     fi
