@@ -52,8 +52,9 @@
 # above main is the number it already had, so the merge is all it gains. Not
 # `make bump-<level>`: that needs the PR's `common` submodule, which for a finzeug
 # repo means a second, cross-org token on forge -- while the lines to move are
-# already named by the PR's own diff. A count mismatch, or any change to the PR
-# outside version lines, leaves the PR alone and pushes nothing.
+# already named by the PR's own diff. A count mismatch, any change to the PR
+# outside version lines, or a conflict over a file one side DELETED, leaves the PR
+# alone and pushes nothing.
 #
 # Env: GH_TOKEN (lists PRs), REPO (owner/name), MODE (report|push), BASE (default
 #      main). Runs inside a full-history checkout made with the App token, so its
@@ -138,6 +139,25 @@ take_main_side() {
   mv "$1.rebump" "$1"
 }
 
+# Is a conflicted path a file on BOTH sides -- the only shape take_main_side can
+# resolve, because only then did git leave conflict markers in it?
+#
+# A MODIFY/DELETE LEAVES NO MARKERS AT ALL (bdh-org/dev-common#364): git puts one
+# side's content in the tree whole ("Version HEAD of version.txt left in tree"),
+# so take_main_side is a no-op and the `git add` after it commits that content --
+# resurrecting a version file main DELETED, at the new number (UD), or undoing the
+# PR's own deletion of one (DU, the mirror). Neither is caught downstream: the
+# surviving line IS a version line, so the count check accepts it (since #361) and
+# non_version_changes filters it out of both sides. A rename/rename leaves a
+# conflicted path with content on neither side, where awk would fail and `set -e`
+# would abort the whole job instead of refusing one PR.
+#
+# So such a PR is left alone. This job only ever moves version lines; "main deleted
+# a file you edited" is a decision for a human.
+on_both_sides() {  # on_both_sides <pr-rev> <path>
+  git cat-file -e "$1:$2" 2>/dev/null && git cat-file -e "origin/$BASE:$2" 2>/dev/null
+}
+
 # The +/- lines of a diff that are not version lines, sorted: what a PR changes,
 # independent of line numbers, so a re-bump can be checked to have changed nothing
 # else.
@@ -168,7 +188,16 @@ rebump() {
       git merge --abort 2>/dev/null; git reset -q --hard
       echo "git merge failed: $(tr '\n' ' ' <<<"$merge_err" | cut -c1-200)"; return
     fi
-    while IFS= read -r f; do take_main_side "$f"; git add -- "$f"; done < <(git diff --name-only --diff-filter=U)
+    # merge_state already routes a delete-on-one-side conflict to a human, so this
+    # is the backstop for its view differing from the real merge's -- it reads
+    # `merge-tree` with main as OURS, while this merge has the PR as ours.
+    while IFS= read -r f; do
+      if ! on_both_sides "$pr" "$f" || [ ! -f "$f" ]; then
+        git merge --abort 2>/dev/null || git reset -q --hard
+        echo "cannot resolve $f: it is deleted on one side, or not a plain file"; return
+      fi
+      take_main_side "$f"; git add -- "$f"
+    done < <(git diff --name-only --diff-filter=U)
   fi
   # Every file whose version line the PR bumped holds EITHER number now: main's,
   # where the merge kept main's side of a version-only conflict, or the PR's own,
@@ -176,8 +205,10 @@ rebump() {
   # (bdh-org/dev-common#361): moving only main's number counted 0 moves against the
   # PR's 1 for such a file, and the refusal was final -- nothing else re-bumps that
   # PR, so it stayed DIRTY until a human merged main by hand. A line already at the
-  # target counts as moved, so the count check still refuses anything else -- except
-  # a modify/delete, which the count used to refuse by accident (bdh-org/dev-common#364).
+  # target counts as moved, so the count check still refuses anything else. It is no
+  # longer what stands between a modify/delete and a resurrected file: it refused
+  # one only by accident, and on_both_sides now refuses it outright
+  # (bdh-org/dev-common#364).
   while IFS= read -r f; do
     expected="$(git diff "$mb" "$pr" -- "$f" | grep -E '^\+[^+]' | cut -c2- | grep -E "$VERSION_LINE" | grep -cF "$pv" || true)"
     [ "$expected" -gt 0 ] || continue
@@ -219,8 +250,9 @@ rebump() {
 
 # How a PR merges with main: `clean`, `version-only` (it conflicts, and every
 # conflict block holds nothing but version lines), or `other:<paths>` naming the
-# files git cannot merge for another reason. This, not the version number, is what
-# puts a PR in line (bdh-org/dev-common#354).
+# files git cannot merge for another reason -- including a file one side DELETED,
+# which conflicts with no conflict blocks at all. This, not the version number, is
+# what puts a PR in line (bdh-org/dev-common#354).
 merge_state() {
   local head="$1" out tree file others=""
   if out="$(git -c merge.conflictStyle=merge merge-tree --write-tree --name-only "origin/$BASE" "$head")"; then
@@ -230,7 +262,11 @@ merge_state() {
   # Lines 2.. up to the first blank line are the conflicted paths.
   while IFS= read -r file; do
     [ -n "$file" ] || break
-    if ! git cat-file -p "$tree:$file" 2>/dev/null | only_version_conflicts; then
+    # on_both_sides FIRST: for a modify/delete the blob below is one side's
+    # marker-free content, every line of which is a version line, so reading it
+    # alone calls the PR version-only and puts it in line (bdh-org/dev-common#364).
+    if ! on_both_sides "$head" "$file" \
+       || ! git cat-file -p "$tree:$file" 2>/dev/null | only_version_conflicts; then
       others="${others:+$others,}$file"
     fi
   done < <(sed -n '2,$p' <<<"$out")
