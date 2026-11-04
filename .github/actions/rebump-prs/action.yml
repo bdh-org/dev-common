@@ -1,9 +1,9 @@
 name: Re-bump open PRs
 description: >
-  After main moves, report each open pull request whose Makefile VERSION is no
-  longer above main's, and the number it must be re-bumped to: main's version
-  plus the PR's own level. Report-only (stage 1 of bdh-org/dev-common#344);
-  it pushes nothing.
+  After main moves, report each open pull request that main's merge left in a
+  version-line conflict or at a number main has reached, and the number it must
+  hold: the higher of its own and main's version plus the PR's own level. In
+  mode: push it re-bumps the next one in line (bdh-org/dev-common#344, #354).
 
 # A composite action for the same reason as version-guard: a reusable workflow's
 # steps run against the CALLER's checkout, so a script path would resolve into the
