@@ -15,6 +15,10 @@
 #     the move accepts either number (dev-common#361)
 #   - a PR whose version line the merge leaves at NEITHER number, which the count
 #     check still refuses -- the guard the #361 fix must not loosen away
+#   - a PR that bumps a version file main DELETED, and the mirror, one that deletes
+#     a version file main changed: a modify/delete has no conflict markers, so
+#     keeping main's side is a no-op and the `git add` after it would resurrect the
+#     file (or undo the deletion). Both are refused (dev-common#364)
 #   - a PR with a real conflict, a draft, an unapproved PR
 # then, in MODE=push, a whole DRAIN: one re-bump per run (dev-common#351), the
 # re-bumped PR "merged", the next run re-bumping the next PR -- each landing at the
@@ -76,6 +80,7 @@ set_manifest() {  # a JSON "version" field that is NOT the repo's own version
   printf '{\n  "name": "r",\n  "version": "%s"\n}\n' "$1" >"$TMP/work/manifest.json"
 }
 set_version 1.2.0; set_manifest 0.4.0; echo base >"$TMP/work/shared.txt"
+echo 1.2.0 >"$TMP/work/doomed.txt"   # a version file main will `git rm` (see pr14)
 G add -A; G commit -qm base; G push -q origin main
 base="$(G rev-parse HEAD)"
 
@@ -110,9 +115,23 @@ G add -A; G commit -qm "pr 13"; G push -q origin HEAD:refs/pull/13/head HEAD:ref
 #   ^ also set an unrelated JSON "version" field to its own number. main holds that
 #     field at 0.5.0, so the conflict resolves to a version line at NEITHER number:
 #     the count check must still refuse this PR, all through the drain.
+pr 14 1.2.1 1.2.1 doomed.txt
+#   ^ bumps doomed.txt, which main DELETES: a modify/delete (UD), where git leaves
+#     the PR's marker-free content in the tree. take_main_side cannot touch that, so
+#     a `git add` would RESURRECT a file main deleted, at the new number -- and
+#     nothing downstream catches it, because the surviving line IS a version line
+#     (dev-common#364).
+G checkout -q -B pr15 "$base"; set_version 1.2.1; G rm -q manifest.json
+echo 15 >"$TMP/work/own-15.txt"
+G add -A; G commit -qm "pr 15"; G push -q origin HEAD:refs/pull/15/head HEAD:refs/heads/pr15
+#   ^ the DU mirror: the PR deletes manifest.json, whose "version" field main
+#     changes. git leaves MAIN's content in the tree, so a `git add` would undo the
+#     PR's own deletion -- and the move loop never looks, since the PR's diff adds
+#     no line for that file.
 
-# main moves: a minor merge to 1.3.0 that also edits shared.txt
+# main moves: a minor merge to 1.3.0 that also edits shared.txt and drops doomed.txt
 G checkout -q main; set_version 1.3.0; set_manifest 0.5.0; echo "ours" >"$TMP/work/shared.txt"
+G rm -q doomed.txt
 G add -A; G commit -qm "feat merged"; G push -q origin main
 
 # A PR branched off main AS IT NOW IS, at a hand-picked target version several
@@ -156,6 +175,8 @@ cat >"$TMP/open.txt" <<'EOF'
 11 - 1 0 1
 12 APPROVED 0 0
 13 APPROVED 1 0
+14 APPROVED 0 0
+15 APPROVED 0 0
 EOF
 write_prs() {
   awk 'BEGIN { printf "{\"data\":{\"repository\":{\"pullRequests\":{\"nodes\":[" }
@@ -176,7 +197,7 @@ run() {  # run <MODE> -- the real script, in the fixture checkout
     PATH="$TMP/bin:$PATH" GH_TOKEN=t REPO=o/r MODE="$1" GITHUB_STEP_SUMMARY="$TMP/summary-$1.md" \
     bash "$SCRIPT" 2>&1)
 }
-PRS="1 2 3 4 5 7 8 9 10 11 12 13"   # every PR with a branch, so a stray push is seen
+PRS="1 2 3 4 5 7 8 9 10 11 12 13 14 15"   # every PR with a branch, so a stray push is seen
 branch_sha() { git -C "$TMP/origin.git" rev-parse "refs/heads/pr$1"; }
 # What GitHub does on a merge: main moves to the PR head -- which the previous run
 # re-bumped, so it must contain main (asserted: a harness that merges a stale PR
@@ -212,6 +233,10 @@ expect "a PR above main whose version line conflicts is IN LINE, not skipped as 
   "#4 1.4.0: waiting: #9 is next in line"
 expect "a conflict outside version lines is left alone, naming the file" \
   "#5 1.2.1: left alone: conflicts outside version lines in shared.txt"
+expect "a version file main DELETED and the PR bumped is NOT version-only (dev-common#364)" \
+  "#14 1.2.1: left alone: conflicts outside version lines in doomed.txt"
+expect "nor is the mirror: a version file the PR deleted and main changed" \
+  "#15 1.2.1: left alone: conflicts outside version lines in manifest.json"
 expect "a draft is skipped" "#6 ?: skipped: draft"
 expect "a PR whose CI failed on its own re-bump does not hold the line, though auto-merge is armed" \
   "#11 1.2.1: left alone: its CI failed after its last re-bump"
@@ -352,6 +377,8 @@ merge_pr 12; snap=""; for n in $PRS; do snap="$snap $n=$(branch_sha $n)"; done
 out="$(run push)"
 expect "with no ready PR left, the unready one is re-bumped (no /revise needed)" \
   "#7 1.2.1: RE-BUMPED to 1.9.1 (patch)"
+expect "a delete-on-one-side conflict is refused without using up the run's push" \
+  "#14 1.2.1: left alone: conflicts outside version lines in doomed.txt"
 CASE="exactly one branch pushed for the unready PR"
 c="$(pushes "$snap")"; if [ "$c" = 1 ]; then ok "1 push"; else notok "$c pushes"; fi
 
@@ -362,10 +389,19 @@ c="$(pushes "$snap")"
 if [ "$c" = 0 ] && ! grep -qE "RE-BUMPED|MERGED" <<<"$out"; then ok "no push, no re-bump"; else notok "$c pushes:"; sed 's/^/         /' <<<"$out"; fi
 
 CASE="refusals were never pushed in the whole drain"
-moved=""; for n in 5 9 11 13; do
+moved=""; for n in 5 9 11 13 14 15; do
   case "$before" in *" $n=$(branch_sha $n)"*) ;; *) moved="$moved #$n";; esac
 done
-if [ -z "$moved" ]; then ok "#5 #9 #11 #13 untouched"; else notok "moved:$moved"; fi
+if [ -z "$moved" ]; then ok "#5 #9 #11 #13 #14 #15 untouched"; else notok "moved:$moved"; fi
+CASE="the file main deleted was never resurrected, nor the PR's deletion undone"
+# The branches above never moved, so this reads what a re-bump WOULD have pushed:
+# doomed.txt still only on #14 (never carried into main or a drained PR), and
+# manifest.json still absent from #15.
+if [ -z "$(at 1 doomed.txt)" ] && [ -z "$(at 7 doomed.txt)" ] && [ -z "$(at 15 manifest.json)" ]; then
+  ok "doomed.txt is gone from every re-bumped PR, and manifest.json stays deleted on #15"
+else
+  notok "doomed.txt on #1=$(at 1 doomed.txt) #7=$(at 7 doomed.txt); #15 manifest.json=$(at 15 manifest.json)"
+fi
 
 echo
 echo "passed: $pass   failed: $fail"
