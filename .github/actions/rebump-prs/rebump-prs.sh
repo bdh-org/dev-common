@@ -56,10 +56,23 @@
 # outside version lines, or a conflict over a file one side DELETED, leaves the PR
 # alone and pushes nothing.
 #
-# Env: GH_TOKEN (lists PRs), REPO (owner/name), MODE (report|push), BASE (default
-#      main). Runs inside a full-history checkout made with the App token, so its
-#      fetches and pushes are the App's -- a push with the job's GITHUB_TOKEN
-#      would not trigger the PR's CI, and the PR could never go green.
+# THE QUEUE GOES ON THE PR, not only in the log (bdh-org/dev-common#369). A PR this
+# job HOLDS looks exactly like a PR that is broken: neither is green, and who is
+# first, who waits and who was refused lived only in the job log and its summary
+# (Brian, 2026-11-07, on finzeug/hog#743 and #662: "I was using the gh ipad app and
+# could not tell what pr was next. I did check both, there were only two and
+# neither was green."). So a held or refused PR carries ONE comment, found by the
+# hidden marker <!-- rebump-status --> and edited in place on every run, never
+# posted a second time; it is DELETED the moment the PR is re-bumped, above main or
+# skipped. Its presence therefore always means "this job is why the PR is not
+# green". Comments show in the iPad app, where a label or a job summary does not.
+# MODE=report prints the line it would post and writes nothing.
+#
+# Env: GH_TOKEN (lists PRs, and comments on them), REPO (owner/name), MODE
+#      (report|push), BASE (default main). Runs inside a full-history checkout made
+#      with the App token, so its fetches and pushes are the App's -- a push with
+#      the job's GITHUB_TOKEN would not trigger the PR's CI, and the PR could never
+#      go green.
 set -euo pipefail
 
 MODE="${MODE:-report}"
@@ -305,6 +318,107 @@ prs="$(jq '.data.repository.pullRequests.nodes' "$tmp/prs.json")"
 
 pr_link() { echo "[#$1](${GITHUB_SERVER_URL:-https://github.com}/$REPO/pull/$1)"; }
 
+# ---------------------------------------------- the status comment on a PR --
+# One comment per PR, found by this marker and edited in place, so a PR held
+# through a ten-PR drain collects one comment and not ten. The marker is a
+# hidden HTML comment: it never shows in the rendered body, and it is what
+# distinguishes this job's comment from every other on the PR.
+STATUS_MARKER='<!-- rebump-status -->'
+API="${GITHUB_API_URL:-https://api.github.com}/repos/$REPO"
+api_out="$tmp/api.out"   # where api() leaves the response body,
+api_code=""              # and its HTTP code
+
+api() {  # api <method> <path> [json-body-file] -- body in $api_out, code in $api_code
+  local method="$1" path="$2" body="${3:-}" args=()
+  [ -n "$body" ] && args=(--data @"$body" -H 'Content-Type: application/json')
+  api_code="$(curl -sS -o "$api_out" -w '%{http_code}' -X "$method" \
+    -H "Authorization: bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' \
+    ${args[@]+"${args[@]}"} "$API/$path")" || api_code=000
+}
+
+# The PR's status comment into $status_id / $status_body (both empty if it has
+# none); non-zero if the comments could not be read at all, which must stop a
+# post rather than risk a second comment. EVERY page: the comment keeps the
+# position it was created at, so on a PR the reviewer has talked to at length it
+# is not on the last page.
+status_id=""; status_body=""
+find_status_comment() {  # find_status_comment <pr-number>
+  local n="$1" page=0 hit
+  status_id=""; status_body=""
+  while [ "$page" -lt 20 ]; do
+    page=$((page + 1))
+    api GET "issues/$n/comments?per_page=100&page=$page"
+    if [ "$api_code" != 200 ]; then
+      echo "::warning::could not read #$n's comments (HTTP $api_code): $(head -c 200 "$api_out")"
+      return 1
+    fi
+    hit="$(jq --arg m "$STATUS_MARKER" 'map(select(.body | contains($m))) | first' "$api_out")"
+    if [ "$hit" != null ]; then
+      status_id="$(jq -r .id <<<"$hit")"; status_body="$(jq -r .body <<<"$hit")"
+      return 0
+    fi
+    [ "$(jq length "$api_out")" -lt 100 ] && break
+  done
+  return 0
+}
+
+# The one line a verdict puts on the PR, empty when this job is not what stands
+# between the PR and a green tick -- it merges as it is, it was just re-bumped,
+# or it is skipped for a reason of its own (a draft, a fork, no VERSION), where a
+# comment would say nothing the PR does not already show.
+status_line() {  # status_line <verdict> <the PR that is first in line>
+  local verdict="$1" first="$2" todo
+  case "$verdict" in
+    waiting:*)
+      echo "Version conflict: waiting. PR #$first is first in line; this one is" \
+           "re-bumped after #$first merges. Nothing to do." ;;
+    "left alone: "*)
+      # A refusal that says it retries needs nobody; every other one is a
+      # decision this job will not make, and /revise is who makes it.
+      case "$verdict" in
+        *"the next run retries"*) todo="Nothing to do." ;;
+        *) todo="Needs /revise." ;;
+      esac
+      echo "Version conflict: left alone, because ${verdict#left alone: }. $todo" ;;
+  esac
+}
+
+# Create, edit in place or delete the PR's status comment. An empty line means the
+# job is holding nothing against the PR, so any comment it left is removed. Never
+# fails the run: the comment is how the queue is SHOWN, and losing it must not stop
+# the queue from draining -- a refused write prints GitHub's own reason instead.
+sync_status_comment() {  # sync_status_comment <pr-number> <line>
+  local n="$1" line="$2" want
+  want="$(printf '%s\n%s' "$STATUS_MARKER" "$line")"
+  if [ "$MODE" = report ]; then
+    [ -n "$line" ] && echo "   would comment on #$n: $line"
+    return 0
+  fi
+  find_status_comment "$n" || return 0
+  if [ -z "$line" ]; then
+    if [ -n "$status_id" ]; then
+      api DELETE "issues/comments/$status_id"
+      if [ "$api_code" = 204 ]; then echo "   removed the status comment on #$n"
+      else echo "::warning::could not delete #$n's status comment (HTTP $api_code)"; fi
+    fi
+    return 0
+  fi
+  jq -n --arg b "$want" '{body: $b}' >"$tmp/comment.json"
+  if [ -z "$status_id" ]; then
+    api POST "issues/$n/comments" "$tmp/comment.json"
+    if [ "$api_code" = 201 ]; then echo "   commented on #$n: $line"
+    else echo "::warning::could not comment on #$n (HTTP $api_code): $(head -c 200 "$api_out")"; fi
+  # Already saying it: leave it alone, so a PR held through a long drain is not
+  # edited on every merge. CR stripped first -- a body typed in the web UI comes
+  # back with CRLF, and comparing raw would PATCH it forever.
+  elif [ "${status_body//$'\r'/}" != "$want" ]; then
+    api PATCH "issues/comments/$status_id" "$tmp/comment.json"
+    if [ "$api_code" = 200 ]; then echo "   updated the status comment on #$n: $line"
+    else echo "::warning::could not update #$n's status comment (HTTP $api_code): $(head -c 200 "$api_out")"; fi
+  fi
+  return 0
+}
+
 pushed=""   # the PR this run re-bumped (or, in report mode, would): at most one
 while IFS=$'\t' read -r n branch draft fork failed_rebump; do
   verdict=""
@@ -353,6 +467,9 @@ while IFS=$'\t' read -r n branch draft fork failed_rebump; do
     fi
   fi
   echo "#$n ${pr_version:-?}: $verdict"
+  # Say the same thing on the PR itself, before the verdict is rewritten for the
+  # summary: a comment body autolinks a bare #N, so it wants the plain number.
+  sync_status_comment "$n" "$(status_line "$verdict" "$pushed")"
   # A job summary does not autolink #N (bdh-org/dev-common#356): link it by hand.
   [ -n "$pushed" ] && verdict="${verdict//"#$pushed"/$(pr_link "$pushed")}"
   echo "| $(pr_link "$n") | ${pr_version:-?} | $verdict |" >>"$SUMMARY"
