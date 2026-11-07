@@ -329,7 +329,7 @@ expect "an unready PR waits in line like the rest" "#7 1.2.1: waiting: #9 is nex
 # A held PR looks exactly like a broken one from the PR page (dev-common#369), so
 # the queue goes on the PR itself. report mode prints the line and writes nothing.
 expect "a waiting PR would be told who is first, on the PR itself" \
-  "would comment on #1: Version conflict: waiting. PR #9 is first in line; this one is re-bumped after #9 merges. Nothing to do."
+  "would comment on #1: Version conflict: waiting. PR #9 is first in line; this one is re-bumped on a later run (after a merge, or the hourly sweep). Nothing to do."
 expect "a refused PR would be told why, and that it needs a human" \
   "would comment on #5: Version conflict: left alone, because conflicts outside version lines in shared.txt. Needs /revise."
 expect "the PR whose CI failed on its own re-bump is told that, not that it waits" \
@@ -411,7 +411,7 @@ else
   notok "pr10: $(at 10 Makefile | head -n1) / $(at 10 pkg/__init__.py) / version.txt=$(at 10 version.txt) / own=$(at 10 own-10.txt) / shared=$(at 10 shared.txt)"
 fi
 CASE="the status comment is created on each held PR, beside comments not its own"
-want1="Version conflict: waiting. PR #10 is first in line; this one is re-bumped after #10 merges. Nothing to do."
+want1="Version conflict: waiting. PR #10 is first in line; this one is re-bumped on a later run (after a merge, or the hourly sweep). Nothing to do."
 if [ "$(status_of 8)" = "$want1" ] && [ "$(status_of 1)" = "$want1" ] \
    && [ "$(comment_ids 1)" = "500 $(status_id_of 1)" ] && [ "$(cat "$store/500.body")" = lgtm ]; then
   ok "#1 and #8 carry the waiting line; #1 keeps the other comment untouched"
@@ -455,7 +455,7 @@ CASE="exactly one branch pushed in run 2"
 c="$(pushes "$snap")"; if [ "$c" = 1 ]; then ok "1 push"; else notok "$c pushes"; fi
 CASE="a PR held a second time has its ONE comment edited in place, not a new one"
 if [ "$(status_id_of 8)" = "$id8" ] \
-   && [ "$(status_of 8)" = "Version conflict: waiting. PR #1 is first in line; this one is re-bumped after #1 merges. Nothing to do." ] \
+   && [ "$(status_of 8)" = "Version conflict: waiting. PR #1 is first in line; this one is re-bumped on a later run (after a merge, or the hourly sweep). Nothing to do." ] \
    && no_duplicate_status; then
   ok "#8's comment $id8 now names #1, and no PR has two"
 else
@@ -575,6 +575,39 @@ if [ -z "$(at 1 doomed.txt)" ] && [ -z "$(at 7 doomed.txt)" ] && [ -z "$(at 15 m
   ok "doomed.txt is gone from every re-bumped PR, and manifest.json stays deleted on #15"
 else
   notok "doomed.txt on #1=$(at 1 doomed.txt) #7=$(at 7 doomed.txt); #15 manifest.json=$(at 15 manifest.json)"
+fi
+
+# ------------------------------------- push: after GitHub's "Update branch" --
+# dev-common#371, as finzeug/hog#662 met it: a PR bumps 1.2.0 -> 1.3.0, main takes
+# 1.3.0 from another PR, and "Update branch" merges main in. Both sides changed the
+# version lines identically, so the merge is clean and the PR now sits AT main's
+# number with a merge base that also has it -- measured there it has no bump of
+# its own, and it was skipped forever. Its bump is one commit back, and it must be
+# re-bumped at that level. A PR that never bumped must still be skipped.
+U="$TMP/ub"
+GU() { git -C "$U/work" -c user.name=t -c user.email=t@t -c commit.gpgsign=false "$@"; }
+git init -q --bare "$U/origin.git"; git init -q -b main "$U/work"; GU remote add origin "$U/origin.git"
+uver() { printf 'VERSION=%s\n' "$1" >"$U/work/Makefile"; mkdir -p "$U/work/pkg"; printf '__version__ = "%s"\n' "$1" >"$U/work/pkg/__init__.py"; }
+uver 1.2.0; echo base >"$U/work/shared.txt"; GU add -A; GU commit -qm base; GU push -q origin main
+GU checkout -q -b pr21; uver 1.3.0; echo 21 >"$U/work/own-21.txt"; GU add -A; GU commit -qm "pr 21"
+GU checkout -q -b pr22 main; echo 22 >"$U/work/own-22.txt"; GU add -A; GU commit -qm "pr 22, no bump"
+GU push -q origin HEAD:refs/heads/pr22 HEAD:refs/pull/22/head
+GU checkout -q main; uver 1.3.0; echo other >"$U/work/other.txt"; GU add -A; GU commit -qm "another PR merged at 1.3.0"; GU push -q origin main
+GU checkout -q pr21; GU merge -q --no-edit main   # "Update branch"
+GU push -q origin HEAD:refs/heads/pr21 HEAD:refs/pull/21/head; GU checkout -q main
+printf '21 APPROVED 0 0\n22 APPROVED 0 0\n' >"$TMP/open.txt"; write_prs
+out="$(cd "$U/work" && env -u GIT_AUTHOR_NAME -u GIT_AUTHOR_EMAIL -u GIT_COMMITTER_NAME -u GIT_COMMITTER_EMAIL \
+  HOME="$TMP/home" XDG_CONFIG_HOME="$TMP/home" GIT_CONFIG_NOSYSTEM=1 \
+  PATH="$TMP/bin:$PATH" GH_TOKEN=t REPO=o/r MODE=push GITHUB_STEP_SUMMARY=/dev/null bash "$SCRIPT" 2>&1)"
+expect "an updated branch's hidden bump is found, at its own level" "#21 1.3.0: RE-BUMPED to 1.4.0 (minor)"
+expect "a PR that never bumped is still skipped" "#22 1.2.0: skipped: no bump of its own"
+CASE="the updated PR lands at the new number with its own change and main's"
+u_at() { git -C "$U/origin.git" show "refs/heads/pr21:$1" 2>/dev/null; }
+if [ "$(u_at Makefile)" = "VERSION=1.4.0" ] && [ "$(u_at pkg/__init__.py)" = '__version__ = "1.4.0"' ] \
+   && [ "$(u_at own-21.txt)" = 21 ] && [ "$(u_at other.txt)" = other ]; then
+  ok "pr21: 1.4.0 in Makefile and __version__, own-21.txt and main's other.txt intact"
+else
+  notok "pr21 Makefile='$(u_at Makefile)' __version__='$(u_at pkg/__init__.py)' own='$(u_at own-21.txt)' other='$(u_at other.txt)'"
 fi
 
 echo
