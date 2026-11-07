@@ -20,6 +20,10 @@
 #     keeping main's side is a no-op and the `git add` after it would resurrect the
 #     file (or undo the deletion). Both are refused (dev-common#364)
 #   - a PR with a real conflict, a draft, an unapproved PR
+# The STATUS COMMENT on each held PR (dev-common#369) is checked throughout: the
+# line a verdict puts on the PR, created once, edited in place when the queue moves
+# and deleted when the PR is re-bumped -- never a second comment, never touching a
+# comment that is not the job's, and nothing written at all in MODE=report.
 # then, in MODE=push, a whole DRAIN: one re-bump per run (dev-common#351), the
 # re-bumped PR "merged", the next run re-bumping the next PR -- each landing at the
 # right number with its own changes intact, including a non-version Makefile line
@@ -144,18 +148,97 @@ G checkout -q -B pr12 main; set_version 1.9.0; echo 12 >"$TMP/work/own-12.txt"
 G add -A; G commit -qm "pr 12"; G push -q origin HEAD:refs/pull/12/head HEAD:refs/heads/pr12
 G checkout -q main
 
-mkdir -p "$TMP/bin"
+mkdir -p "$TMP/bin" "$TMP/comments"
 # curl stub: writes the GraphQL answer to the -o file and prints the HTTP code,
 # as `curl -o FILE -w '%{http_code}'` does. Also records that it was called with a
 # bearer token, so a refactor back to `gh` (absent on forge) fails here.
+#
+# It also implements a tiny issue-comment store under $TMP/comments -- one
+# <id>.pr (the PR it is on) plus <id>.body (its text) per comment -- so the real
+# script's create, edit-in-place and delete can be asserted (dev-common#369).
 cat >"$TMP/bin/curl" <<STUB
 #!/usr/bin/env bash
-out=""; while [ \$# -gt 0 ]; do
-  case "\$1" in -o) out="\$2"; shift;; -H) case "\$2" in *"bearer "*) touch "$TMP/curl-authed";; esac; shift;; esac; shift
+set -u
+store="$TMP/comments"
+out=/dev/null; method=GET; data=""; url=""
+while [ \$# -gt 0 ]; do
+  case "\$1" in
+    -o) out="\$2"; shift ;;
+    -X) method="\$2"; shift ;;
+    -w) shift ;;
+    --data) data="\${2#@}"; shift ;;
+    -H) case "\$2" in *"bearer "*) touch "$TMP/curl-authed" ;; esac; shift ;;
+    http*) url="\$1" ;;
+  esac
+  shift
 done
-cp "$TMP/prs.json" "\$out"; printf 200
+case "\$url" in */graphql) cp "$TMP/prs.json" "\$out"; printf 200; exit 0 ;; esac
+path="\${url#*/repos/*/*/}"; path="\${path%%\\?*}"
+one() {  # one <id> -- the comment as the API returns it
+  jq -cn --argjson id "\$1" --arg b "\$(cat "\$store/\$1.body")" '{id: \$id, body: \$b}'
+}
+case "\$method:\$path" in
+  GET:issues/*/comments)
+    n="\${path#issues/}"; n="\${n%/comments}"
+    { printf '['; sep=""
+      for f in "\$store"/*.pr; do
+        [ -e "\$f" ] || continue
+        [ "\$(cat "\$f")" = "\$n" ] || continue
+        printf '%s' "\$sep"; one "\$(basename "\$f" .pr)"; sep=","
+      done
+      printf ']'; } >"\$out"
+    printf 200 ;;
+  POST:issues/*/comments)
+    n="\${path#issues/}"; n="\${n%/comments}"
+    id=\$(( \$(cat "\$store/next" 2>/dev/null || echo 900) + 1 )); echo "\$id" >"\$store/next"
+    echo "\$n" >"\$store/\$id.pr"; jq -j .body "\$data" >"\$store/\$id.body"
+    one "\$id" >"\$out"; printf 201 ;;
+  PATCH:issues/comments/*)
+    id="\${path#issues/comments/}"
+    [ -f "\$store/\$id.body" ] || { printf 404; exit 0; }
+    jq -j .body "\$data" >"\$store/\$id.body"
+    one "\$id" >"\$out"; printf 200 ;;
+  DELETE:issues/comments/*)
+    id="\${path#issues/comments/}"
+    rm -f "\$store/\$id.pr" "\$store/\$id.body"; : >"\$out"; printf 204 ;;
+  *) printf '{"message":"stub: no route for %s %s"}' "\$method" "\$path" >"\$out"; printf 404 ;;
+esac
 STUB
 chmod +x "$TMP/bin/curl"
+
+# A comment of someone else's on #1, without the marker: the job must never touch
+# it, and must find its own alongside it.
+store="$TMP/comments"
+echo 1 >"$store/500.pr"; printf 'lgtm' >"$store/500.body"
+MARKER='<!-- rebump-status -->'
+comment_ids() {  # comment_ids <pr> -- every comment id on that PR
+  local f out=""
+  for f in "$store"/*.pr; do
+    [ -e "$f" ] || continue
+    [ "$(cat "$f")" = "$1" ] && out="$out $(basename "$f" .pr)"
+  done
+  echo "${out# }"
+}
+status_id_of() {  # status_id_of <pr> -- the id of its status comment, empty if none
+  local id
+  for id in $(comment_ids "$1"); do
+    grep -qF "$MARKER" "$store/$id.body" && { echo "$id"; return; }
+  done
+}
+status_of() {  # status_of <pr> -- the one line of its status comment
+  local id; id="$(status_id_of "$1")"
+  [ -n "$id" ] && sed -n 2p "$store/$id.body"
+}
+# At most one status comment per PR, always: the marker exists so a second run
+# edits the first comment instead of posting another.
+no_duplicate_status() {
+  local n id c
+  for n in $PRS; do
+    c=0
+    for id in $(comment_ids "$n"); do grep -qF "$MARKER" "$store/$id.body" && c=$((c+1)); done
+    [ "$c" -le 1 ] || { echo "#$n has $c status comments"; return 1; }
+  done
+}
 
 # The open PRs, one per line: <number> <review|-> <auto-merge 0|1> <draft 0|1>
 # [<head: 1 = the job's own re-bump commit with FAILED checks>].
@@ -242,6 +325,30 @@ expect "a PR whose CI failed on its own re-bump does not hold the line, though a
   "#11 1.2.1: left alone: its CI failed after its last re-bump"
 expect "an unready PR waits in line like the rest" "#7 1.2.1: waiting: #9 is next in line"
 
+# ------------------------------------- report: the comment it would post ---
+# A held PR looks exactly like a broken one from the PR page (dev-common#369), so
+# the queue goes on the PR itself. report mode prints the line and writes nothing.
+expect "a waiting PR would be told who is first, on the PR itself" \
+  "would comment on #1: Version conflict: waiting. PR #9 is first in line; this one is re-bumped after #9 merges. Nothing to do."
+expect "a refused PR would be told why, and that it needs a human" \
+  "would comment on #5: Version conflict: left alone, because conflicts outside version lines in shared.txt. Needs /revise."
+expect "the PR whose CI failed on its own re-bump is told that, not that it waits" \
+  "would comment on #11: Version conflict: left alone, because its CI failed after its last re-bump"
+CASE="nothing is said to a PR this job is not holding"
+# #9 is next in line (acted on, not held), #12 merges above main, #6 is a draft:
+# a comment there would say nothing the PR does not already show.
+if ! grep -qE 'would comment on #(6|9|12):' <<<"$out"; then
+  ok "no comment for the next in line, a draft or an above-main PR"
+else
+  notok "commented on a PR it is not holding:"; grep -E 'would comment on #(6|9|12):' <<<"$out" | sed 's/^/         /'
+fi
+CASE="report mode writes no comment"
+if [ "$(comment_ids 1)" = 500 ] && [ -z "$(status_of 5)" ]; then
+  ok "only the pre-existing comment is there"
+else
+  notok "report mode wrote a comment: #1 has '$(comment_ids 1)', #5 says '$(status_of 5)'"
+fi
+
 CASE="the job summary carries the table"
 if grep -qF '| [#9](https://github.com/o/r/pull/9) | 1.2.1 | WOULD RE-BUMP to 1.3.1 (patch) |' "$TMP/summary-report.md"; then
   ok "summary has a row per PR, the PR a link"
@@ -303,6 +410,32 @@ if [ "$(at 10 Makefile | head -n1)" = VERSION=1.3.1 ] && [ "$(at 10 pkg/__init__
 else
   notok "pr10: $(at 10 Makefile | head -n1) / $(at 10 pkg/__init__.py) / version.txt=$(at 10 version.txt) / own=$(at 10 own-10.txt) / shared=$(at 10 shared.txt)"
 fi
+CASE="the status comment is created on each held PR, beside comments not its own"
+want1="Version conflict: waiting. PR #10 is first in line; this one is re-bumped after #10 merges. Nothing to do."
+if [ "$(status_of 8)" = "$want1" ] && [ "$(status_of 1)" = "$want1" ] \
+   && [ "$(comment_ids 1)" = "500 $(status_id_of 1)" ] && [ "$(cat "$store/500.body")" = lgtm ]; then
+  ok "#1 and #8 carry the waiting line; #1 keeps the other comment untouched"
+else
+  notok "#8 says '$(status_of 8)'; #1 has comments '$(comment_ids 1)' saying '$(status_of 1)'"
+fi
+CASE="the marker is a hidden HTML comment on the first line"
+if [ "$(sed -n 1p "$store/$(status_id_of 8).body")" = '<!-- rebump-status -->' ]; then
+  ok "the body opens with <!-- rebump-status -->"
+else
+  notok "the body of #8's comment opens with '$(sed -n 1p "$store/$(status_id_of 8).body")'"
+fi
+CASE="a refusal that retries by itself asks the operator for nothing"
+if [ "$(status_of 9)" = "Version conflict: left alone, because push refused (the branch moved); the next run retries. Nothing to do." ]; then
+  ok "#9 is told the next run retries, with no /revise"
+else
+  notok "#9 says '$(status_of 9)'"
+fi
+CASE="the PR being acted on, and the one above main, carry no comment"
+if [ -z "$(status_of 10)" ] && [ -z "$(status_of 12)" ] && [ -z "$(status_of 6)" ]; then
+  ok "#10 (re-bumped), #12 (above main) and #6 (draft) have none"
+else
+  notok "#10='$(status_of 10)' #12='$(status_of 12)' #6='$(status_of 6)'"
+fi
 CASE="the re-bump commit is the coder App's"
 if [ "$(git -C "$TMP/origin.git" log -1 --format='%an <%ae>' refs/heads/pr10)" = \
      'bdh-org-coder[bot] <305014630+bdh-org-coder[bot]@users.noreply.github.com>' ]; then
@@ -312,6 +445,7 @@ else
 fi
 
 merge_pr 10; snap=""; for n in $PRS; do snap="$snap $n=$(branch_sha $n)"; done
+id8="$(status_id_of 8)"; id1="$(status_id_of 1)"
 out="$(run push)"
 expect "a version line the merge leaves at NEITHER number is still refused" \
   "#13 1.2.1: left alone: moved 0 version lines in manifest.json, but the PR bumped 1"
@@ -319,6 +453,21 @@ expect "two refusals do not use up the run's push: the oldest ready PR goes next
   "#1 1.2.1: RE-BUMPED to 1.3.2 (patch)"
 CASE="exactly one branch pushed in run 2"
 c="$(pushes "$snap")"; if [ "$c" = 1 ]; then ok "1 push"; else notok "$c pushes"; fi
+CASE="a PR held a second time has its ONE comment edited in place, not a new one"
+if [ "$(status_id_of 8)" = "$id8" ] \
+   && [ "$(status_of 8)" = "Version conflict: waiting. PR #1 is first in line; this one is re-bumped after #1 merges. Nothing to do." ] \
+   && no_duplicate_status; then
+  ok "#8's comment $id8 now names #1, and no PR has two"
+else
+  notok "#8: id $id8 -> $(status_id_of 8), saying '$(status_of 8)'; $(no_duplicate_status)"
+fi
+CASE="the comment is deleted once the PR is re-bumped"
+if [ -z "$(status_of 1)" ] && [ "$(comment_ids 1)" = 500 ] \
+   && grep -qF "removed the status comment on #1" <<<"$out"; then
+  ok "#1's comment $id1 is gone, and the comment not ours stayed"
+else
+  notok "#1 still has '$(status_of 1)' (comments: $(comment_ids 1))"
+fi
 CASE="the re-bumped PR holds the new number in every version file, its own change and main's"
 if [ "$(at 1 Makefile | head -n1)" = VERSION=1.3.2 ] && [ "$(at 1 pkg/__init__.py)" = '__version__ = "1.3.2"' ] \
    && [ "$(at 1 own-1.txt)" = 1 ] && [ "$(at 1 shared.txt)" = ours ] \
@@ -383,10 +532,35 @@ CASE="exactly one branch pushed for the unready PR"
 c="$(pushes "$snap")"; if [ "$c" = 1 ]; then ok "1 push"; else notok "$c pushes"; fi
 
 merge_pr 7; snap=""; for n in $PRS; do snap="$snap $n=$(branch_sha $n)"; done
+held_before=""; for n in $PRS; do held_before="$held_before $n=$(status_id_of "$n"):$(status_of "$n")"; done
 out="$(run push)"
+CASE="a comment already saying the right thing is not edited again"
+# The queue has stopped moving, so every held PR's line is the one it already
+# carries: editing it would notify its watchers once per merge for no news.
+held_after=""; for n in $PRS; do held_after="$held_after $n=$(status_id_of "$n"):$(status_of "$n")"; done
+if [ "$held_before" = "$held_after" ] && ! grep -qF "updated the status comment on" <<<"$out"; then
+  ok "no comment was rewritten when nothing about the queue changed"
+else
+  notok "a comment changed:"; grep -F "status comment on" <<<"$out" | sed 's/^/         /'
+fi
 CASE="once the queue is drained, a run pushes nothing"
 c="$(pushes "$snap")"
 if [ "$c" = 0 ] && ! grep -qE "RE-BUMPED|MERGED" <<<"$out"; then ok "no push, no re-bump"; else notok "$c pushes:"; sed 's/^/         /' <<<"$out"; fi
+
+CASE="after the drain, a status comment is left on exactly the PRs still held"
+held=""; for n in $PRS; do [ -n "$(status_of "$n")" ] && held="$held $n"; done
+if [ "${held# }" = "5 9 11 13 14 15" ] && no_duplicate_status; then
+  ok "only the refused PRs still carry one: #5 #9 #11 #13 #14 #15"
+else
+  notok "held:${held:-' none'}; $(no_duplicate_status)"
+fi
+CASE="every drained PR's comment was removed, the one not ours never"
+if [ "$(comment_ids 1)" = 500 ] && [ "$(cat "$store/500.body")" = lgtm ] \
+   && [ -z "$(status_of 7)" ] && [ -z "$(status_of 2)" ]; then
+  ok "#1, #2 and #7 end with no status comment; the other comment on #1 is intact"
+else
+  notok "#1 comments '$(comment_ids 1)'; #2='$(status_of 2)' #7='$(status_of 7)'"
+fi
 
 CASE="refusals were never pushed in the whole drain"
 moved=""; for n in 5 9 11 13 14 15; do

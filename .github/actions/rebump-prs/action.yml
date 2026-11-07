@@ -3,7 +3,9 @@ description: >
   After main moves, report each open pull request that main's merge left in a
   version-line conflict or at a number main has reached, and the number it must
   hold: the higher of its own and main's version plus the PR's own level. In
-  mode: push it re-bumps the next one in line (bdh-org/dev-common#344, #354).
+  mode: push it re-bumps the next one in line (bdh-org/dev-common#344, #354) and
+  keeps one edited-in-place comment on every PR it holds or refuses, saying who is
+  first in line and whether anything is owed by a human (bdh-org/dev-common#369).
 
 # A composite action for the same reason as version-guard: a reusable workflow's
 # steps run against the CALLER's checkout, so a script path would resolve into the
@@ -12,8 +14,11 @@ description: >
 inputs:
   github-token:
     description: >
-      An App installation token able to list PRs. The checkout must be made with
-      the same token, since pushes go through the checkout's credential.
+      An App installation token able to list PRs and comment on them
+      (pull-requests: write -- a workflow `permissions:` block does not grant an
+      App token anything). The checkout must be made with the same token, since
+      pushes go through the checkout's credential. A refused comment is a warning
+      naming GitHub's reason, never a failure: the queue still drains.
     required: true
   mode:
     description: report (print only) or push (re-bump the next PR in line). report is the rollback.
