@@ -592,13 +592,27 @@ uver 1.2.0; echo base >"$U/work/shared.txt"; GU add -A; GU commit -qm base; GU p
 GU checkout -q -b pr21; uver 1.3.0; echo 21 >"$U/work/own-21.txt"; GU add -A; GU commit -qm "pr 21"
 GU checkout -q -b pr22 main; echo 22 >"$U/work/own-22.txt"; GU add -A; GU commit -qm "pr 22, no bump"
 GU push -q origin HEAD:refs/heads/pr22 HEAD:refs/pull/22/head
+GU checkout -q -b pr23 main; uver 1.3.0; echo 23 >"$U/work/own-23.txt"; GU add -A; GU commit -qm "pr 23"
+GU checkout -q -b pr24 main; uver 1.3.0; echo 24 >"$U/work/own-24.txt"; GU add -A; GU commit -qm "pr 24"
 GU checkout -q main; uver 1.3.0; echo other >"$U/work/other.txt"; GU add -A; GU commit -qm "another PR merged at 1.3.0"; GU push -q origin main
 GU checkout -q pr21; GU merge -q --no-edit main   # "Update branch"
-GU push -q origin HEAD:refs/heads/pr21 HEAD:refs/pull/21/head; GU checkout -q main
-printf '21 APPROVED 0 0\n22 APPROVED 0 0\n' >"$TMP/open.txt"; write_prs
-out="$(cd "$U/work" && env -u GIT_AUTHOR_NAME -u GIT_AUTHOR_EMAIL -u GIT_COMMITTER_NAME -u GIT_COMMITTER_EMAIL \
-  HOME="$TMP/home" XDG_CONFIG_HOME="$TMP/home" GIT_CONFIG_NOSYSTEM=1 \
-  PATH="$TMP/bin:$PATH" GH_TOKEN=t REPO=o/r MODE=push GITHUB_STEP_SUMMARY=/dev/null bash "$SCRIPT" 2>&1)"
+GU push -q origin HEAD:refs/heads/pr21 HEAD:refs/pull/21/head
+# #23: after its update, ADDS a version file at its number -- a line the bump commit
+# never had, which must still move. #24: after its update, DELETES a file it bumped
+# -- nothing left to move there, and no refusal for it.
+GU checkout -q pr23; GU merge -q --no-edit main; echo 1.3.0 >"$U/work/VERSION.txt"; GU add -A; GU commit -qm "pr 23 adds VERSION.txt"
+GU push -q origin HEAD:refs/heads/pr23 HEAD:refs/pull/23/head
+GU checkout -q pr24; GU merge -q --no-edit main; GU rm -q pkg/__init__.py; GU commit -qm "pr 24 drops pkg"
+GU push -q origin HEAD:refs/heads/pr24 HEAD:refs/pull/24/head; GU checkout -q main
+printf '21 APPROVED 0 0\n22 APPROVED 0 0\n23 APPROVED 0 0\n24 APPROVED 0 0\n' >"$TMP/open.txt"; write_prs
+urun() {
+  (cd "$U/work" && env -u GIT_AUTHOR_NAME -u GIT_AUTHOR_EMAIL -u GIT_COMMITTER_NAME -u GIT_COMMITTER_EMAIL \
+    HOME="$TMP/home" XDG_CONFIG_HOME="$TMP/home" GIT_CONFIG_NOSYSTEM=1 \
+    PATH="$TMP/bin:$PATH" GH_TOKEN=t REPO=o/r MODE=push GITHUB_STEP_SUMMARY=/dev/null bash "$SCRIPT" 2>&1)
+  # What GitHub does after a push to a PR branch: refs/pull/N/head follows it.
+  local n; for n in 21 22 23 24; do git -C "$U/origin.git" update-ref "refs/pull/$n/head" "refs/heads/pr$n"; done
+}
+out="$(urun)"
 expect "an updated branch's hidden bump is found, at its own level" "#21 1.3.0: RE-BUMPED to 1.4.0 (minor)"
 expect "a PR that never bumped is still skipped" "#22 1.2.0: skipped: no bump of its own"
 CASE="the updated PR lands at the new number with its own change and main's"
@@ -608,6 +622,25 @@ if [ "$(u_at Makefile)" = "VERSION=1.4.0" ] && [ "$(u_at pkg/__init__.py)" = '__
   ok "pr21: 1.4.0 in Makefile and __version__, own-21.txt and main's other.txt intact"
 else
   notok "pr21 Makefile='$(u_at Makefile)' __version__='$(u_at pkg/__init__.py)' own='$(u_at own-21.txt)' other='$(u_at other.txt)'"
+fi
+# One push per run: with no merge in between, the next two runs take #23, then #24
+# (what the hourly sweep does to a quiet main, dev-common#368).
+out="$(urun)"
+expect "a version file added after the update is part of the bump" "#23 1.3.0: RE-BUMPED to 1.4.0 (minor)"
+CASE="every version line on the updated PR reaches the new number, the added file's too"
+p_at() { git -C "$U/origin.git" show "refs/heads/pr$1:$2" 2>/dev/null; }
+if [ "$(p_at 23 Makefile)" = "VERSION=1.4.0" ] && [ "$(p_at 23 VERSION.txt)" = 1.4.0 ]; then
+  ok "pr23: Makefile and VERSION.txt both at 1.4.0"
+else
+  notok "pr23 Makefile='$(p_at 23 Makefile)' VERSION.txt='$(p_at 23 VERSION.txt)'"
+fi
+out="$(urun)"
+expect "a bumped file deleted after the update is no reason to refuse" "#24 1.3.0: RE-BUMPED to 1.4.0 (minor)"
+CASE="the deleted file stays deleted"
+if [ "$(p_at 24 Makefile)" = "VERSION=1.4.0" ] && [ -z "$(p_at 24 pkg/__init__.py)" ]; then
+  ok "pr24: Makefile at 1.4.0, pkg/__init__.py still gone"
+else
+  notok "pr24 Makefile='$(p_at 24 Makefile)' pkg/__init__.py='$(p_at 24 pkg/__init__.py)'"
 fi
 
 echo

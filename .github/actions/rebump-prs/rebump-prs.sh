@@ -124,9 +124,9 @@ bump_level() {
 earlier_bump() {  # earlier_bump <pr head> <pr version>
   local c v base_v level
   while IFS= read -r c; do
-    v="$(version_at "$c")"
+    v="$(version_at "$c" || true)"
     [ "$v" = "$2" ] || return 0
-    base_v="$(version_at "$(git merge-base "origin/$BASE" "$c")")"
+    base_v="$(version_at "$(git merge-base "origin/$BASE" "$c")" || true)"
     [ -n "$base_v" ] || return 0
     level="$(bump_level "$base_v" "$v")"
     if [ "$level" != none ]; then echo "$level $c"; return 0; fi
@@ -206,7 +206,7 @@ non_version_changes() {
 # the reason and leaves the checkout clean.
 rebump() {
   local n="$1" branch="$2" new="$3" pr="refs/rebump/pr/$1" bump_at="${4:-refs/rebump/pr/$1}"
-  local mb bb pv f want got expected moved merge_err
+  local mb bb pv f want got expected early moved merge_err
   # The identity for the whole re-bump, by environment: it outranks any git config
   # and any inherited GIT_AUTHOR_*, and `git merge` refuses to START without one
   # even with --no-commit -- forge has none, and the first CI run of this code
@@ -247,8 +247,20 @@ rebump() {
   # longer what stands between a modify/delete and a resurrected file: it refused
   # one only by accident, and on_both_sides now refuses it outright
   # (bdh-org/dev-common#364).
+  #
+  # When the bump is in an earlier commit (an "Update branch" merge hid it,
+  # bdh-org/dev-common#371), a file's bumped lines show in the diff at the bump, at
+  # the head, or both: the Makefile only at the bump (main now holds the same line),
+  # a version file the PR added after the update only at the head, one main never
+  # touched at both. Take the larger count per file, never the sum, and skip a file
+  # the PR has deleted since -- it has nothing left to move.
   while IFS= read -r f; do
-    expected="$(git diff "$bb" "$bump_at" -- "$f" | grep -E '^\+[^+]' | cut -c2- | grep -E "$VERSION_LINE" | grep -cF "$pv" || true)"
+    expected="$(git diff "$mb" "$pr" -- "$f" | grep -E '^\+[^+]' | cut -c2- | grep -E "$VERSION_LINE" | grep -cF "$pv" || true)"
+    if [ "$bump_at" != "$pr" ]; then
+      early="$(git diff "$bb" "$bump_at" -- "$f" | grep -E '^\+[^+]' | cut -c2- | grep -E "$VERSION_LINE" | grep -cF "$pv" || true)"
+      [ "$early" -gt "$expected" ] && expected="$early"
+      [ -f "$f" ] || continue
+    fi
     [ "$expected" -gt 0 ] || continue
     moved="$(awk -v re="$VERSION_LINE" -v olds="$main_version $pv" -v new="$new" '
       BEGIN { n_olds = split(olds, old, " ") }
@@ -263,7 +275,8 @@ rebump() {
       git merge --abort 2>/dev/null || git reset -q --hard
       echo "moved $moved version lines in $f, but the PR bumped $expected"; return
     fi
-  done < <(git diff --name-only "$bb" "$bump_at")
+  done < <({ git diff --name-only "$mb" "$pr"
+              if [ "$bump_at" != "$pr" ]; then git diff --name-only "$bb" "$bump_at"; fi; } | sort -u)
   if [ "$(sed -nE 's/^VERSION[[:space:]]*=[[:space:]]*([0-9.]+).*/\1/p' Makefile | head -n1)" != "$new" ]; then
     git merge --abort 2>/dev/null || git reset -q --hard
     echo "Makefile VERSION did not reach $new"; return
@@ -462,7 +475,7 @@ while IFS=$'\t' read -r n branch draft fork failed_rebump; do
     else
       level="$(bump_level "$base_version" "$pr_version")"; bump_at="$head"
       if [ "$level" = none ]; then
-        read -r level bump_at < <(earlier_bump "$head" "$pr_version"; echo)
+        read -r level bump_at < <(earlier_bump "$head" "$pr_version" || true; echo) || true
         [ -n "$level" ] || { level=none; bump_at="$head"; }
       fi
       state="$(merge_state "$head")"
