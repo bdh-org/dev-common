@@ -138,8 +138,12 @@ has reached — so a PR already ABOVE main gets the merge and keeps its number, 
 one above main that merges cleanly is left alone (bdh-org/dev-common#354). One per
 merge, so a queue of N costs N CI runs; the rest wait their turn. Unapproved PRs
 are included so that a version-only conflict never costs an agent `/revise`.
-Anything else it leaves alone and names in its job summary
-(bdh-org/dev-common#344, #351, #353, #354).
+Anything else it leaves alone and names in its job summary, and on the PR itself
+in one comment it keeps current (bdh-org/dev-common#344, #351, #353, #354, #369).
+The same job also runs hourly from home-infra's `rebump-sweep`, so a queue moves
+when nothing merges (#368). A PR whose branch was updated from main ("Update
+branch") after main took its number is re-bumped at the level of its own earlier
+bump (#371).
 
 One known failure: if a commit touching `.github/workflows/` lands on main
 next to a bump merge, the tag push is rejected ("without `workflows`

@@ -112,6 +112,27 @@ bump_level() {
   fi
 }
 
+# The bump an "Update branch" merge hid (bdh-org/dev-common#371). GitHub's Update
+# branch button (or the gh CLI's update-branch) merges main into the PR; if main already
+# holds the PR's number, the PR's version now EQUALS its new merge base's and
+# bump_level reads "none", so the PR was skipped forever at a number main holds
+# (finzeug/hog#662, 2026-11-07). The bump is still in its history: walk the PR's
+# own first-parent line back, while the version stays the one the PR carries now,
+# to the newest commit whose version is above ITS merge base's. Prints
+# "<level> <commit>", or nothing if there is no such commit -- a PR that never
+# bumped stays skipped.
+earlier_bump() {  # earlier_bump <pr head> <pr version>
+  local c v base_v level
+  while IFS= read -r c; do
+    v="$(version_at "$c" || true)"
+    [ "$v" = "$2" ] || return 0
+    base_v="$(version_at "$(git merge-base "origin/$BASE" "$c")" || true)"
+    [ -n "$base_v" ] || return 0
+    level="$(bump_level "$base_v" "$v")"
+    if [ "$level" != none ]; then echo "$level $c"; return 0; fi
+  done < <(git rev-list --first-parent --max-count=200 "$1^" "^origin/$BASE" 2>/dev/null)
+}
+
 next_version() {
   local v
   IFS=. read -ra v <<<"$1"
@@ -179,10 +200,13 @@ non_version_changes() {
     | awk -F'\t' -v re="$VERSION_LINE" '$2 !~ re' | sort || true
 }
 
-# Re-bump PR $1 (branch $2) to $3. Prints nothing on success; on refusal prints
+# Re-bump PR $1 (branch $2) to $3, moving the version lines the PR bumped in commit
+# $4 (its head, or the earlier commit an Update branch merge hid it behind -- see
+# earlier_bump). Prints nothing on success; on refusal prints
 # the reason and leaves the checkout clean.
 rebump() {
-  local n="$1" branch="$2" new="$3" pr="refs/rebump/pr/$1" mb pv f want got expected moved merge_err
+  local n="$1" branch="$2" new="$3" pr="refs/rebump/pr/$1" bump_at="${4:-refs/rebump/pr/$1}"
+  local mb bb pv f want got expected early moved merge_err
   # The identity for the whole re-bump, by environment: it outranks any git config
   # and any inherited GIT_AUTHOR_*, and `git merge` refuses to START without one
   # even with --no-commit -- forge has none, and the first CI run of this code
@@ -194,6 +218,7 @@ rebump() {
   git reset -q --hard; git clean -fdq
   git checkout -q --detach "$pr"
   mb="$(git merge-base "origin/$BASE" "$pr")"; pv="$(version_at "$pr")"
+  bb="$(git merge-base "origin/$BASE" "$bump_at")"   # == mb unless the bump is in an earlier commit
   if ! merge_err="$(git -c merge.conflictStyle=merge merge -q --no-ff --no-commit "origin/$BASE" 2>&1)"; then
     # A failed merge with nothing conflicted never started: say why, never
     # carry on with the PR's own tree as if main were in it.
@@ -222,8 +247,20 @@ rebump() {
   # longer what stands between a modify/delete and a resurrected file: it refused
   # one only by accident, and on_both_sides now refuses it outright
   # (bdh-org/dev-common#364).
+  #
+  # When the bump is in an earlier commit (an "Update branch" merge hid it,
+  # bdh-org/dev-common#371), a file's bumped lines show in the diff at the bump, at
+  # the head, or both: the Makefile only at the bump (main now holds the same line),
+  # a version file the PR added after the update only at the head, one main never
+  # touched at both. Take the larger count per file, never the sum, and skip a file
+  # the PR has deleted since -- it has nothing left to move.
   while IFS= read -r f; do
     expected="$(git diff "$mb" "$pr" -- "$f" | grep -E '^\+[^+]' | cut -c2- | grep -E "$VERSION_LINE" | grep -cF "$pv" || true)"
+    if [ "$bump_at" != "$pr" ]; then
+      early="$(git diff "$bb" "$bump_at" -- "$f" | grep -E '^\+[^+]' | cut -c2- | grep -E "$VERSION_LINE" | grep -cF "$pv" || true)"
+      [ "$early" -gt "$expected" ] && expected="$early"
+      [ -f "$f" ] || continue
+    fi
     [ "$expected" -gt 0 ] || continue
     moved="$(awk -v re="$VERSION_LINE" -v olds="$main_version $pv" -v new="$new" '
       BEGIN { n_olds = split(olds, old, " ") }
@@ -238,7 +275,8 @@ rebump() {
       git merge --abort 2>/dev/null || git reset -q --hard
       echo "moved $moved version lines in $f, but the PR bumped $expected"; return
     fi
-  done < <(git diff --name-only "$mb" "$pr")
+  done < <({ git diff --name-only "$mb" "$pr"
+              if [ "$bump_at" != "$pr" ]; then git diff --name-only "$bb" "$bump_at"; fi; } | sort -u)
   if [ "$(sed -nE 's/^VERSION[[:space:]]*=[[:space:]]*([0-9.]+).*/\1/p' Makefile | head -n1)" != "$new" ]; then
     git merge --abort 2>/dev/null || git reset -q --hard
     echo "Makefile VERSION did not reach $new"; return
@@ -371,7 +409,7 @@ status_line() {  # status_line <verdict> <the PR that is first in line>
   case "$verdict" in
     waiting:*)
       echo "Version conflict: waiting. PR #$first is first in line; this one is" \
-           "re-bumped after #$first merges. Nothing to do." ;;
+           "re-bumped on a later run (after a merge, or the hourly sweep). Nothing to do." ;;
     "left alone: "*)
       # A refusal that says it retries needs nobody; every other one is a
       # decision this job will not make, and /revise is who makes it.
@@ -435,7 +473,11 @@ while IFS=$'\t' read -r n branch draft fork failed_rebump; do
     if [ -z "$pr_version" ] || [ -z "$base_version" ]; then
       verdict="skipped: no Makefile VERSION on the PR or its base"
     else
-      level="$(bump_level "$base_version" "$pr_version")"
+      level="$(bump_level "$base_version" "$pr_version")"; bump_at="$head"
+      if [ "$level" = none ]; then
+        read -r level bump_at < <(earlier_bump "$head" "$pr_version" || true; echo) || true
+        [ -n "$level" ] || { level=none; bump_at="$head"; }
+      fi
       state="$(merge_state "$head")"
       if [ "$level" = none ]; then
         verdict="skipped: no bump of its own (the version guard reports it)"
@@ -447,7 +489,7 @@ while IFS=$'\t' read -r n branch draft fork failed_rebump; do
       elif [ "$failed_rebump" = true ]; then
         verdict="left alone: its CI failed after its last re-bump; a fix pushed to the branch puts it back in line"
       elif [ -n "$pushed" ]; then
-        verdict="waiting: #$pushed is next in line; re-bumped after it merges"
+        verdict="waiting: #$pushed is next in line; re-bumped on a later run"
       else
         new_version="$(max_version "$pr_version" "$(next_version "$main_version" "$level")")"
         # A PR already at the number it should hold needs the merge, not a bump.
@@ -459,7 +501,7 @@ while IFS=$'\t' read -r n branch draft fork failed_rebump; do
         if [ "$MODE" = report ]; then
           verdict="$would"; pushed="$n"
         else
-          refused="$(rebump "$n" "$branch" "$new_version")"
+          refused="$(rebump "$n" "$branch" "$new_version" "$bump_at")"
           verdict="${refused:+left alone: $refused}"
           if [ -z "$verdict" ]; then verdict="$did"; pushed="$n"; fi
         fi
