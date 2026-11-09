@@ -106,6 +106,11 @@ jobs:
       - name: The NO-WORK note file is wired from the agent to the reporter
         run: bash tests/agent-no-work-wiring.test.sh
 
+      # A step only Brian can run is filed as its own BRIAN: issue by the workflow, not
+      # left in the PR body by the agent (bdh-org/dev-common#373).
+      - name: The agent's host step is filed as a BRIAN issue
+        run: bash tests/agent-host-step-issue.test.sh
+
       # A misspelt directive (`agent-tuns: 150`) is warned about and named in the
       # out-of-turns comment, instead of being dropped in silence and the run then
       # dying on the budget it asked to raise (bdh-org/dev-common#303).

@@ -734,6 +734,9 @@ jobs:
           # the run green with that note on the issue, instead of a red "no PR"
           # (bdh-org/home-infra#474). Outside the checkout, so it can never be committed.
           AGENT_NO_WORK_FILE: ${{ runner.temp }}/agent-no-work.md
+          # Where the agent writes a step only Brian can run; the "File the host step"
+          # step files it as a BRIAN: issue (bdh-org/dev-common#373).
+          AGENT_HOST_STEP_FILE: ${{ runner.temp }}/agent-host-step.md
           # dagparse: the gate's docker calls need the forge rootless daemon and the
           # run-scoped config holding the registry login; empty (svcdev/no-gate) is
           # ignored by the docker CLI.
@@ -822,6 +825,16 @@ jobs:
             ${{ inputs.gate_kind == 'dagparse' && 'It DagBag-parses dags/ against the shared dag_log_levels plugin; exit 0 = green (0 import errors).' || 'It deploys your pushed branch to the dev tier and smokes it; exit 0 = green.' }}
             If it FAILS, read the output, fix, commit, push, and re-run the SAME command --
             up to 3 attempts total.
+
+            If the change leaves a step only Brian can run (a host command, a credential
+            only he can create, a decision), do NOT put it in the PR body and never assign
+            the PR to him. Write it to the file named by the env var AGENT_HOST_STEP_FILE
+            as a complete issue: the first line is the title, `BRIAN: <imperative>`; the
+            rest is the body in common/CLAUDE.md's order -- the commands first, the host
+            and account beside each one, whether re-running is safe, "Success looks
+            like" with the real expected output, and UNVERIFIED on any command you have
+            not run. The workflow files it, assigns it to him and links it. When the PR
+            body mentions another repo's work, name the PR that merges, never an issue.
 
             Finally open a pull request whose body says
             "Closes #${{ github.event.issue.number }}":
@@ -950,6 +963,104 @@ jobs:
                   fh.write(f"\nAdded `Closes #{issue}` to [PR #{pr['number']}]"
                            f"({pr['html_url']}) -- the agent's body did not link "
                            "the issue.\n")
+          PY
+
+      # File Brian's host step as its own BRIAN: issue (bdh-org/dev-common#373). The
+      # prompt ASKS the agent to write any step only Brian can run to
+      # $AGENT_HOST_STEP_FILE; left to the agent, it once put the step at the top of
+      # the PR body and assigned the PR to him instead (finzeug/refdims#429). Filing,
+      # assigning and linking is not a judgement call, so the workflow does it, the
+      # same way "Ensure the PR closes the issue" writes the closing keyword.
+      #
+      # Idempotent: an OPEN issue with the same title is reused, an existing
+      # dependency link is not an error, and the PR body gains its pointer once.
+      # A failure here is RED: a host step the run could not file is the defect this
+      # step exists to prevent, and it must not be lost in a green run.
+      - name: File the host step as a BRIAN issue
+        if: ${{ !cancelled() && steps.agent.outcome != 'skipped' }}
+        env:
+          GH_TOKEN: ${{ steps.coder_post.outputs.coder_token || steps.coder_agent.outputs.coder_token || steps.coder.outputs.coder_token }}
+          REPO: ${{ github.repository }}
+          OWNER: ${{ github.repository_owner }}
+          BRANCH: agent/issue-${{ github.event.issue.number }}
+          ISSUE: ${{ github.event.issue.number }}
+          AGENT_HOST_STEP_FILE: ${{ runner.temp }}/agent-host-step.md
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -eu
+          python3 - <<'PY'
+          import json, os, urllib.error, urllib.request
+
+          repo, owner = os.environ["REPO"], os.environ["OWNER"]
+          branch, issue = os.environ["BRANCH"], os.environ["ISSUE"]
+          api_base = os.environ.get("GITHUB_API_URL", "https://api.github.com")
+          ASSIGNEE = "brianholland"
+
+          path = os.environ["AGENT_HOST_STEP_FILE"]
+          text = open(path).read().strip() if os.path.exists(path) else ""
+          if not text:
+              print("::notice::No host step written -- nothing to file")
+              raise SystemExit(0)
+
+          first, _, rest = text.partition("\n")
+          title = first.strip().lstrip("#").strip()
+          if not title.startswith("BRIAN:"):
+              title = "BRIAN: " + title
+          body = (rest.strip() + "\n\n---\nFiled by the headless agent run for issue #"
+                  + issue + f" ({os.environ.get('RUN_URL', '')}).\n")
+
+          def api(path, method="GET", payload=None, ok_codes=()):
+              data = json.dumps(payload).encode() if payload is not None else None
+              req = urllib.request.Request(
+                  f"{api_base}/repos/{repo}/{path}", data=data, method=method,
+                  headers={"Authorization": "Bearer " + os.environ["GH_TOKEN"],
+                           "Accept": "application/vnd.github+json",
+                           "Content-Type": "application/json"})
+              try:
+                  with urllib.request.urlopen(req, timeout=30) as resp:
+                      return json.load(resp)
+              except urllib.error.HTTPError as exc:
+                  if exc.code in ok_codes:
+                      return None
+                  raise
+
+          # Reuse an OPEN issue with the same title, so a re-run files nothing new.
+          existing = None
+          for page in range(1, 11):
+              batch = api(f"issues?state=open&per_page=100&page={page}") or []
+              existing = next((i for i in batch if "pull_request" not in i
+                               and i["title"] == title), None)
+              if existing or len(batch) < 100:
+                  break
+          if existing:
+              child = existing
+              print(f"::notice::Host step already filed as issue #{child['number']}")
+          else:
+              child = api("issues", method="POST",
+                          payload={"title": title, "body": body, "assignees": [ASSIGNEE]})
+              print(f"::notice::Filed host step as issue #{child['number']}")
+
+          # The host step BLOCKS the engineering issue (common/CLAUDE.md). 422 is
+          # GitHub's answer for a link that already exists.
+          api(f"issues/{issue}/dependencies/blocked_by", method="POST",
+              payload={"issue_id": child["id"]}, ok_codes=(422,))
+
+          # Point the PR at it, once, so the PR body never carries the step itself.
+          pulls = api(f"pulls?state=open&head={owner}:{branch}&per_page=100") or []
+          if pulls:
+              pr = pulls[0]
+              pr_body = pr.get("body") or ""
+              if child["html_url"] not in pr_body:
+                  pointer = f"Host step for Brian, filed separately: {child['html_url']}"
+                  api(f"pulls/{pr['number']}", method="PATCH",
+                      payload={"body": (pr_body.rstrip() + "\n\n" + pointer + "\n").lstrip("\n")})
+
+          summary = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary:
+              with open(summary, "a") as fh:
+                  fh.write(f"\nHost step for Brian: [issue #{child['number']}]"
+                           f"({child['html_url']}), assigned to {ASSIGNEE} and "
+                           f"blocking #{issue}.\n")
           PY
 
       # Ask the automated reviewer to read every headless-agent PR (bdh-org/home-infra#1188):
