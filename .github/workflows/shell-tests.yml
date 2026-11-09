@@ -56,6 +56,10 @@ jobs:
       - name: setup-claude-identity.sh
         run: bash tests/setup-claude-identity.test.sh
 
+      # make lint and ci.yml's Lint step skip the vendored trees (dev-common#341).
+      - name: lint vendored excludes
+        run: bash tests/lint-vendored-excludes.test.sh
+
       # Sets the author name on every commit a Claude session makes, and loads in
       # headless agent runs too, where it must do nothing (bdh-org/home-infra#755).
       - name: claude-session-identity.sh (SessionStart hook)
