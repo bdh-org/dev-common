@@ -197,6 +197,9 @@ jobs:
       - name: Tag collision (embedded in tag-version.yml AND tag-version-self-hosted.yml)
         run: bash tests/tag-version-collision.test.sh
 
+      - name: Tag push retries a transient GitHub error, nothing else (every tag-version copy)
+        run: bash tests/tag-version-push-retry.test.sh
+
       # The re-bump report both tagging workflows run after main moves
       # (dev-common#344): the real script against a fixture repo, gh stubbed.
       - name: Re-bump open PRs (.github/actions/rebump-prs)
