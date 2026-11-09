@@ -85,7 +85,7 @@ jobs:
       # main next to the bump makes tag creation trip the workflows-permission
       # check. GITHUB_TOKEN can never hold `workflows`, so no `permissions:`
       # block and no re-run gets past it -- the only fix is a manual tag push
-      # with a PAT. Left bare, the run dies on an opaque git error and the tag
+      # with an App token. Left bare, the run dies on an opaque git error and the tag
       # silently goes missing (bdh-org/dev-common#122; hit on finzeug/heller
       # 2026-07-22), so name the cause and the remediation.
       - name: Create and push tag
@@ -97,12 +97,22 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git tag "$VERSION"
           sha=$(git rev-parse HEAD)
-          set +e
-          git push origin "$VERSION" >push.log 2>&1
-          status=$?
-          set -e
-          cat push.log
-          [ "$status" = 0 ] && exit 0
+          # GitHub sometimes answers a push with a 5xx or drops the connection;
+          # two tags went missing for five days that way, because nothing re-runs
+          # this job (bdh-org/dev-common#375). Retry ONLY those, 3 times with
+          # backoff: any other rejection is not transient and fails at once.
+          for delay in 5 15 45 last; do
+            set +e
+            git push origin "$VERSION" >push.log 2>&1
+            status=$?
+            set -e
+            cat push.log
+            [ "$status" = 0 ] && exit 0
+            grep -qiE 'Internal Server Error|(^|[^0-9])50[23]([^0-9]|$)|connection reset' push.log || break
+            [ "$delay" = last ] && break
+            echo "::warning::Tag push hit a transient GitHub error; retrying in ${delay}s"
+            sleep "$delay"
+          done
           if grep -q 'without .workflows. permission' push.log; then
             echo "::error::Tag $VERSION was NOT created. The push was rejected by the"
             echo "::error::workflow-file rule, not by anything wrong with the tag: a commit"
@@ -110,17 +120,18 @@ jobs:
             echo "::error::bump, and GitHub checks a new ref's workflow files against the"
             echo "::error::default branch. GITHUB_TOKEN can never hold 'workflows' permission,"
             echo "::error::so re-running this job cannot help (bdh-org/dev-common#122)."
-            echo "::error::Push the tag by hand with a PAT that has workflow scope:"
-            echo "::error::  git tag $VERSION $sha && git push origin $VERSION"
+            echo "::error::Create the tag by hand at the merge commit with an App token:"
+            echo "::error::  GH_TOKEN=\"\$(gh-app-token $GITHUB_REPOSITORY_OWNER)\" gh api -X POST repos/$GITHUB_REPOSITORY/git/refs -f ref=refs/tags/$VERSION -f sha=$sha"
             {
               echo "### Tag \`$VERSION\` was not created"
               echo
               echo "Push rejected by GitHub's workflow-file rule — a workflow change"
               echo "landed on main next to the bump (bdh-org/dev-common#122)."
-              echo "Re-running will not help. Push the tag by hand with a PAT:"
+              echo "Re-running will not help. Create the tag by hand at the merge commit"
+              echo "with an App token (the bdh-ai PATs were revoked, home-infra#1089):"
               echo
               echo '```'
-              echo "git tag $VERSION $sha && git push origin $VERSION"
+              echo "GH_TOKEN=\"\$(gh-app-token $GITHUB_REPOSITORY_OWNER)\" gh api -X POST repos/$GITHUB_REPOSITORY/git/refs -f ref=refs/tags/$VERSION -f sha=$sha"
               echo '```'
             } >> "$GITHUB_STEP_SUMMARY"
           else
