@@ -174,7 +174,8 @@ a bare `#441` or `hog#441`. Issues and PRs share one number space.
 PR [hog#441](https://github.com/finzeug/hog/pull/441)
 issue [slingshot#138](https://github.com/finzeug/slingshot/issues/138)
 ```
-Org for the URL: see the table under GitHub Authentication.
+Org for the URL: see the table under GitHub Authentication -- the ONE repo-to-org list; other
+files point here rather than keep their own.
 
 **THE ONE EXCEPTION: a PR's closing trailer is BARE** — `Closes #372` on its own line. GitHub
 parses it as a directive, and a hyperlinked form matches nothing, so the issue silently stays open
@@ -194,8 +195,8 @@ made this way are authored by `bdh-org-headful[bot]`; commits keep their git ide
 
 | GitHub org | Used by |
 | --- | --- |
-| `bdh-org` | home-infra, home-site, dev-common, devtemplate, home-stack-common, brief, roy |
-| `finzeug` | hog, oleo, canary, heller, panoptikon, refdims, ratecraft, ferret, freddyb, slingshot, ledger-io |
+| `bdh-org` | home-infra, home-site, dev-common, devtemplate, home-stack-common, brief, roy, gev, dataflow |
+| `finzeug` | hog, oleo, canary, heller, panoptikon, refdims, ratecraft, ferret, freddyb, slingshot, ledger-io, pinion, tensorfold |
 | `finriskanalytics` | fra-stack-common, hmdlib, billing, ASG-ALMT-Review |
 
 **There are THREE orgs.** finriskanalytics holds a second stack; using another org's token gets a
