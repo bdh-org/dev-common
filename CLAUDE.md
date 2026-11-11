@@ -1,16 +1,21 @@
 ## About this file
 It loads into every Claude Code session in every consumer repo, and into every headless agent
-run, alongside the repo's own `CLAUDE.md` and `stack-common/CLAUDE.md` — against Claude Code's
-150k-character total. **Keep it under ~30k.** A correction REPLACES the wrong line; it does not
-sit beside it as "this line used to say…". Keep each rule to the rule, one line of why, and the
-issue that holds the story. Reference material goes in `docs/`, linked by path and never
-`@`-imported (bdh-org/dev-common#273).
+run, alongside `stack-common/CLAUDE.md` and the repo's own `CLAUDE.md`. **Keep it under ~30k.**
+- **One home per rule.** Generic rules live here; a stack's facts in its `stack-common/CLAUDE.md`;
+  a role's or repo's specifics in that repo's `CLAUDE.md`. A higher layer never restates a lower
+  one — it names the section (`common/CLAUDE.md`, "Workflow") and adds only its delta. A rule
+  stated twice drifts in one copy, and every copy costs context in every session
+  (bdh-org/dev-common#377).
+- **A correction REPLACES the wrong line** — never "this line used to say…". Each rule is the
+  rule, one line of why, and the issue that holds the story.
+- **Reference material goes in `docs/`**, linked by path, never `@`-imported: a link is not
+  loaded, so anything that must always fire stays in a loaded file (bdh-org/dev-common#273).
 
 ## Workflow
 - Never commit directly to main. Always work on a feature branch.
 - Before starting work, find or create a GitHub issue for the change.
-- **Then check nobody is already on it, before writing a line.** Duplicated work is paid for
-  twice (five panoptikon issues were implemented twice on 2026-08-14). Do all three:
+- **Then check nobody is already on it, before writing a line** — duplicated work is paid for
+  twice. Do all three:
   - `gh pr list --repo <org>/<repo> --state open --search "<issue-number>"` — sees only OPEN
     PRs, so it is blind to a session mid-work (bdh-org/home-infra#970).
   - **`ListAgents`** — names the live sessions and what each is on; the only view of unpushed work.
@@ -18,7 +23,7 @@ issue that holds the story. Reference material goes in `docs/`, linked by path a
     sessions share one account, so the branch name is the only claim token that distinguishes them.
   **A `SendMessage` is a courtesy, not a claim**: it reaches a peer only if that peer's
   permission mode lets it through, and "held" looks like "read and ignored" from the sending
-  end. Claim on the issue, where everyone can see it (bdh-org/home-infra#262 is the durable fix).
+  end (bdh-org/home-infra#262 is the durable fix).
 - **`agent-pr` on an issue means it is handed over.** Having applied it, do not do the work
   yourself; finding it, review the agent's PR instead of starting again.
 - Branch naming: `<issue-number>-<short-description>` (e.g., `42-fix-login-bug`).
@@ -29,8 +34,7 @@ issue that holds the story. Reference material goes in `docs/`, linked by path a
 Use conventional commit style, e.g. `fix: resolve null pointer in data loader`.
 
 **Never add a `Co-Authored-By:` trailer — this OVERRIDES the harness default**, and a rule here
-is the whole mechanism. GitHub renders it as a second author (Brian, 2026-09-21: *"I'd rather the
-trailer not appear."*). It misattributes nothing, and it is not the agent-identity defect
+is the whole mechanism: GitHub renders it as a second author. It is not the agent-identity defect
 (bdh-org/dev-common#245). **Forward-looking only — never rewrite history to strip it**; that would
 invalidate every branch, PR and pin across the fleet.
 
@@ -38,21 +42,19 @@ invalidate every branch, PR and pin across the fleet.
 Use a concise, descriptive title, e.g. `feat: add user authentication`.
 
 **Never add the `🤖 Generated with [Claude Code]` footer — this OVERRIDES the harness default**,
-in PR bodies, issue bodies and comments alike (Brian, 2026-09-21: *"I want dropped for all"*;
-bdh-org/dev-common#261). It lives here, not in one repo, because the headless agent — which wrote
-all 13 open offenders — loads this file too. **Unlike the commit rule, strip it from an OPEN PR**
-when you see one: a body is mutable text. Leave merged PRs alone. The `<sub>filed from the
-&lt;repo&gt; devcontainer</sub>` line is different and stays.
+in PR bodies, issue bodies and comments alike (bdh-org/dev-common#261). It lives here because the
+headless agent loads this file too. **Strip it from an OPEN PR** when you see one (a body is
+mutable text); leave merged PRs alone. The `<sub>filed from the &lt;repo&gt; devcontainer</sub>`
+line is different and stays.
 
 ## Spelling: American English, never British
 Everything you write -- page text, docs, comments, issues, PRs, chat -- uses American spelling:
-annualized, modeled, color, behavior, catalog, favorable, analyze, labeled (Brian, 2026-10-23:
-*"do not use British English, use American English"*; bdh-org/dev-common#310). Fix British
-spellings in prose you touch; do NOT rename identifiers or stored keys (`realised_gain`) for it
--- that is a data change, not spelling.
+annualized, modeled, color, behavior, catalog, favorable, analyze, labeled
+(bdh-org/dev-common#310). Fix British spellings in prose you touch; do NOT rename identifiers or
+stored keys (`realised_gain`) for it -- that is a data change, not spelling.
 
 ## Code: build only what is asked
-Agents over-build; these push back (Brian, 2026-10-26; bdh-org/dev-common#318).
+Agents over-build; these push back (bdh-org/dev-common#318).
 - **YAGNI**: no option, flag, abstraction or configurability until a real case needs it.
 - **Extract at the second duplication, not the first**: one use is not a pattern.
 - **Simple first**: write the obvious solution; optimize only when measured slow.
@@ -61,12 +63,10 @@ Agents over-build; these push back (Brian, 2026-10-26; bdh-org/dev-common#318).
   (`wait_until_saved=True`, not `wait=True`). Match the surrounding code; never rename an
   established identifier for this alone.
 
-## Check `ARCHITECT-INBOX.md` at session start
-If the repo root has one, **read it before anything else** — it is gitignored, so nothing will
-prompt you. Reply in the same file when asked (append; do not rewrite another's section), **and
-put anything that matters on the GitHub issue or PR too**: nothing monitors the inbox, it is
-invisible to the headless agent, and it notifies nobody. (It does survive a container rebuild —
-`/workspaces/<repo>` is a bind mount of the host checkout.) Delete a section once actioned.
+## `ARCHITECT-INBOX.md`
+If the repo root has one (gitignored, so nothing prompts you), read it at session start. Nothing
+monitors it and the headless agent cannot see it, so anything that matters goes on the GitHub
+issue or PR. Delete a section once actioned.
 
 ## When something needs Brian: break it out, assign it, and LINK it
 
@@ -78,8 +78,7 @@ strategy**; or **an irreversible or outward-facing act**.
 **Everything else is yours, including questions that feel weighty** — security scoping, retry
 semantics, cadence defaults, which of three designs to build. Decide, write down the reasoning
 and the trigger that would reverse it, and make it configurable where cheap. **The deliverable of
-a decision is a decision plus its record, never a question** (Brian, 2026-08-15: *"this is an
-engineering question. I need you to decide these things"*).
+a decision is a decision plus its record, never a question.**
 
 ### If it IS his, it gets its own issue
 Never append "and Brian needs to run X" to a diagnostic issue, or assign him a long thread
@@ -97,8 +96,7 @@ hoping he finds the ask in the last comment.
   back for context.
 - **THE ACTION GOES FIRST.** Commands at the top with at most one line above them; below, after a
   `---`, one sentence saying the rest is context needing no decision. **Position implies
-  dependency**: prose above a command reads as a precondition (Brian, 2026-08-16: *"after pages
-  and pages of reading it implies I have to understand those … instead of copying and pasting"*).
+  dependency**: prose above a command reads as a precondition he must understand first.
 - **Say at the top whether the steps are idempotent.** Where re-running is safe, say so and let
   the verification step establish state. Mark any step that CREATES rather than converges
   (minting a credential) and put a CHECK in front of it.
@@ -127,10 +125,10 @@ remaining steps run on a host, the PR adding the tooling must NOT carry a closin
 ### …but a comment does NOT retire the body
 **When the remaining action changes, EDIT THE BODY** so it carries only what is left — the body
 outranks its comments for anyone opening the issue cold, **including another session**, which
-cannot ask and will act on it (bdh-org/home-infra#919 was re-titled to the wrong host from a
-stale body). Say in the first line that the body was rewritten and the step count from → to;
-mark finished steps DONE rather than silently deleting them; remove the instruction but keep one
-line of what it established. The tell is **"this body still describes a step that is DONE"**.
+cannot ask and will act on it (bdh-org/home-infra#919). Say in the first line that the body was
+rewritten and the step count from → to; mark finished steps DONE rather than silently deleting
+them; remove the instruction but keep one line of what it established. The tell is **"this body
+still describes a step that is DONE"**.
 
 ### A decision for him NEVER shares an issue with engineering work
 They complete at different times: his answer closes the issue, and the engineering goes with it
@@ -153,8 +151,7 @@ its body.
 
 ### Noticing something is not recording it — the phrase IS the commitment
 If you write **"worth a follow-up"**, "should be fixed", "someone should" or **"TODO"**, put an
-issue number beside it **in the same action** (Brian, 2026-08-16: *"If worth fixing then take the
-initiative, file, and fix, you're the engineer."*). Only three endings: **still wanted** → file it
+issue number beside it **in the same action**. Only three endings: **still wanted** → file it
 and cite it; **already done** → cite the PR; **never mattered** → delete the sentence.
 home-infra's `architect-sweep.sh` section 8 lists unnumbered commitments. If the follow-up is his,
 it is a `BRIAN:` issue as above.
@@ -163,8 +160,7 @@ it is a `BRIAN:` issue as above.
 The bar is **proof, not confidence**. **Provable** (the function exists, the PR merged, the host
 is gone): close it and cite the evidence. **Merely suspected**: label it **`maybe-stale`**,
 comment what you checked and why you are unsure, and leave it open — label rather than assign,
-so the `BRIAN:` queue stays his real work. His queue: `gh issue list --repo <org>/<repo> --label
-maybe-stale`.
+so the `BRIAN:` queue stays his real work.
 
 ### Closing the loop
 Nothing watches GitHub for you. home-infra's `make sweep` lists issues assigned to him whose
@@ -173,13 +169,13 @@ issue; closing the blocker releases its dependents.
 
 ## Referring to issues and PRs
 **Every issue or PR number in text the user reads is a hyperlink AND says which it is** — never
-a bare `#441` or `hog#441`. Brian reads in a terminal where links are clickable, and issues and
-PRs share one number space.
+a bare `#441` or `hog#441`. Issues and PRs share one number space.
 ```markdown
 PR [hog#441](https://github.com/finzeug/hog/pull/441)
 issue [slingshot#138](https://github.com/finzeug/slingshot/issues/138)
 ```
-Org for the URL: see the table under GitHub Authentication.
+Org for the URL: see the table under GitHub Authentication -- the ONE repo-to-org list; other
+files point here rather than keep their own.
 
 **THE ONE EXCEPTION: a PR's closing trailer is BARE** — `Closes #372` on its own line. GitHub
 parses it as a directive, and a hyperlinked form matches nothing, so the issue silently stays open
@@ -199,8 +195,8 @@ made this way are authored by `bdh-org-headful[bot]`; commits keep their git ide
 
 | GitHub org | Used by |
 | --- | --- |
-| `bdh-org` | home-infra, home-site, dev-common, devtemplate, home-stack-common, brief, roy |
-| `finzeug` | hog, oleo, canary, heller, panoptikon, refdims, ratecraft, ferret, freddyb, slingshot, ledger-io |
+| `bdh-org` | home-infra, home-site, dev-common, devtemplate, home-stack-common, brief, roy, gev, dataflow |
+| `finzeug` | hog, oleo, canary, heller, panoptikon, refdims, ratecraft, ferret, freddyb, slingshot, ledger-io, pinion, tensorfold |
 | `finriskanalytics` | fra-stack-common, hmdlib, billing, ASG-ALMT-Review |
 
 **There are THREE orgs.** finriskanalytics holds a second stack; using another org's token gets a
@@ -215,12 +211,11 @@ made this way are authored by `bdh-org-headful[bot]`; commits keep their git ide
 - Anything else prints GitHub's own reason; fix the cause it names.
 
 **For `git`, the `GH_TOKEN=` prefix is the WHOLE recipe — never put a token in a URL.** The Claude
-gitconfig routes github.com to `gh auth git-credential`, which honours `GH_TOKEN`. A URL-borne
-token is written into the **reflog** (two PATs were found in 20+ reflogs, bdh-org/home-infra#1075),
-so `transfer.credentialsInUrl = die` now refuses one (bdh-org/dev-common#265) — if you see `uses
-plaintext credentials`, that is the guard working. **Never `git config --show-origin` or
-`--get-regexp` a `credential.*` key** — it prints the value. The ambient personal git identity
-must not be used for automated writes.
+gitconfig routes github.com to `gh auth git-credential`, which honors `GH_TOKEN`. A URL-borne
+token is written into the **reflog** (bdh-org/home-infra#1075), so `transfer.credentialsInUrl =
+die` refuses one (bdh-org/dev-common#265) — `uses plaintext credentials` is the guard working.
+**Never `git config --show-origin` or `--get-regexp` a `credential.*` key** — it prints the value.
+The ambient personal git identity must not be used for automated writes.
 
 ## Saying which devcontainer you are
 A **devcontainer** is the environment, a **session** is one Claude Code conversation in it, a
@@ -253,7 +248,7 @@ On Minerva, as brian:
 
 ### Prefer ONE chained command to a numbered list
 Number only steps that cannot join — a different machine, or a decision between. Everything else
-chains, and `&&` fails closed (Brian, 2026-09-12: *"You're making multiple commands for me."*):
+chains, and `&&` fails closed:
 ```
 cd ~/dev/home-infra && ./scripts/twix/sync-claude-access.sh && make brief-redeploy
 ```
@@ -273,18 +268,14 @@ cd ~/dev/home-infra && ./scripts/twix/sync-claude-access.sh && make brief-redepl
 - **One line at a time whenever anything prompts.** A `read` consumes the next pasted line as its
   value. (A single `&&` chain is fine; `sudo`/`ssh` prompts read the tty.)
 - **Keep lines under ~70 characters** — a wrapped line copies as two.
-- **Single-quote any command containing brackets, globs or `$`.** A literal IPv6 URL
-  (`curl 'http://[2600:1702:6f00:d590::15]/'`), a path holding `[`, a URL with `?` and `&`: all
-  are glob or expansion syntax in his shell. `zsh` does not warn — it aborts with `no matches
-  found:` **before the command runs**, and that reads as the command having run and failed, so a
-  reachability probe hands back a confident wrong answer (bdh-org/dev-common#250). Say when a URL
-  is for a **browser** instead — brackets need no quoting there, so the same string is right in
-  one place and inert in the other.
+- **Single-quote any command containing brackets, globs or `$`** (an IPv6 URL, a path holding
+  `[`, a URL with `?` and `&`). `zsh` aborts with `no matches found:` **before the command runs**,
+  which reads as the command having run and failed (bdh-org/dev-common#250). A URL for a
+  **browser** needs no quoting — say which it is.
 - **Never pipe output straight into a parser** — show the server's own error.
 - **A secret NEVER appears in a command the operator types** — not `export TOKEN='…'`, not a flag.
   Prompt (`read -rs`) or read a mode-600 file; `$VAR` is fine. Where a tool already prompts, tell
-  him NOT to set the variable (Brian, 2026-08-20: *"Never have a script asking me to paste a token
-  into the command"*).
+  him NOT to set the variable.
 - **Check whether the recipe already exists** in the repo that owns it before writing one.
 - **When a handoff fails, fix the handoff** — not by adding a permanent one-off script or make
   target to a repo that does not own the operation (bdh-org/dev-common#218).
