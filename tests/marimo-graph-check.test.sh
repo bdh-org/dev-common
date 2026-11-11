@@ -206,9 +206,12 @@ for cell in cells:
         print(f"  FAIL oracle cell at line {cell.lineno} did not execute: {exc!r}")
         bad += 1
         continue
-    # __builtins__ is injected by exec; __annotations__ is created by an annotated
-    # assignment at module level. Neither is a name the cell defined.
-    runtime = {k for k in ns if k not in ("__builtins__", "__annotations__")}
+    # __builtins__ is injected by exec; an annotated assignment at module level makes
+    # __annotations__ (<=3.13) or, under PEP 649 (3.14+), __annotate__ and
+    # __conditional_annotations__. None is a name the cell defined.
+    interpreter_made = {"__builtins__", "__annotations__", "__annotate__",
+                        "__conditional_annotations__"}
+    runtime = {k for k in ns if k not in interpreter_made}
     static, _ = mgc._bindings(cell.body)
     if runtime != static:
         print(f"  FAIL oracle cell at line {cell.lineno}: "
