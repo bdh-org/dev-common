@@ -192,6 +192,13 @@ jobs:
       - name: Version bumped (.github/actions/version-guard, called by all three workflows)
         run: bash tests/version-bumped.test.sh
 
+      # make/version.mk's bump-* targets end in `git commit`, so run mid-merge that
+      # commit IS the merge commit -- it swallows the conflict resolution and titles it
+      # `chore: bump version to <v>`. Nothing fails, and the history is wrong in a way
+      # no later command can see (dev-common#379, finzeug/hog#1064).
+      - name: The bump-* targets refuse to run during a merge
+        run: bash tests/bump-merge-guard.test.sh
+
       # Same shape, same reason: the step is duplicated across the two tagging
       # workflows, so the suite runs against BOTH rather than picking one.
       - name: Tag collision (embedded in tag-version.yml AND tag-version-self-hosted.yml)
