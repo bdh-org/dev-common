@@ -72,6 +72,16 @@ setup "bdh-ai (contractor/hog)"
 run_hook "" CLAUDE_CODE_SESSION_ID="0123abcd-0000"
 assert_eq "bdh-ai (contractor/hog, session 0123abcd)" "$(author_of)" "falls back to CLAUDE_CODE_SESSION_ID when stdin carries none"
 
+CASE="sweeper"
+setup "bdh-ai (architect)"
+run_hook "{\"session_id\":\"$SID\"}" GIT_AUTHOR_NAME="bdh-ai (sweeper)"
+assert_eq "bdh-ai (sweeper, session eea68fda)" "$(author_of)" "a pre-set sweeper name keeps its role and gains the session"
+
+CASE="preset-other"
+setup "bdh-ai (architect)"
+run_hook "{\"session_id\":\"$SID\"}" GIT_AUTHOR_NAME="someone else"
+assert_eq "bdh-ai (architect, session eea68fda)" "$(author_of)" "any other pre-set name is ignored"
+
 CASE="headless"
 setup "bdh-ai (architect)"
 run_hook "{\"session_id\":\"$SID\"}" GITHUB_ACTIONS=true

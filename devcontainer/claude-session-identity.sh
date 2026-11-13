@@ -85,6 +85,10 @@ sid="$(printf '%s' "$sid" | tr -cd '0-9a-fA-F-' | cut -c1-8)"
 [ -n "$sid" ] || exit 0
 
 base="$(git config --global --includes --get user.name 2>/dev/null || true)"
+# The headless sweeper (home-infra's daily session) exports this exact name before it starts
+# claude, so its commits stay distinguishable from an interactive architect's
+# (bdh-org/dev-common#380). Exact match only: any other pre-set name is ignored.
+[ "${GIT_AUTHOR_NAME:-}" != "bdh-ai (sweeper)" ] || base="$GIT_AUTHOR_NAME"
 case "$base" in
   "bdh-ai") name="bdh-ai (session $sid)" ;;
   "bdh-ai ("*")") name="${base%)}, session $sid)" ;;
