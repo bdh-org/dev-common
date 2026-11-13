@@ -39,6 +39,16 @@ version-check: ## fail if VERSION disagrees with __version__ / package.json
 # for the same set of files; only NEW_VERSION differs. We compute it,
 # then call _bump_apply to do the substitutions.
 #
+# _bump_apply ends in `git commit`, so it REFUSES to run while MERGE_HEAD
+# exists: that commit would BE the merge commit, carrying every staged conflict
+# resolution under the title `chore: bump version to <v>` -- `git log` then shows
+# a bump where a merge was, and the resolution is described nowhere
+# (bdh-org/dev-common#379, found in hog as finzeug/hog#1064). The check is the
+# first clause of the chain, before any rewrite, so a refused bump leaves the
+# version files untouched. It lives here rather than in each consumer's Makefile
+# because every repo including this file had the same defect, and hog's local
+# copy could only fix hog.
+#
 # Files touched (each conditional on existence + relevant field):
 #   - Makefile (VERSION= line)
 #   - $(PACKAGE_DIR)/__init__.py (__version__ = "...") -- Python projects
@@ -47,6 +57,10 @@ version-check: ## fail if VERSION disagrees with __version__ / package.json
 #   - $(VERSION_TXT) plain version file -- if VERSION_TXT is set + file exists
 
 define _bump_apply
+	if git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1; then \
+		echo "a merge is in progress; bump after committing it" >&2; \
+		exit 1; \
+	fi && \
 	$(SED_I) "s/VERSION=$(VERSION)/VERSION=$$NEW_VERSION/" Makefile && \
 	git add Makefile && \
 	if [ -f $(PACKAGE_DIR)/__init__.py ] && grep -q '__version__' $(PACKAGE_DIR)/__init__.py; then \
