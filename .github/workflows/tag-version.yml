@@ -12,7 +12,10 @@ permissions:
 
 jobs:
   tag:
-    runs-on: ubuntu-latest
+    # forge, not a hosted runner: every private repo in the three orgs runs its
+    # CI on forge, which exists to be used; hosted minutes are metered
+    # (bdh-org/home-infra#1786).
+    runs-on: [self-hosted, forge]
     steps:
       - name: Checkout
         uses: actions/checkout@v4

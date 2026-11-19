@@ -22,10 +22,12 @@ name: parse-checks
 # within a week, and a third copy would have been the moment it started to drift.
 # Consumers keep only a trigger.
 #
-# WHERE IT RUNS. ubuntu-latest, and that is deliberate (bdh-org/home-infra#426):
-# this needs no registry, no Vault and no private submodule, and forge is the
-# serialized resource. Putting a 20-second syntax check in that queue would slow the
-# builds that genuinely need the host.
+# WHERE IT RUNS. forge. It once ran on ubuntu-latest to stay out of forge's queue
+# (bdh-org/home-infra#426); every private repo's CI now runs on forge, which exists
+# to be used, and hosted minutes are metered (bdh-org/home-infra#1786). On a
+# persistent runner two things the hosted VM gave for free must be explicit: PyYAML
+# (installed into a per-job venv) and a scratch file no concurrent job shares
+# ($RUNNER_TEMP, emptied per job, instead of /tmp).
 
 on:
   workflow_call:
@@ -57,9 +59,22 @@ concurrency:
 
 jobs:
   parse:
-    runs-on: ubuntu-latest
+    # forge, not a hosted runner: every private repo in the three orgs runs its
+    # CI on forge, which exists to be used; hosted minutes are metered
+    # (bdh-org/home-infra#1786).
+    runs-on: [self-hosted, forge]
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Per-job venv with PyYAML
+        run: |
+          python -m venv "$RUNNER_TEMP/venv"
+          echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet pyyaml
 
       # Every step below asserts DISCOVERY as well as cleanliness, and the two
       # failures exit differently on purpose:
@@ -86,7 +101,7 @@ jobs:
           n=0; bad=0
           while IFS= read -r f; do
             n=$((n + 1))
-            if ! bash -n "$f" 2>/tmp/e; then bad=$((bad + 1)); echo "== $f"; cat /tmp/e; fi
+            if ! bash -n "$f" 2>"$RUNNER_TEMP/e"; then bad=$((bad + 1)); echo "== $f"; cat "$RUNNER_TEMP/e"; fi
           done < <(set -f; git ls-files -- ${GLOB})
           if [ "$n" -eq 0 ]; then
             echo "FAIL: discovered 0 tracked files matching '${GLOB}' under $(pwd)." >&2
@@ -105,8 +120,8 @@ jobs:
           n=0; bad=0
           while IFS= read -r f; do
             n=$((n + 1))
-            if ! python3 -c 'import ast,sys; ast.parse(open(sys.argv[1]).read(), sys.argv[1])' "$f" 2>/tmp/e; then
-              bad=$((bad + 1)); echo "== $f"; cat /tmp/e
+            if ! python3 -c 'import ast,sys; ast.parse(open(sys.argv[1]).read(), sys.argv[1])' "$f" 2>"$RUNNER_TEMP/e"; then
+              bad=$((bad + 1)); echo "== $f"; cat "$RUNNER_TEMP/e"
             fi
           done < <(set -f; git ls-files -- ${GLOB})
           if [ "$n" -eq 0 ]; then
@@ -133,8 +148,8 @@ jobs:
             # (!reset, !override) that SafeLoader rejects outright. Failing a CORRECT
             # compose file would make the gate invent defects, so unknown tags resolve
             # to None -- this checks well-formedness, not semantics.
-            if ! python3 -c 'import yaml,sys; yaml.SafeLoader.add_multi_constructor("!", lambda l,s,n: None); list(yaml.safe_load_all(open(sys.argv[1])))' "$f" 2>/tmp/e; then
-              bad=$((bad + 1)); echo "== $f"; cat /tmp/e
+            if ! python3 -c 'import yaml,sys; yaml.SafeLoader.add_multi_constructor("!", lambda l,s,n: None); list(yaml.safe_load_all(open(sys.argv[1])))' "$f" 2>"$RUNNER_TEMP/e"; then
+              bad=$((bad + 1)); echo "== $f"; cat "$RUNNER_TEMP/e"
             fi
           done < <(set -f; git ls-files -- ${GLOB})
           if [ "$n" -eq 0 ]; then

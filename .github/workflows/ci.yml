@@ -31,17 +31,16 @@ on:
           This exists because the Makefile opt-in (`lint: format-check`) does NOT
           reach this workflow. self-hosted-ci.yml runs `make lint`, so a Makefile
           rule is enough there; THIS workflow runs `ruff check .` directly, because
-          python.mk's lint calls $(CONDA_PREFIX)/bin/ruff and there is no conda on a
-          hosted runner. A repo that added the Makefile rule and used this workflow
+          python.mk's lint calls $(CONDA_PREFIX)/bin/ruff and this workflow installs
+          no conda. A repo that added the Makefile rule and used this workflow
           therefore had a format gate that ran locally and never in CI -- which
           looks identical to having one.
         type: boolean
         default: false
 
-# Same rule as self-hosted-ci.yml, for the same reason. GitHub-hosted minutes are
-# metered rather than serialized, so the cost here is the bill instead of the
-# queue -- but a superseded run is waste either way, and keeping both reusables
-# identical means a repo's behaviour does not change when it moves between them.
+# Same rule as self-hosted-ci.yml, for the same reason: a superseded run is waste,
+# and keeping both reusables identical means a repo's behavior does not change
+# when it moves between them.
 # See self-hosted-ci.yml for why `github.repository` is in the key and why
 # cancellation is confined to pull_request.
 concurrency:
@@ -50,7 +49,10 @@ concurrency:
 
 jobs:
   ci:
-    runs-on: ubuntu-latest
+    # forge, not a hosted runner: every private repo in the three orgs runs its
+    # CI on forge, which exists to be used; hosted minutes are metered
+    # (bdh-org/home-infra#1786).
+    runs-on: [self-hosted, forge]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -187,6 +189,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ inputs.python-version }}
+
+      # A venv per job: setup-python's interpreter lives in forge's shared tool
+      # cache, so a bare `pip install` would leak one repo's packages into every
+      # other repo's job on that host. RUNNER_TEMP is emptied per job.
+      - name: Per-job venv
+        run: |
+          python -m venv "$RUNNER_TEMP/venv"
+          echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
 
       - name: Install project requirements
         if: inputs.install-requirements

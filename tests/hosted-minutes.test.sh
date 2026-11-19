@@ -9,7 +9,8 @@
 # tidies the `if:` away:
 #   1. the gate keeps a job-level `if:` prefilter on /agent, so a comment that never
 #      mentions the verb starts no runner at all;
-#   2. version-guard's job runs on forge, not a hosted runner.
+#   2. version-guard's job runs on forge, not a hosted runner;
+#   3. no other shared workflow names a hosted runner (see the allowlist below).
 #
 # Usage:  bash tests/hosted-minutes.test.sh      (or: make test)
 
@@ -37,5 +38,22 @@ guard="$(job "$GUARD_WF" version-bumped)"
 check "version-guard.yml has its version-bumped job" test -n "$guard"
 check "version-bumped runs on forge, not a hosted runner" \
   grep -qE '^    runs-on: \[self-hosted, forge\]$' <<<"$guard"
+
+# 3. Every other job runs on forge. A hosted runner is allowed only where it is
+#    deliberate and cheap, and each exception is named here with its reason:
+#      agent-issue-to-pr.yml  the gate: no runner for most comments (prefilter
+#                             above), and a forge slot per comment would queue
+#                             every issue comment with deploys (home-infra#426)
+#      shell-tests.yml        dev-common's own tests; dev-common is PUBLIC, and
+#                             hosted minutes on a public repo are free
+#    Any other `ubuntu-latest` is a reusable that every private repo calling it
+#    pays for (bdh-org/home-infra#1786).
+allowed="agent-issue-to-pr.yml shell-tests.yml"
+for wf in "$REPO_ROOT"/.github/workflows/*.yml; do
+  name="$(basename "$wf")"
+  case " $allowed " in *" $name "*) continue ;; esac
+  check "$name names no hosted runner" \
+    bash -c '! grep -nE "^\s*runs-on:.*(ubuntu|windows|macos)-" "$1"' _ "$wf"
+done
 
 [ "$fail" -eq 0 ] && echo "all passed" || { echo "$fail failed"; exit 1; }
