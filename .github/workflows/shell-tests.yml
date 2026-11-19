@@ -105,6 +105,11 @@ jobs:
       - name: The agent's PR is put in front of the automated reviewer
         run: bash tests/agent-review-label.test.sh
 
+      # The agent gate keeps its /agent prefilter and version-guard stays on forge:
+      # together they were 2,076 of finzeug's hosted minutes (bdh-org/home-infra#1786).
+      - name: The gate and version-guard spend no hosted minutes needlessly
+        run: bash tests/hosted-minutes.test.sh
+
       # NO-WORK: the agent step and the reporter step must name the same note file, or a
       # "nothing to build" run reads as a red "no PR" again (bdh-org/home-infra#474).
       - name: The NO-WORK note file is wired from the agent to the reporter

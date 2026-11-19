@@ -40,9 +40,13 @@ name: version-guard
 # check in nine consumer repos, and a new job would report under a context none
 # of them requires. The action's header carries that and its reversal trigger.
 #
-# WHERE IT RUNS. ubuntu-latest. It needs no registry, no Vault, no container and
-# no submodule -- just the Makefile and the base branch -- so it must not queue
-# behind image builds on the serialized forge runner (bdh-org/home-infra#426).
+# WHERE IT RUNS. forge. It needs no registry, no Vault, no container and no
+# submodule -- just the Makefile and the base branch -- so it once ran on
+# ubuntu-latest to stay out of forge's queue (bdh-org/home-infra#426). Hosted
+# minutes are metered at a one-minute floor per job, and this job was 524 of
+# finzeug's 2,733 hosted minutes in 2026-11 (bdh-org/home-infra#1786). It takes
+# seconds, so a forge unit is the cheaper place. Reversal trigger: forge queueing
+# visibly delays a deploy because of it.
 
 on:
   workflow_call:
@@ -59,7 +63,7 @@ jobs:
     # Only a pull request has a base to compare against. On push to main
     # `github.base_ref` is empty and `origin/` would name the remote itself.
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, forge]
     steps:
       - uses: actions/checkout@v4
         with:
