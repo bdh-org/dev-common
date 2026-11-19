@@ -159,7 +159,17 @@ jobs:
   # the verb must never occupy a forge slot -- forge is the serialized resource and
   # this would otherwise put every issue comment in the queue with production
   # deploys (bdh-org/home-infra#426, #357).
+  #
+  # The job-level `if:` is a coarse PREFILTER, and it is what keeps this job cheap.
+  # GitHub bills a hosted job at a one-minute floor, and every trusted comment on
+  # every issue lands here: 1,552 of finzeug's 2,733 hosted minutes in 2026-11 were
+  # this job saying "no" (bdh-org/home-infra#1786). An `if:` is evaluated by GitHub
+  # with no runner, so a comment that never mentions /agent costs nothing. It is a
+  # superset of the real rule (`contains` matches anywhere, case-insensitively), so
+  # it can only let through comments the grep below then refuses -- with its
+  # explanation -- and can never drop one that should fire.
   gate:
+    if: github.event_name != 'issue_comment' || contains(github.event.comment.body, '/agent')
     runs-on: ubuntu-latest
     outputs:
       fire: ${{ steps.verb.outputs.fire }}
