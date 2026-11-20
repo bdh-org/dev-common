@@ -116,10 +116,13 @@ permissions:
 
 # Cancel a PR's previous run when a new commit supersedes it.
 #
-# The forge runner is a SINGLE runner: one job at a time, fleet-wide. Measured
-# across 81 self-hosted jobs, they wait far longer than they run -- queue median
-# 70s and p90 471s against a duration median of 14s. A superseded run holds that
-# one slot to completion while the run that matters waits behind it.
+# The forge host runs a HANDFUL of runner units, all on one service account and
+# therefore one conda root -- which is why the env build below has to lock
+# (dev-common#345, dev-common#386). Slots are few and queueing dominates:
+# measured across 81 self-hosted jobs, they wait far longer than they run --
+# queue median 70s and p90 471s against a duration median of 14s. A superseded
+# run holds one of those few slots to completion while the run that matters
+# waits behind it.
 #
 # This got sharper the moment branch protection landed with `strict: true`
 # (rolled out 2026-08-14/15; recorded in bdh-org/home-infra#414's comments,
@@ -433,7 +436,14 @@ jobs:
           source "$CONDA_ROOT/etc/profile.d/conda.sh"
           envpath="$CONDA_ROOT/envs/$CI_ENV"
           # Bump CACHE_VERSION to force a rebuild of every CI env on disk.
-          CACHE_VERSION=v5
+          #
+          # v6 retires every marker written under the old rules (dev-common#386). Any
+          # env on disk may already hold two runs' installs mixed together, and a mixed
+          # env is INVISIBLE until a dependency moves -- which is how hog's sat there
+          # being cache-hit. There is no test for "is this env coherent", so the ones
+          # whose markers cannot be trusted are discarded rather than inspected. Costs
+          # one full rebuild per repo, once, and needs nobody on the host.
+          CACHE_VERSION=v6
           # The pinned ruff is part of the key below. Pinning a tool INSIDE a cached
           # env does nothing until the key changes: slingshot's format gate kept
           # failing on README.md after the pin landed, because the env was a cache
@@ -444,6 +454,71 @@ jobs:
           else
             key=$( { echo "$CACHE_VERSION"; cat common/RUFF_VERSION 2>/dev/null; cat "${{ inputs.ci-env-file }}"; } | sha256sum | cut -d' ' -f1)
           fi
+          # THE REBUILD IS EXCLUSIVE, AND THE MARKER DIES FIRST (dev-common#386).
+          #
+          # One env per repo is shared by every run of that repo, and forge runs
+          # several runner units at once (see the `concurrency` note above). Two runs
+          # rebuilding that env on DIFFERENT keys mutated it together, and the one
+          # that was cancelled partway left the other's marker standing over the
+          # wreckage:
+          #
+          #   main (key K-new) rebuilt hog-ci -- conda took fastapi 0.164 + starlette
+          #   1.10, pip overlaid the prod pins 0.129 + 0.52.1, tests passed, .envhash
+          #   = K-new. Concurrently a PR run still on the OLD conda-packages.txt was
+          #   rebuilding the same env and was cancelled by a force-push mid-install,
+          #   leaving fastapi 0.164's files beside starlette 0.52.1. .envhash still
+          #   said K-new, so every later run CACHE-HIT on that: 21 test modules failed
+          #   to collect on `cannot import name 'body_limit' from
+          #   'starlette.middleware'`, identically on re-run (finzeug/hog#1338, #1340).
+          #
+          # Two parts, each closing a different half:
+          #
+          #   * flock serializes the BUILD, so two runs cannot interleave installs into
+          #     one env. Held on fd 9 for the rest of the step, which is what releases
+          #     it when a job is KILLED -- the kernel drops the fd, where a lock
+          #     DIRECTORY (claude-install-lock) outlives its holder and needs a
+          #     stale-steal timer. Per env, never one global lock: a lock shared by
+          #     every repo would queue the whole fleet behind one slow solve.
+          #   * `.envhash` is removed before the first install and written only after
+          #     the build returns, so the marker means "this env was built to
+          #     completion". A cancelled build now leaves NO valid marker and the next
+          #     run rebuilds, instead of trusting a marker whose env no longer matches
+          #     it. This is the half a lock alone does not fix: the cancelled run and
+          #     the run whose marker it invalidated never overlap.
+          #
+          # Deliberately NOT around lint and test: that would serialize all CI for the
+          # repo (the concern recorded at the lib-venv step below), and a separate step
+          # is a separate shell, so an fd-held flock could not span them anyway. The
+          # residual window is a rebuild starting while another run is TESTING against
+          # the env -- which now shows up as one red run rather than as a cached
+          # corruption every later run inherits. REVERSAL TRIGGER: if that appears as
+          # test flake, the next move is a shared (`flock -s`) lock taken by the lint
+          # and test steps, not a wider exclusive one.
+          #
+          # Building into a temp env and renaming it into place, the other candidate in
+          # #386, is not available: a conda env is not relocatable -- console-script
+          # shebangs, conda-meta and the pip metadata all carry the absolute prefix --
+          # so `mv` yields an env whose entry points name a path that is gone.
+          #
+          # The 30-minute wait is longer than any env build measured here and shorter
+          # than the job's own 6h default, so a waiter reports the queue rather than
+          # being killed in it. ENV_LOCK_WAIT_SECONDS exists for the suite, which
+          # cannot sit out a real one; nothing sets it in a run.
+          lockdir="$CONDA_ROOT/.ci-env-locks"
+          mkdir -p "$lockdir"
+          exec 9>"$lockdir/$CI_ENV.lock"
+          if ! flock -w "${ENV_LOCK_WAIT_SECONDS:-1800}" 9; then
+            echo "::error::waited ${ENV_LOCK_WAIT_SECONDS:-1800}s for the $CI_ENV conda env lock and"
+            echo "::error::gave up. Another run of this repo is still building that env --"
+            echo "::error::nothing here was changed, so re-run this job once that one ends."
+            echo "::error::The lock is an open fd, released by the kernel once its holder and"
+            echo "::error::every child it left are gone -- so there is no lock file to clear"
+            echo "::error::by hand, and nothing to clean up here (bdh-org/dev-common#386)."
+            exit 1
+          fi
+
+          # Read the marker INSIDE the lock: read outside it, the decision below could
+          # be made against a value another run is in the middle of replacing.
           have=$(cat "$envpath/.envhash" 2>/dev/null || true)
 
           # A long-lived self-hosted runner accumulates a conda package cache, and
@@ -505,6 +580,9 @@ jobs:
           }
 
           if [ ! -d "$envpath" ] || [ "$key" != "$have" ]; then
+            # FIRST, before anything is installed: from here until the build returns
+            # there is no valid marker, so a cancelled build cannot be cache-hit.
+            rm -f "$envpath/.envhash"
             if ! build_env; then
               echo "::warning::conda env build failed -- cleaning the package cache and retrying once (bdh-org/dev-common: slingshot#218)"
               conda clean -y --packages --tarballs || true

@@ -180,6 +180,16 @@ jobs:
       - name: ci-build.yml (:latest only from main, the deploy gate, hydration)
         run: bash tests/ci-build.test.sh
 
+      # self-hosted-ci.yml's cached conda env, which several runner units share
+      # per repo: the build is taken under a per-env lock and the .envhash marker
+      # is cleared before the first install, so two rebuilds cannot interleave
+      # and a cancelled one cannot be cache-hit afterwards. Runs the real step
+      # body with conda stubbed, and kills a build mid-install -- the thing the
+      # incident turns on and the thing no consumer repo can be asked to
+      # reproduce (bdh-org/dev-common#386, finzeug/hog#1338).
+      - name: The cached conda env is rebuilt under a lock, and a cancelled rebuild leaves no marker
+        run: bash tests/ci-env-lock.test.sh
+
       # The template-identity gate embedded in ci.yml and self-hosted-ci.yml.
       # It is the check that would have caught bdh-org/travel being created from
       # devtemplate without `make init` -- an omission that went unnoticed
